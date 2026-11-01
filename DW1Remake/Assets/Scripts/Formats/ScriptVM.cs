@@ -43,6 +43,9 @@ namespace DW1Remake.Formats
         public Action AfterStatChange;            // set by PartnerCare
         public Action<int, int> OnSound;          // set by the room
         public Action<int> OnBgm;
+        public Action<int, int, int> OnSpawnItem;
+        public Action<int, int, int, int, int, int> OnSpawnChest;
+        public Action<int, int, int, int> OnBlockTiles;
         public int Money;                         // bits; 0x2A adds, 0x2B takes away (the opening takes 50000 from 0, so the game starts at 0)
         public byte[] Bag = new byte[128];        // how many of each item the player carries (item number = position in the game's item list)
         public int BagKinds() { int n = 0; foreach (var b in Bag) if (b > 0) n++; return n; }
@@ -338,6 +341,9 @@ namespace DW1Remake.Formats
                         if (text.Length > 0) return new ScriptAction { Text = text, Speaker = speaker };
                         continue;
                     }
+                    case 0x74: if (st.OnSpawnItem != null) st.OnSpawnItem(d[p + 1], S16(d, p + 2), S16(d, p + 4)); p += 6; continue;
+                    case 0x75: if (st.OnSpawnChest != null) st.OnSpawnChest(d[p + 1], S16(d, p + 2), S16(d, p + 4), S16(d, p + 6), S16(d, p + 8), U16(d, p + 10)); p += 12; continue;
+                    case 0x7C: if (st.OnBlockTiles != null) st.OnBlockTiles(S16(d, p + 2), S16(d, p + 4), d[p + 6], d[p + 7]); p += 8; continue;
                     case 0x65: st.Para.Condition &= ~d[p + 1]; p += 2; continue;      // remove conditions
                     case 0x69: st.Stats[6] = (ushort)Math.Max(1, st.Stats[6] - st.Stats[4] * st.Vars[d[p + 1]] / 100); p += 2; continue;   // damage: percent of max HP
                     case 0x7A: st.Vars[d[p + 3]] = st.Vars[d[p + 2]]; p += 4; continue;   // copy a variable

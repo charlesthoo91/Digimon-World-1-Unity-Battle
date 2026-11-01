@@ -187,6 +187,9 @@ namespace DW1Remake.Game
                     if (v.x >= 0f && v.x <= 1f && v.y >= 0f && v.y <= 1f) _audio.PlayAnim(a.DigimonType < 0 ? 0 : a.DigimonType, bank, val);   // only what is on screen is heard
                 };
             }
+            _state.OnSpawnItem = SpawnItem;
+            _state.OnSpawnChest = (item, x, y, z, rot, trigger) => SpawnChest(item, x, z, rot, trigger);
+            _state.OnBlockTiles = (x, y, w, h) => _blocks.Add(new RectInt(x, y, w, h));
             _menus.OnCommand = CareCommand;
             _menus.OnFeed = FeedItem;
             _menus.InBattle = () => _battle != null && _battle.Active;
@@ -1133,6 +1136,7 @@ namespace DW1Remake.Game
             byte[] mapBytes = _disc.ReadFile(path);
             var map = MapBackground.Parse(mapBytes, _disc.ReadFile(path.Substring(0, path.Length - 4) + ".TFS"));
             ClearOverlays();
+            ClearWorldItems();
 
             if (_backdrop != null)
             {
@@ -1429,6 +1433,7 @@ namespace DW1Remake.Game
         bool Free(Vector3 u)
         {
             const float r = 0.3f;
+            if (TileBlocked(u)) return false;
             return Walkable(u.x - r, u.z - r) && Walkable(u.x + r, u.z - r) && Walkable(u.x - r, u.z + r) && Walkable(u.x + r, u.z + r) && !BlockedByNpc(u);
         }
 
@@ -1666,6 +1671,9 @@ namespace DW1Remake.Game
             SlotViewer();
             if (RecruitKey()) { _state.SetFlag(0xF9, true); BuildNpcs(); Say("Test: Coelamon recruited (flag 0xF9 on)"); }
 #endif
+            CheckPickup();
+            if (_pBusy) return;
+            if (ActionPressed() && TryChest()) return;
             if (ActionPressed()) TryTalk();
             if (_runner != null) return;
             Vector2 input = ReadMove();
@@ -2007,6 +2015,7 @@ namespace DW1Remake.Game
         {
             DrawScreen();
             DrawCareOverlay();
+            DrawWorldItems();
             DrawTraining();
             DrawDebugMenu();        // last, so nothing covers it
         }
