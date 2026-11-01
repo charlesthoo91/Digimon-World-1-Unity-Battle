@@ -29,6 +29,7 @@ namespace DW1Remake.Game
         [Header("Partner")]
         public bool HasPartner = true;         // a second Digimon that follows you
         public int PartnerType = 3;            // 3 = Agumon
+        [Tooltip("Opening: moves the partner this far (meters, negative = towards the camera) from where the script's 'place' command puts him. -3.5 matches the PS1 game.")] public float PartnerPlaceZOffset = -3.5f;
         public float PartnerDistance = 3f;     // how far behind you it walks (metres)
 
         [Header("Foreground layers")]
@@ -273,7 +274,9 @@ namespace DW1Remake.Game
                 case 0x6C:
                     if (ActorOf(a.Actor, out t, out an))
                     {
-                        t.position = new Vector3(a.X * Unit, 0, a.Z * Unit);
+                        Debug.Log("[place] actor 0x" + a.Actor.ToString("X") + " -> (" + (a.X * Unit).ToString("F1") + ", " + (a.Z * Unit).ToString("F1") + "), player is at (" + _player.position.x.ToString("F1") + ", " + _player.position.z.ToString("F1") + ")");
+                        float zFix = a.Actor == 0xFC ? PartnerPlaceZOffset : 0f;   // measured against the PS1 game: Agumon starts further from the boy than the script's number
+                        t.position = new Vector3(a.X * Unit, 0, a.Z * Unit + zFix);
                         _movers.Remove(t);
                     }
                     break;
