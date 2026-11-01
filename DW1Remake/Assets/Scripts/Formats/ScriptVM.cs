@@ -4,14 +4,33 @@ using System.Text;
 
 namespace DW1Remake.Formats
 {
+    /// <summary>The game's PartnerPara: the care numbers kept for the partner (decompilation: include/dw/params.h). Happiness, Discipline, Age, Weight and lives live in ScriptState.</summary>
+    [Serializable]
+    public sealed class PartnerPara
+    {
+        public int Condition;                                     // PartnerCare.Sleepy, Tired, Hungry, Poopy, Unhappy, Injured, Sick
+        public int SleepyHour, SleepyMinute, WakeupHour, WakeupMinute, HoursAwakeDefault, HoursAsleepDefault, TimeAwakeToday;
+        public int SicknessCounter, MissedSleepHours, TirednessSleepTimer;
+        public int PoopLevel, PoopingTimer, Virus;
+        public int Tiredness, SubTiredness, TirednessHungerTimer;
+        public int TimesBeingSick, SicknessTries, AreaEffectTimer, SicknessTimer, InjuryTimer;
+        public int NextHungerHour, Energy, FoodLevel, StarvationTimer, RefusedFavFood, EmptyStomachTimer;
+        public int Lifetime;                                      // hours left to live
+        public int TrainBoostFlag, TrainBoostValue, TrainBoostTimer;
+        public int CareMistakes, Battles, EvoTimer;               // EvoTimer = hours since the last evolution
+    }
+
     /// <summary>Story progress: the game's script variables (bytes) and flags (bits). A new game starts with everything 0.</summary>
     public sealed class ScriptState
     {
         public byte[] Vars = new byte[256];
         public byte[] Flags = new byte[100];     // 800 flags
-        // Partner / bag values the scripts set (0x34 set, 0x35 add). From the opening: 0-3 = offense, defense, speed, brains;
-        // 4,5 = max HP, max MP; 6,7 = current HP, MP (0x35 with 9999 = refill); 8+ not understood yet.
+        // Partner values the scripts read and set (0x34 set, 0x35 add, 0x36 reduce). 0-3 = offense, defense, speed, brains; 4,5 = max HP, max MP; 6,7 = current HP, MP;
+        // the numbers 14-19 (merit, battles started and fled, tournaments) stay here too. See GetStat for the others.
         public ushort[] Stats = new ushort[32];
+        public PartnerPara Para = new PartnerPara();
+        public int TamerLevel;
+        public Action AfterStatChange;            // set by PartnerCare
         public int Money;                         // bits; 0x2A adds, 0x2B takes away (the opening takes 50000 from 0, so the game starts at 0)
         public byte[] Bag = new byte[128];        // how many of each item the player carries (item number = position in the game's item list)
         public int BagKinds() { int n = 0; foreach (var b in Bag) if (b > 0) n++; return n; }
@@ -23,8 +42,8 @@ namespace DW1Remake.Formats
             Bag[id] += (byte)n; return true;
         }
         public void RemoveItem(int id, int n) { if (id >= 0 && id < Bag.Length) Bag[id] = (byte)Math.Max(0, Bag[id] - n); }
-        public int Happiness = 50, Discipline = 50;   // partner care values 0-100 (starting numbers are guesses)
-        public int Age, Weight = 15, Life = 3;
+        public int Happiness = 50, Discipline = 50;   // happiness -100 to 100, discipline 0 to 100; both start at 50 (initializePartner)
+        public int Age, Weight = 15, Life = 3;        // Life = the partner's lives
         public float PlayMinutes;                    // time played
         // names and numbers the game's text boxes insert (text codes 4-12)
         public string PlayerName = "A", PartnerName = "B";
@@ -48,14 +67,51 @@ namespace DW1Remake.Formats
         public bool[] Techs = new bool[256];      // techniques the partner knows (0x2D teaches one)
         public bool[] Raised = new bool[180];     // Digimon types you have raised (the Chart page shows only these)
         public List<int> TechSet = new List<int>();   // the (up to 3) techniques picked on the Tech page; the battle uses these
-        public void SetStat(int i, int v) { if (i >= 0 && i < Stats.Length) Stats[i] = (ushort)Math.Max(0, Math.Min(9999, v)); }
-        public void AddStat(int i, int v)
+        static readonly short[] StatLimits = { 999, 999, 999, 999, 9999, 9999, 9999, 9999, 100, 100, 999, 999, 999, 999, 9999, 9999, 9999, 999, 999, 999, 99, 10 };   // STATS_LIMIT_ARRAY
+
+        /// <summary>A partner value by the scripts' number (getStatsPointer): 8 tiredness, 9 happiness, 10 discipline, 11 energy, 12 virus bar, 13 lifetime, 20 weight, 21 tamer level, 22 lives.</summary>
+        public int GetStat(int i)
         {
-            if (i < 0 || i >= Stats.Length) return;
-            int n = Math.Max(0, Math.Min(9999, Stats[i] + v));
-            if ((i == 6 || i == 7) && n > Stats[i - 2]) n = Stats[i - 2];   // HP / MP never go above their maximum
-            Stats[i] = (ushort)n;
+            switch (i)
+            {
+                case 8: return Para.Tiredness;
+                case 9: return Happiness;
+                case 10: return Discipline;
+                case 11: return Para.Energy;
+                case 12: return Para.Virus;
+                case 13: return Para.Lifetime;
+                case 20: return Weight;
+                case 21: return TamerLevel;
+                case 22: return Life;
+                default: return i >= 0 && i < Stats.Length ? Stats[i] : 0;
+            }
         }
+        void PutStat(int i, int v)
+        {
+            switch (i)
+            {
+                case 8: Para.Tiredness = v; break;
+                case 9: Happiness = v; break;
+                case 10: Discipline = v; break;
+                case 11: Para.Energy = v; break;
+                case 12: Para.Virus = v; break;
+                case 13: Para.Lifetime = v; break;
+                case 20: Weight = v; break;
+                case 21: TamerLevel = v; break;
+                case 22: Life = v; break;
+                default: if (i >= 0 && i < Stats.Length) Stats[i] = (ushort)Math.Max(0, v); break;
+            }
+            if (AfterStatChange != null) AfterStatChange();
+        }
+        // enforceStatsLimits: HP and MP stop at their maximum, the rest at the table
+        int Limited(int i, int v)
+        {
+            int cap = i == 6 ? Stats[4] : i == 7 ? Stats[5] : i >= 0 && i < StatLimits.Length ? StatLimits[i] : 9999;
+            return v > cap ? cap : v;
+        }
+        public void SetStat(int i, int v) { PutStat(i, Limited(i, v)); }
+        public void AddStat(int i, int v) { PutStat(i, Limited(i, GetStat(i) + v)); }
+        public void ReduceStat(int i, int v) { PutStat(i, Math.Max(i == 9 ? -100 : 0, GetStat(i) - (short)v)); }
         public bool GetFlag(int i) { return i >= 0 && i < 800 && (Flags[i >> 3] & (1 << (i & 7))) != 0; }
         public void SetFlag(int i, bool on)
         {
@@ -228,7 +284,7 @@ namespace DW1Remake.Formats
                                 int thing = d[q], mode = d[q + 1];
                                 switch (c & 7)
                                 {
-                                    case 0: s0 = Compare(mode, thing < st.Stats.Length ? st.Stats[thing] : 0, U16(d, q + 2)); q += 4; break;   // partner value
+                                    case 0: s0 = Compare(mode, st.GetStat(thing), thing == 9 ? (short)U16(d, q + 2) : U16(d, q + 2)); q += 4; break;   // partner value (happiness can be below 0)
                                     case 2: s0 = mode == 1 ? !st.Techs[thing] : st.Techs[thing]; q += 2; break;   // technique known
                                     case 4: s0 = Compare(mode, thing < st.Bag.Length ? st.Bag[thing] : 0, U16(d, q + 2)); q += 4; break;       // how many of an item
                                     case 5: s0 = Compare(mode, st.Money, Long(q + 2)); q += 6; break;   // Bits
@@ -283,6 +339,7 @@ namespace DW1Remake.Formats
                     case 0x2D: st.Techs[d[p + 1]] = true; p += 2; continue;                          // teach a technique
                     case 0x34: st.SetStat(d[p + 1], U16(d, p + 2)); p += 4; continue;
                     case 0x35: st.AddStat(d[p + 1], U16(d, p + 2)); p += 4; continue;
+                    case 0x36: st.ReduceStat(d[p + 1], U16(d, p + 2)); p += 4; continue;
                     case 0x1F: st.Vars[d[p + 2]] = (byte)Math.Min(255, st.Vars[d[p + 2]] + d[p + 3]); p += 4; continue;
                     case 0x20: st.Vars[d[p + 2]] = (byte)Math.Max(0, st.Vars[d[p + 2]] - d[p + 3]); p += 4; continue;
                     case 0x47: Spawns.Add(new int[] { d[p + 1], d[p + 2], d[p + 3] }); p += 4; continue;

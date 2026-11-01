@@ -40,7 +40,10 @@ namespace DW1Remake.Game
         void ApplySave(SaveGameData d)
         {
             d.ApplyTo(_state);
-            _clock = d.Clock; _dayCount = d.Day;
+            _dayCount = d.Day;
+            _care.SetClock((int)d.Clock, (int)((d.Clock % 1f) * 60f));
+            _clock = _care.ClockHours;
+            if (d.Version < 2) _care.InitPartner(PartnerType);   // a save from before the care numbers
             _intro = false;
         }
 
@@ -143,11 +146,20 @@ namespace DW1Remake.Game
 
             GUILayout.Label("Time");
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("+1 h")) _clock = (_clock + 1f) % 24f;
-            if (GUILayout.Button("+6 h")) _clock = (_clock + 6f) % 24f;
-            if (GUILayout.Button("Morning (8:00)")) _clock = 8f;
-            if (GUILayout.Button("Night (22:00)")) _clock = 22f;
+            if (GUILayout.Button("+1 h")) _care.SkipHours(1);
+            if (GUILayout.Button("+6 h")) _care.SkipHours(6);
+            if (GUILayout.Button("+24 h")) _care.SkipHours(24);
+            if (GUILayout.Button("Morning (8:00)")) _care.AdvanceToTime(8, 0);
+            if (GUILayout.Button("Night (22:00)")) _care.AdvanceToTime(22, 0);
             GUILayout.EndHorizontal();
+            GUILayout.Label("Care");
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Happiness -20")) _state.Happiness -= 20;
+            if (GUILayout.Button("Happiness +20")) _state.Happiness += 20;
+            if (GUILayout.Button("Discipline -20")) _state.Discipline -= 20;
+            if (GUILayout.Button("Discipline +20")) _state.Discipline += 20;
+            GUILayout.EndHorizontal();
+            _care.Boundaries();
 
             GUILayout.Label("Go to map (type part of the name)");
             _mapFilter = GUILayout.TextField(_mapFilter);

@@ -11,7 +11,7 @@ namespace DW1Remake.Game
     [Serializable]
     public sealed class SaveGameData
     {
-        public int Version = 1;
+        public int Version = 2;                     // 2 = holds the care numbers (Para)
         public string Map;
         public float X, Y, Z, Clock;
         public int Day, PartnerType;
@@ -20,7 +20,8 @@ namespace DW1Remake.Game
         public int[] Stats;
         public bool[] Techs, Cards, Raised;
         public List<int> TechSet;
-        public int Money, ItemSlots, Happiness, Discipline, Age, Weight, Life;
+        public int Money, ItemSlots, Happiness, Discipline, Age, Weight, Life, TamerLevel;
+        public PartnerPara Para;
         public float PlayMinutes;
 
         public static SaveGameData From(ScriptState s)
@@ -30,7 +31,7 @@ namespace DW1Remake.Game
                 Vars = (byte[])s.Vars.Clone(), Flags = (byte[])s.Flags.Clone(), Bag = (byte[])s.Bag.Clone(),
                 Techs = (bool[])s.Techs.Clone(), Cards = (bool[])s.Cards.Clone(), Raised = (bool[])s.Raised.Clone(), TechSet = new List<int>(s.TechSet),
                 Money = s.Money, ItemSlots = s.ItemSlots, Happiness = s.Happiness, Discipline = s.Discipline, Age = s.Age, Weight = s.Weight, Life = s.Life,
-                PlayMinutes = s.PlayMinutes, PlayerName = s.PlayerName, PartnerName = s.PartnerName
+                TamerLevel = s.TamerLevel, Para = s.Para, PlayMinutes = s.PlayMinutes, PlayerName = s.PlayerName, PartnerName = s.PartnerName
             };
             d.Stats = new int[s.Stats.Length];
             for (int i = 0; i < d.Stats.Length; i++) d.Stats[i] = s.Stats[i];
@@ -48,6 +49,8 @@ namespace DW1Remake.Game
             for (int i = 0; i < Stats.Length && i < s.Stats.Length; i++) s.Stats[i] = (ushort)Math.Max(0, Math.Min(9999, Stats[i]));
             s.TechSet = new List<int>(TechSet ?? new List<int>());
             s.Money = Money; s.ItemSlots = ItemSlots; s.Happiness = Happiness; s.Discipline = Discipline; s.Age = Age; s.Weight = Weight; s.Life = Life;
+            s.TamerLevel = TamerLevel;
+            if (Version >= 2 && Para != null) s.Para = Para;
             s.PlayMinutes = PlayMinutes; s.PlayerName = PlayerName ?? "A"; s.PartnerName = PartnerName ?? "B";
         }
     }

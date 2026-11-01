@@ -45,12 +45,26 @@ namespace DW1Remake.Formats
         public int Flags;            // +13: bit 2 = the game holds the fight for 110 frames while it plays; bit 1 not decoded
     }
 
+    /// <summary>How a partner is raised (RAISE_DATA, exe 0x801225BC, 28 bytes each, 66 partners).</summary>
+    public sealed class RaiseData
+    {
+        public int[] HungerTimes = new int[8];                   // +0: hours it gets hungry (Rookie and up), -1 = none
+        public int EnergyCap, EnergyThreshold, EnergyUsage;      // +8, +9, +10
+        public int PoopTimer, PoopSize, FavoriteFood;            // +12 (s16), +16, +17
+        public int SleepCycle, FavoredRegion, TrainingType;      // +18, +19, +20
+        public int DefaultWeight;                                // +21
+    }
+
+    /// <summary>A sleep pattern (SLEEP_PATTERN, exe 0x80122CF4, 6 bytes each, 8 patterns; 6 and 7 are the babies').</summary>
+    public sealed class SleepPattern { public int SleepyHour, SleepyMinute, WakeupHour, WakeupMinute, AwakeHours, SleepyHours; }
+
     /// <summary>Reads DIGIMON_DATA (exe 0x8012CEB4, 52 bytes each) and the technique table with its name pointers (exe 0x80126054). Cached after the first read.</summary>
     public static class DigimonStatsCatalog
     {
         const uint DataAddr = 0x8012ceb4, TechNamePointers = 0x80126054, TechTable = 0x8012623c;
         const uint Effectiveness = 0x80125f70, LearnChances = 0x80125fa4, EvolutionTable = 0x8012b661;
-        const int Stride = 52, TechListStart = 35, TechStride = 16, TechCount = 121;
+        const uint RaiseTable = 0x801225bc, SleepTable = 0x80122cf4;
+        const int Stride = 52, TechListStart = 35, TechStride = 16, TechCount = 121, RaiseStride = 28, RaiseCount = 66;
 
         static byte[] _exe; static uint _load;
         static TechData[] _techs;
@@ -87,6 +101,29 @@ namespace DW1Remake.Formats
 
         /// <summary>Name of technique n once the catalog has been read (call Get first).</summary>
         public static string NameOf(int n) { var t = TechOf(n); return t != null ? t.Name : "?"; }
+
+        /// <summary>Row of the raise table; null for a Digimon that cannot be a partner.</summary>
+        public static RaiseData RaiseOf(DiscImage disc, int type)
+        {
+            Init(disc);
+            if (type < 0 || type >= RaiseCount) return null;
+            int r = (int)(RaiseTable - _load + 0x800) + type * RaiseStride;
+            var d = new RaiseData
+            {
+                EnergyCap = _exe[r + 8], EnergyThreshold = _exe[r + 9], EnergyUsage = _exe[r + 10],
+                PoopTimer = BitConverter.ToInt16(_exe, r + 12), PoopSize = _exe[r + 16], FavoriteFood = _exe[r + 17],
+                SleepCycle = _exe[r + 18], FavoredRegion = _exe[r + 19], TrainingType = _exe[r + 20], DefaultWeight = _exe[r + 21]
+            };
+            for (int i = 0; i < 8; i++) d.HungerTimes[i] = (sbyte)_exe[r + i];
+            return d;
+        }
+
+        public static SleepPattern SleepOf(DiscImage disc, int cycle)
+        {
+            Init(disc);
+            int r = (int)(SleepTable - _load + 0x800) + cycle * 6;
+            return new SleepPattern { SleepyHour = _exe[r], SleepyMinute = _exe[r + 1], WakeupHour = _exe[r + 2], WakeupMinute = _exe[r + 3], AwakeHours = _exe[r + 4], SleepyHours = _exe[r + 5] };
+        }
 
         public static DigimonStats Get(DiscImage disc, int type)
         {

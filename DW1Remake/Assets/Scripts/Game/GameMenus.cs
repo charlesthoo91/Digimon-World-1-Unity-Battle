@@ -314,6 +314,14 @@ namespace DW1Remake.Game
             if (_tab == 0) DrawStatus(); else DrawTech();
         }
 
+        // the game's two-part bars: on the good side the good colour fills over a full bar of the low colour, on the bad side the low colour shrinks over nothing
+        static void CareBar(Rect r, bool good, float t)
+        {
+            Color high = new Color(0.9f, 0.5f, 0.75f), low = new Color(0.35f, 0.4f, 0.8f);
+            UiKit.Bar(r, good ? 1f : t, low);
+            if (good) UiKit.Fill(new Rect(r.x + 3, r.y + 3, (r.width - 6) * Mathf.Clamp01(t), r.height - 6), high);
+        }
+
         void DrawStatus()
         {
             // profile
@@ -337,11 +345,11 @@ namespace DW1Remake.Game
             UiKit.Text(new Rect(150, 660, 200, 70), "Life", 50, UiKit.Yellow);
             for (int i = 0; i < 3; i++) UiKit.Fill(new Rect(335 + i * 62, 668, 50, 48), i < _s.Life ? new Color(0.95f, 0.3f, 0.45f) : UiKit.Grey);
             UiKit.Text(new Rect(95, 745, 260, 60), "HAPPINESS", 34, UiKit.Yellow, TextAnchor.MiddleLeft);
-            UiKit.Bar(new Rect(335, 750, 225, 48), _s.Happiness / 100f, new Color(0.9f, 0.5f, 0.75f));
+            CareBar(new Rect(335, 750, 225, 48), _s.Happiness >= 0, _s.Happiness >= 0 ? _s.Happiness / 100f : (_s.Happiness + 100) / 100f);
             UiKit.Text(new Rect(95, 820, 260, 60), "Disc.", 44, UiKit.Yellow, TextAnchor.MiddleLeft);
-            UiKit.Bar(new Rect(335, 825, 225, 48), _s.Discipline / 100f, new Color(0.9f, 0.3f, 0.5f));
+            CareBar(new Rect(335, 825, 225, 48), _s.Discipline >= 50, _s.Discipline >= 50 ? (_s.Discipline - 50) / 50f : _s.Discipline / 50f);
             UiKit.Text(new Rect(95, 895, 260, 60), "Vir.", 44, UiKit.Yellow, TextAnchor.MiddleLeft);
-            UiKit.Bar(new Rect(335, 900, 225, 48), 0f, new Color(0.5f, 0.8f, 0.9f));
+            UiKit.Bar(new Rect(335, 900, 225, 48), _s.Para.Virus * 3 / 50f, new Color(0.5f, 0.8f, 0.9f));
             // parameter
             UiKit.Tag(new Rect(630, 472, 255, 50), "PARAMETER");
             string[] nm = { "HP", "MP", "Off", "Def", "SPEED", "BRAINS" };

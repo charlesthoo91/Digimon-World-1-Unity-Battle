@@ -90,7 +90,9 @@ namespace DW1Remake.Game
         {
             public Transform T; public MeshRenderer R; public MapOverlay.Inst I; public int Cur, Timer; public float Dm;
         }
-        float _clock = -1f;                    // hours, 0..24
+        float _clock = -1f;                    // hours, 0..24; a copy of the game clock in _care
+        float _clockFrames;                    // time towards the next game frame (20 a second)
+        PartnerCare _care;
         int _curPalette;
         float _lightFactor = 1f;
         readonly List<Light> _lightList = new List<Light>();
@@ -160,11 +162,16 @@ namespace DW1Remake.Game
                 if (!_state.TechSet.Contains(first)) _state.TechSet.Add(first);
             }
             _state.Raised[PartnerType] = true;
+            _care = new PartnerCare(_state, t => DigimonStatsCatalog.RaiseOf(_disc, t), c => DigimonStatsCatalog.SleepOf(_disc, c), t => DigimonStatsCatalog.Get(_disc, t).Level);
+            _care.OnNewDay = () => _dayCount++;
+            _care.SetClock((int)StartHour, 0);
+            _clock = _care.ClockHours;
+            _care.InitPartner(PartnerType);
             _menus.Art = MenuArt.Load(_disc);
             _menus.Disc = _disc;
             _menus.NeedBoyPicture = BuildBoyPicture;
             _battle.Items = _menus.Icons;
-            _menus.OnSleep = () => { _clock = (_clock + 8f) % 24f; _dayCount++; };
+            _menus.OnSleep = () => _care.AdvanceToTime((_care.Hour + 8) % 24, _care.Minute);
             _menus.PlayerName = PlayerNameText; _menus.PartnerName = PartnerNameText;
             _state.SpeciesNameOf = t =>
             {
@@ -753,6 +760,8 @@ namespace DW1Remake.Game
 
         void EndBattle()
         {
+            _care.AfterBattle(_battle.Won ? PartnerCare.WonBattle : _battle.Fled ? PartnerCare.FledBattle : PartnerCare.Lost);
+            if (_battle.Fled && _state.Stats[16] < 9999) _state.Stats[16]++;   // battles fled
             if (_partnerAnim != null) _partnerAnim.SetSlot(IdleSlot);
             _battleCooldown = 5f;
             _way.Clear();
@@ -1403,18 +1412,32 @@ namespace DW1Remake.Game
             return Mathf.Clamp(pal, 0, Mathf.Max(0, _map.PaletteCount - 1));
         }
 
+        // the game stops its clock in the setup and opening, during scripts, in the Triangle menu, in fights and while the map changes
+        bool GameTimeRuns
+        {
+            get
+            {
+                if (!AutoClock || _care == null || _changing || _intro || _runner != null || _partner == null) return false;
+                if (_setup != null && _setup.Active) return false;
+                return (_menus == null || !_menus.Active) && (_battle == null || !_battle.Active);
+            }
+        }
+
         void UpdateClock()
         {
             if (_map == null) return;
-            float before = _clock;
-            if (AutoClock) _clock = (_clock + ClockMinutesPerSecond / 60f * Time.deltaTime) % 24f;
-            if (_clock < before - 12f) _dayCount++;     // the clock wrapped past midnight
+            if (GameTimeRuns)
+            {
+                _clockFrames += ClockMinutesPerSecond * 20f * Time.deltaTime;
+                while (_clockFrames >= 1f) { _clockFrames -= 1f; _care.Tick(); }
+            }
 #if ENABLE_INPUT_SYSTEM
             var k = Keyboard.current;
-            if (k != null && k.tKey.wasPressedThisFrame) _clock = (Mathf.Floor(_clock) + 1f) % 24f;   // T = jump forward one hour
+            if (k != null && k.tKey.wasPressedThisFrame) _care.SkipHours(1);   // T = jump forward one hour
 #elif ENABLE_LEGACY_INPUT_MANAGER
-            if (Input.GetKeyDown(KeyCode.T)) _clock = (Mathf.Floor(_clock) + 1f) % 24f;
+            if (Input.GetKeyDown(KeyCode.T)) _care.SkipHours(1);
 #endif
+            _clock = _care.ClockHours;
             float f;
             int pal = DesiredPalette(out f);
             if (pal != _curPalette || !Mathf.Approximately(f, _lightFactor))
@@ -1566,8 +1589,16 @@ namespace DW1Remake.Game
             string[] names = { "Offense", "Defense", "Speed", "Brains", "Max HP", "Max MP", "HP", "MP" };
             var sb = new System.Text.StringBuilder("Partner (F4)" + System.Environment.NewLine);
             for (int i = 0; i < names.Length; i++) sb.Append(names[i]).Append(": ").Append(s.Stats[i]).Append(System.Environment.NewLine);
-            sb.Append("Money: ").Append(s.Money).Append("   Bag slots: ").Append(s.ItemSlots).Append("   Items: ").Append(s.BagKinds());
-            GUI.Box(new Rect(10, _hintBottom + 6, 330, 190), sb.ToString());
+            sb.Append("Money: ").Append(s.Money).Append("   Bag slots: ").Append(s.ItemSlots).Append("   Items: ").Append(s.BagKinds()).Append(System.Environment.NewLine);
+            var p = s.Para; string nl = System.Environment.NewLine;
+            sb.Append("Clock ").Append(_care.Hour.ToString("00")).Append(":").Append(_care.Minute.ToString("00")).Append("   time ").Append(GameTimeRuns ? "running" : "stopped").Append(nl);
+            sb.Append("Age ").Append(s.Age).Append("   Lives ").Append(s.Life).Append("   Lifespan left ").Append(p.Lifetime).Append(" h").Append(nl);
+            sb.Append("Hours since evolving ").Append(p.EvoTimer).Append("   Fights won ").Append(p.Battles).Append(nl);
+            sb.Append("Weight ").Append(s.Weight).Append("   Care mistakes ").Append(p.CareMistakes).Append("   Virus ").Append(p.Virus).Append(nl);
+            sb.Append("Happiness ").Append(s.Happiness).Append("   Discipline ").Append(s.Discipline).Append("   Tiredness ").Append(p.Tiredness).Append(nl);
+            sb.Append("Energy ").Append(p.Energy).Append("   Food ").Append(p.FoodLevel).Append(" min (hungry at ").Append(p.NextHungerHour).Append(":00)   Poop ").Append(p.PoopLevel).Append(nl);
+            sb.Append("Sleepy ").Append(p.SleepyHour).Append(":").Append(p.SleepyMinute.ToString("00")).Append("   Wakes ").Append(p.WakeupHour).Append(":").Append(p.WakeupMinute.ToString("00"));
+            GUI.Box(new Rect(10, _hintBottom + 6, 430, 300), sb.ToString());
         }
 
         static bool NamesKeyPressed()
