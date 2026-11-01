@@ -8,6 +8,10 @@ Shader "DW1Remake/Overlay"
         _FocusCenter ("Focus band centre (0 bottom, 1 top)", Float) = 0.5
         _FocusHalf ("Focus band half height", Float) = 0.22
         _Sharpen ("Sharpen amount", Float) = 0.5
+        _Opacity ("Opacity (1 = solid; below 1 = semi-transparent like the PS1 shadows)", Float) = 1
+        [HideInInspector] _SrcBlend ("Src blend", Float) = 1
+        [HideInInspector] _DstBlend ("Dst blend", Float) = 0
+        [HideInInspector] _ZWriteOn ("ZWrite", Float) = 1
     }
     SubShader
     {
@@ -16,7 +20,8 @@ Shader "DW1Remake/Overlay"
         {
             Name "Overlay"
             Cull Off
-            ZWrite On
+            Blend [_SrcBlend] [_DstBlend]
+            ZWrite [_ZWriteOn]
 
             HLSLPROGRAM
             #pragma vertex vert
@@ -33,6 +38,7 @@ Shader "DW1Remake/Overlay"
                 float _FocusCenter;
                 float _FocusHalf;
                 float _Sharpen;
+                float _Opacity;
             CBUFFER_END
 
             struct Attributes { float4 positionOS : POSITION; float2 uv : TEXCOORD0; };
@@ -88,7 +94,7 @@ Shader "DW1Remake/Overlay"
                         c = saturate(c + (c - nb) * _Sharpen);
                     }
                 }
-                return half4(c, 1);
+                return half4(c, _Opacity);
             }
             ENDHLSL
         }

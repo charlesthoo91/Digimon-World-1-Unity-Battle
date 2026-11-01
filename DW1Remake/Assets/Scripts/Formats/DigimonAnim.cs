@@ -167,7 +167,7 @@ namespace DW1Remake.Formats
                     m.SubSc[j] = ns;
                     if (j < 3) continue;                        // scale: not used yet
                     if (j < 6) Rot[i][j - 3] += nv;
-                    else if (i != 0) Loc[i][j - 6] += nv;       // bone 0 movement is the entity's, ignored here
+                    else Loc[i][j - 6] += nv;                   // bone 0 = the whole body's movement (jumps); the animator applies it only for scripted animations
                 }
             }
         }

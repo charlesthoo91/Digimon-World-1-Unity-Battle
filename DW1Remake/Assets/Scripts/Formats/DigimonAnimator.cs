@@ -55,15 +55,27 @@ namespace DW1Remake.Formats
                 _blend = 0f;
             }
             else _blend = 1f;
-            _once = once; _held = false; _pending = -1;
+            _once = once; _held = false; _pending = -1; _maxLoc = Vector3.zero; _maxRot = Vector3.zero;
             _slot = slot;
             _sim = new AnimSim(_anims[slot], _nodes.Length);
             Apply();
         }
 
+        Vector3 _maxLoc, _maxRot;
+        public static bool UseRootMotion = true;   // scripted animations (jump, flip) also move/turn the whole body (bone 0)
+
         void Apply()
         {
             for (int i = 1; i < _nodes.Length; i++) MmdModel.SetLocal(_nodes[i], _sim.Rot[i], _sim.Loc[i]);
+            if (_nodes.Length > 0 && _nodes[0] != null)
+            {
+                if (_once)
+                {
+                    for (int k = 0; k < 3; k++) { _maxLoc[k] = Mathf.Max(_maxLoc[k], Mathf.Abs(_sim.Loc[0][k])); _maxRot[k] = Mathf.Max(_maxRot[k], Mathf.Abs(_sim.Rot[0][k])); }
+                }
+                if (UseRootMotion && _once) MmdModel.SetLocal(_nodes[0], _sim.Rot[0], _sim.Loc[0]);
+                else { _nodes[0].localRotation = Quaternion.identity; _nodes[0].localPosition = Vector3.zero; }
+            }
             if (_blend < 1f && _fromRot != null)
             {
                 float k = _blend * _blend * (3f - 2f * _blend);
@@ -92,7 +104,7 @@ namespace DW1Remake.Formats
                 {
                     if (_once)
                     {
-                        _held = true; Debug.Log("[anim] slot " + _slot + " finished at " + Time.realtimeSinceStartup.ToString("F1") + "s");
+                        _held = true; Debug.Log("[anim] slot " + _slot + " finished at " + Time.realtimeSinceStartup.ToString("F1") + "s, body movement max loc " + _maxLoc + " rot " + _maxRot);
                         if (_pending >= 0) { int ps = _pending; SetSlot(ps, _pendingOnce); }   // the queued animation starts now
                         break;
                     }                                   // finished: keep the last pose

@@ -28,6 +28,8 @@ namespace DW1Remake.Game
 
         [Header("Partner")]
         public bool HasPartner = true;         // a second Digimon that follows you
+        [Tooltip("Scripted animations (Tokomon's jump, Poyomon's flip) also move the whole body. Untick if it looks wrong.")] public bool RootMotion = true;
+        [Range(0f, 1f), Tooltip("How dark the little shadow pieces under map Digimon are (PS1: half transparent).")] public float ShadowPieceOpacity = 0.5f;
         public int PartnerType = 3;            // 3 = Agumon
         [Tooltip("Opening: moves the partner this far (meters, negative = towards the camera) from where the script's 'place' command puts him. -3.5 matches the PS1 game.")] public float PartnerPlaceZOffset = -3.5f;
         public float PartnerDistance = 3f;     // how far behind you it walks (metres)
@@ -150,6 +152,7 @@ namespace DW1Remake.Game
             byte[] allTim = _disc.ReadFile("/CHDAT/ALLTIM.TIM");
 
             // --- the Digimon (built once, kept when the map changes)
+            DigimonAnimator.UseRootMotion = RootMotion;
             MmdModel.UseLit = Hd2D && UseMapLights;
             MmdModel.Brightness = Hd2D && UseMapLights ? CharacterBrightness : 1f;
             var model = MmdModel.Parse(mmd);
@@ -666,6 +669,15 @@ namespace DW1Remake.Game
             m.SetFloat("_FocusCenter", FocusCenter);
             m.SetFloat("_FocusHalf", FocusHalfHeight);
             m.SetFloat("_Sharpen", Hd2D ? Sharpen : 0f);
+            if (o.Trans == 2)
+            {
+                // shadow pieces: the PS1 draws these semi-transparent (half shadow colour, half ground)
+                m.SetFloat("_Opacity", ShadowPieceOpacity);
+                m.SetFloat("_SrcBlend", (float)UnityEngine.Rendering.BlendMode.SrcAlpha);
+                m.SetFloat("_DstBlend", (float)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+                m.SetFloat("_ZWriteOn", 0f);
+                m.renderQueue = 3000;
+            }
             _ovTex[obj] = tex; _ovMat[obj] = m;
             return m;
         }
@@ -702,6 +714,7 @@ namespace DW1Remake.Game
                 int f0 = inst.Frames[0];
                 if (f0 < 0 || f0 >= _overlay.Objects.Length) continue;
                 var ob = _overlay.Objects[f0];
+                Debug.Log("[overlay piece] obj " + f0 + " pos " + inst.X + "," + inst.Y + " size " + ob.W + "x" + ob.H + " clut " + ob.Clut + " trans " + ob.Trans + " worldY " + ob.WY + " frames " + inst.Frames[0] + "," + inst.Frames[1]);
 
                 // how far away it is decides whether it is in front of or behind the Digimon
                 Vector3 world = new Vector3(ob.WX, ob.WY, ob.WZ);
