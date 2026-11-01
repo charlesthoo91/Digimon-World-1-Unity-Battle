@@ -18,7 +18,7 @@ namespace DW1Remake.Game
     /// puts a Digimon on it and lets you walk around inside the game's walking grid.
     /// Walking onto an exit loads the connected map. Everything is built from the disc in memory.
     /// </summary>
-    public sealed class PlayableRoom : MonoBehaviour
+    public sealed partial class PlayableRoom : MonoBehaviour
     {
         [Header("What to load")]
         public string DiscPath = "";
@@ -165,7 +165,10 @@ namespace DW1Remake.Game
             _state.ItemNameOf = id => id >= 0 && id < itemList.Count ? itemList[id].Name : "";
             _state.TimeValue = a => a == 0x69 ? 1 : a == 0x6A ? _dayCount + 1 : a == 0x6B ? (int)_clock : (int)((_clock % 1f) * 60f);
 
+            SaveGameData sv = null; bool loadSave = false;
+            if (!NewGame && LoadSaveOnStart) { sv = ReadSave(); loadSave = sv != null; }
             if (NewGame) DigimonType = 0;       // the human boy
+            else if (QuickStart || loadSave) { DigimonType = 0; HasPartner = true; }
             DigimonEntry entry = null;
             foreach (var e in DigimonCatalog.Load(_disc)) if (e.Type == DigimonType) { entry = e; break; }
             if (entry == null) throw new InvalidDataException("Digimon type " + DigimonType + " not found.");
@@ -193,9 +196,23 @@ namespace DW1Remake.Game
                 if (ti >= 0) MapPath = MapCatalog.PathFor(_mapNames, ti);
                 _state.SetFlag(54, true); _state.SetFlag(55, true);      // the same flags as the game's own "Opening mode"
             }
+            else if (loadSave)
+            {
+                ApplySave(sv);
+                int mi = _mapNames.IndexOf(sv.Map);
+                if (mi >= 0) MapPath = MapCatalog.PathFor(_mapNames, mi);
+            }
+            else if (QuickStart)
+            {
+                QuickStartState();
+                int ti = _mapNames.IndexOf("TWNA01");
+                if (ti >= 0) MapPath = MapCatalog.PathFor(_mapNames, ti);
+            }
             else foreach (var f in InitialFlags) _state.SetFlag(f, true);
-            LoadMap(MapPath, NewGame ? 9 : -1);
+            LoadMap(MapPath, NewGame ? 9 : (QuickStart && !loadSave) ? 2 : -1);
             if (NewGame) BeginNewGame();
+            else if (loadSave) PlaceFromSave(sv);
+            else if (QuickStart && _partner != null) { _partner.gameObject.SetActive(true); PlacePartner(_player.position, Vector3.back); }
             if (Hd2D) SetupHd2DOnce();
         }
 
@@ -611,7 +628,7 @@ namespace DW1Remake.Game
             }
         }
 
-        [Tooltip("Metres per second of the scripted opponent (the first Agumon) when it runs after you. The real speed is not measured yet.")] public float ScriptedChaseSpeed = 4.6f;
+        [Tooltip("Metres per second of the scripted opponent (the first Agumon) when it runs after you: fast enough to meet you half way on the map, as in the original. Not measured exactly.")] public float ChaseSpeed = 7f;
 
         // the scripted opponent (follow mode 16, the first Agumon) runs after you on its map until you fight it: the story cannot go on without that fight
         bool ChaseScripted(Npc n)
@@ -622,7 +639,7 @@ namespace DW1Remake.Game
             float dist = to.magnitude;
             if (dist < 1.2f) return false;
             Vector3 dir = to / dist, pos = n.T.position;
-            float step = ScriptedChaseSpeed * Time.deltaTime;
+            float step = ChaseSpeed * Time.deltaTime;
             if (Free(pos + new Vector3(dir.x * step, 0, 0))) pos.x += dir.x * step;
             if (Free(pos + new Vector3(0, 0, dir.z * step))) pos.z += dir.z * step;
             n.T.position = pos;
@@ -1239,6 +1256,7 @@ namespace DW1Remake.Game
 
         void Update()
         {
+            HandleDebugAndSaveKeys();
             UpdateClock();
             if (GridKeyPressed()) ToggleGrid();
             if (NamesKeyPressed()) ShowNames = !ShowNames;
@@ -1641,10 +1659,11 @@ namespace DW1Remake.Game
                 string pn = _curPalette == 0 ? "day" : _curPalette == 1 ? "evening" : "night";
                 GUI.Label(new Rect(10, 10, 1400, 24), "Map " + name + "   " + ((int)_clock).ToString("00") + ":" + ((int)((_clock % 1f) * 60f)).ToString("00") + " " + pn + " (T = +1 hour)   |   Arrow keys/WASD walk, Space = action, F1 = walking grid, F2 = foreground on/off, F3 = names, Tab = menu, F4 = stats, I = bag"
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-                    + ", F5 = shop (test), F6 = +1000 Bits and items (test), [ ] = partner animation slots, F7 = recruit Coelamon (test)"
+                    + ", F5 = shop (test), F6 = +1000 Bits and items (test), [ ] = partner animation slots, F7 = recruit Coelamon (test), F10 = debug menu, F11 = save, F12 = load"
 #endif
                     + "   |   grid value here: " + _map.CollisionAt(_player.position.x / Unit, _player.position.z / Unit));
             }
+            DrawDebugMenu();
             if (_showStats) DrawStats();
             if (_setup != null && _setup.Active) { _setup.OnGUI(); return; }
             if (_menus != null) _menus.OnGUI();

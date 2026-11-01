@@ -34,8 +34,8 @@ namespace DW1Remake.Game
             public bool Guarding;
         }
 
-        sealed class Swing { public Fighter From, To; public float T; public bool Done; public Tech Tech; public Vector3 Start; }
-        sealed class Shot { public Fighter From, To; public Tech Tech; public Vector3 Pos, Dir; public float Travelled; public GameObject Go; }
+        sealed class Swing { public Fighter From, To; public float T; public bool Done; public Tech Tech; public Vector3 Start; public float Boost = 1f; }
+        sealed class Shot { public Fighter From, To; public Tech Tech; public Vector3 Pos, Dir; public float Travelled; public GameObject Go; public float Boost = 1f; }
         sealed class Pop { public string Text; public Vector3 Pos; public float T; public Color Col; }
         sealed class Throw { public int Item; public float T; public int Heal, Mana; }
 
@@ -218,6 +218,7 @@ namespace DW1Remake.Game
                         else if (action) { _menuOpen = false; Choose(_sel); }
                     }
                     else if (action) { _menuOpen = true; _sel = Mathf.Max(0, _orders.IndexOf(_order)); }
+                    if (_charging) { TickCharge(dt); TickSwings(dt); TickShots(dt); break; }
                     Gauge(Partner, dt); Gauge(Enemy, dt);
                     if (_time >= _retreatUntil) TickFighter(Partner, Enemy, dt); else MoveTo(Partner.T, Partner.A, _playerSlot - (_playerSlot - Partner.Slot).normalized * 1.5f, 4f, dt);
                     if (_retreatUntil > 0f && _time >= _retreatUntil) { _retreatUntil = 0f; Partner.T.rotation = _face(Enemy.T.position - Partner.T.position); }
@@ -320,11 +321,51 @@ namespace DW1Remake.Game
             if (isPartner && tech == null && _order == Learned[1]) me.Mp = Mathf.Min(me.MaxMp, me.Mp + me.MaxMp / 40);   // taking it easy lets MP come back
             me.NextAct = _time + Interval(me) * (0.9f + (float)_rng.NextDouble() * 0.3f);
             me.WanderWait = 0.2f; me.Wander = me.T.position;
-            _swings.Add(new Swing { From = me, To = foe, Tech = tech, Start = me.T.position });
             me.T.rotation = _face(foe.T.position - me.T.position);
+            if (tech != null && tech.Finisher)
+            {
+                _banner = tech.Name; _bannerUntil = _time + 2.6f;
+                if (isPartner) { _charging = true; _chargeT = 0f; _chargeFill = 0f; _chargeTech = tech; _chargeFoe = foe; return; }   // you charge it first (L1 + R1)
+                StartSwing(me, foe, tech, 1f + (float)_rng.NextDouble() * 0.5f);      // the enemy's finisher is not charged by anyone
+                return;
+            }
+            StartSwing(me, foe, tech, 1f);
+        }
+
+        void StartSwing(Fighter me, Fighter foe, Tech tech, float boost)
+        {
+            _swings.Add(new Swing { From = me, To = foe, Tech = tech, Start = me.T.position, Boost = boost });
             Play(me, tech != null && !tech.Melee ? TechSlot : AttackSlot, 0.9f);
-            if (tech != null && tech.Finisher) { _banner = tech.Name; _bannerUntil = _time + 1.8f; }
             Sync();
+        }
+
+        // the partner's finishing move: a bar over it fills as you press L1 and R1 (Q and E); the fuller it is, the stronger the blow (up to double)
+        bool _charging; float _chargeT, _chargeFill; Tech _chargeTech; Fighter _chargeFoe;
+        const float ChargeSeconds = 2.4f;
+
+        static int ChargePresses()
+        {
+            int n = 0;
+#if ENABLE_INPUT_SYSTEM
+            var k = UnityEngine.InputSystem.Keyboard.current;
+            if (k != null) { if (k.qKey.wasPressedThisFrame) n++; if (k.eKey.wasPressedThisFrame) n++; }
+#elif ENABLE_LEGACY_INPUT_MANAGER
+            if (Input.GetKeyDown(KeyCode.Q)) n++;
+            if (Input.GetKeyDown(KeyCode.E)) n++;
+#endif
+            return n;
+        }
+
+        void TickCharge(float dt)
+        {
+            _chargeT += dt;
+            _chargeFill = Mathf.Clamp01(_chargeFill + ChargePresses() * 0.08f - dt * 0.12f);
+            if (_chargeT >= ChargeSeconds)
+            {
+                _charging = false;
+                StartSwing(Partner, _chargeFoe, _chargeTech, 1f + _chargeFill);
+                Log(_chargeFill > 0.8f ? "Perfect!" : _chargeFill > 0.4f ? "Good!" : "");
+            }
         }
 
         void TickSwings(float dt)
@@ -343,13 +384,13 @@ namespace DW1Remake.Game
                 if (!sw.Done && sw.T >= 0.35f)
                 {
                     sw.Done = true;
-                    if (ranged && sw.Tech.Wide) Apply(sw.From, sw.To, sw.Tech);   // a wide technique covers the whole area: it cannot be dodged
+                    if (ranged && sw.Tech.Wide) Apply(sw.From, sw.To, sw.Tech, sw.Boost);   // a wide technique covers the whole area: it cannot be dodged
                     else if (ranged) Fire(sw);
                     else
                     {
                         // the blow lands only if the target is still within reach where the lunge ends
                         float reach = Vector3.Distance(Flat(sw.From.T.position), Flat(sw.To.T.position));
-                        if (reach <= 1.9f) Apply(sw.From, sw.To, sw.Tech);
+                        if (reach <= 1.9f) Apply(sw.From, sw.To, sw.Tech, sw.Boost);
                         else Miss(sw.To);
                     }
                 }
@@ -372,7 +413,7 @@ namespace DW1Remake.Game
             var mr = go.GetComponent<MeshRenderer>(); mr.sharedMaterial = new Material(_shotMat) { color = sw.Tech.Col };
             Vector3 p = from + dir * 0.8f + Vector3.up * 0.9f;
             go.transform.position = p;
-            _shots.Add(new Shot { From = sw.From, To = sw.To, Tech = sw.Tech, Pos = p, Dir = dir, Go = go });
+            _shots.Add(new Shot { From = sw.From, To = sw.To, Tech = sw.Tech, Pos = p, Dir = dir, Go = go, Boost = sw.Boost });
         }
 
         void TickShots(float dt)
@@ -384,7 +425,7 @@ namespace DW1Remake.Game
                 s.Pos += s.Dir * step; s.Travelled += step;
                 if (s.Go != null) s.Go.transform.position = s.Pos;
                 bool hit = Vector3.Distance(Flat(s.Pos), Flat(s.To.T.position)) < 0.85f;
-                if (hit) { Apply(s.From, s.To, s.Tech); }
+                if (hit) { Apply(s.From, s.To, s.Tech, s.Boost); }
                 if (hit || s.Travelled > 14f)
                 {
                     if (!hit) Miss(s.To);
@@ -398,10 +439,10 @@ namespace DW1Remake.Game
 
         void Miss(Fighter target) { _pops.Add(new Pop { Text = "MISS", Pos = target.T.position + Vector3.up * 1.2f, Col = new Color(0.8f, 0.85f, 1f) }); }
 
-        void Apply(Fighter a, Fighter d, Tech tech)
+        void Apply(Fighter a, Fighter d, Tech tech, float boost = 1f)
         {
             if (d.Hp <= 0) return;
-            float mult = tech != null ? tech.Mult : 0.45f;
+            float mult = (tech != null ? tech.Mult : 0.45f) * boost;
             float v = a.Off * mult * (0.85f + (float)_rng.NextDouble() * 0.3f) * 100f / (100f + d.Def * 0.8f);
             if (d.Guarding) v *= 0.5f;
             int dmg = Mathf.Max(1, Mathf.RoundToInt(v));
@@ -528,6 +569,19 @@ namespace DW1Remake.Game
                         else Floating(cam, _player.position + Vector3.up * 2.2f, "Your Call!", 36);
                     }
                 }
+                if (_charging && _phase == Phase.Fight)
+                {
+                    Vector3 sp = cam.WorldToScreenPoint(Partner.T.position + Vector3.up * 2.1f);
+                    if (sp.z > 0)
+                    {
+                        float w = Screen.height * 0.22f, h = Screen.height * 0.03f;
+                        var r = new Rect(sp.x - w / 2, Screen.height - sp.y, w, h);
+                        UiKit.Fill(new Rect(r.x - 3, r.y - 3, r.width + 6, r.height + 6), Color.black);
+                        UiKit.Fill(r, new Color(0.25f, 0.27f, 0.3f));
+                        UiKit.Fill(new Rect(r.x, r.y, r.width * _chargeFill, r.height), Color.Lerp(new Color(1f, 0.8f, 0.1f), new Color(1f, 0.25f, 0.1f), _chargeFill));
+                        Outlined(new Rect(r.x - 40, r.y - h * 2.2f, r.width + 80, 40), "L1 + R1 (Q + E)!", 30, Color.white, TextAnchor.MiddleCenter);
+                    }
+                }
                 foreach (var p in _pops) Floating(cam, p.Pos + Vector3.up * p.T * 0.9f, p.Text, 40, p.Col);
                 foreach (var th in _throws)   // the boy throws the item to the partner
                 {
@@ -613,8 +667,6 @@ namespace DW1Remake.Game
             UiKit.Fill(r, new Color(0.9f, 0.92f, 0.85f));
             UiKit.Fill(new Rect(r.x, r.y, r.width * Mathf.Clamp01(Enemy.Hp / (float)Enemy.MaxHp), r.height), new Color(0.95f, 0.3f, 0.3f));
             Outlined(new Rect(r.xMax - 80, r.y - h * 3.2f, 90, 30), Enemy.Hp.ToString(), 24, Color.white, TextAnchor.MiddleRight);
-            int letters = Mathf.Clamp(Mathf.FloorToInt(Enemy.Gauge), 0, 6);   // the enemy has its own gauge too
-            if (letters > 0) Outlined(new Rect(r.x, r.y + h + 2, 120, 26), "FINISH".Substring(0, letters), 22, new Color(1f, 0.9f, 0.2f));
         }
 
         void Menu()
