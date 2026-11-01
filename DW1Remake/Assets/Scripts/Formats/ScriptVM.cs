@@ -12,7 +12,7 @@ namespace DW1Remake.Formats
         // Partner / bag values the scripts set (0x34 set, 0x35 add). From the opening: 0-3 = offense, defense, speed, brains;
         // 4,5 = max HP, max MP; 6,7 = current HP, MP (0x35 with 9999 = refill); 8+ not understood yet.
         public ushort[] Stats = new ushort[32];
-        public int Money;                         // bits; the real game starts at 0 (0x2B is NOT money - its meaning is unknown)
+        public int Money;                         // bits; 0x2A adds, 0x2B takes away (the opening takes 50000 from 0, so the game starts at 0)
         public byte[] Bag = new byte[128];        // how many of each item the player carries (item number = position in the game's item list)
         public int BagKinds() { int n = 0; foreach (var b in Bag) if (b > 0) n++; return n; }
         public bool AddItem(int id, int n)
@@ -26,8 +26,25 @@ namespace DW1Remake.Formats
         public int Happiness = 50, Discipline = 50;   // partner care values 0-100 (starting numbers are guesses)
         public int Age, Weight = 15, Life = 3;
         public float PlayMinutes;                    // time played
+        // names and numbers the game's text boxes insert (text codes 4-12)
+        public string PlayerName = "A", PartnerName = "B";
+        public System.Func<int, string> SpeciesNameOf, ItemNameOf;   // Digimon / item names, read from the disc by the room
+        public System.Func<int, int> TimeValue;                      // arg 0x69 month, 0x6A day, 0x6B hour, 0x6C minute
+        public string CodeText(int code, int arg, int speaker = 255)
+        {
+            switch (code)
+            {
+                case 0x05: return PlayerName;    // the boy ("B, this isn't a dream" - Jijimon to the boy)
+                case 0x06: return PartnerName;   // the partner ("Take Agumon and explore", "Are you alright, Agumon" - checked in about 40 lines)
+                case 0x07: return SpeciesNameOf != null ? SpeciesNameOf(Vars[arg]) : "";
+                case 0x09: return ItemNameOf != null ? ItemNameOf(Vars[arg]) : "";
+                case 0x0A: return Money.ToString();
+                case 0x04: return TimeValue != null ? TimeValue(arg).ToString() : "0";
+                default: return "";   // codes not understood yet are left out
+            }
+        }
         public int ItemSlots;                     // 0x23: how many items the bag holds (10 at the start, 20/30 with each Dimensional Key Chain)
-        public byte[] ItemTable = new byte[256];  // 0x29 item id -> number (99 in the opening); exact meaning (shop stock?) not confirmed
+        public bool[] Techs = new bool[256];      // techniques the partner knows (0x2D teaches one)
         public void SetStat(int i, int v) { if (i >= 0 && i < Stats.Length) Stats[i] = (ushort)Math.Max(0, Math.Min(9999, v)); }
         public void AddStat(int i, int v)
         {
@@ -76,6 +93,7 @@ namespace DW1Remake.Formats
             {0x7C,8},{0x7D,10},{0x7E,4},{0xFB,6},{0xFC,2},{0xFD,2}
         };
 
+        static readonly Random Rng = new Random();
         static int S16(byte[] d, int o) { return (short)U16(d, o); }
         static int U16(byte[] d, int o) { return o + 1 < d.Length ? d[o] | d[o + 1] << 8 : 0; }
 
@@ -124,6 +142,7 @@ namespace DW1Remake.Formats
 
         byte[] Get(int id) { byte[] b; if (!cache.TryGetValue(id, out b)) { b = _scripts.GetScriptBytes(id); cache[id] = b; } return b; }
         void Note(string m) { if (log != null) log.Add(m); }
+        int Long(int o) { return d[o] | d[o + 1] << 8 | d[o + 2] << 16 | d[o + 3] << 24; }
 
         /// <summary>After a menu action: the player picked option i (0 based).</summary>
         public void Choose(int i)
@@ -200,7 +219,19 @@ namespace DW1Remake.Formats
                             int t = c & 0x38; bool s0;
                             if (t == 0) { bool f = st.GetFlag(U16(d, q)); q += 2; s0 = (c & 7) == 0 ? f : !f; }
                             else if (t == 8) { s0 = Compare(c, st.Vars[d[q]], d[q + 1]); q += 2; }
-                            else if (t == 32) { s0 = false; Note("game-state condition " + (c & 7) + " treated as false"); }
+                            else if (t == 32)
+                            {
+                                // game state: c&7 = what to test, then the thing tested, the compare mode (same modes as variables), and the value
+                                int thing = d[q], mode = d[q + 1];
+                                switch (c & 7)
+                                {
+                                    case 0: s0 = Compare(mode, thing < st.Stats.Length ? st.Stats[thing] : 0, U16(d, q + 2)); q += 4; break;   // partner value
+                                    case 2: s0 = mode == 1 ? !st.Techs[thing] : st.Techs[thing]; q += 2; break;   // technique known
+                                    case 4: s0 = Compare(mode, thing < st.Bag.Length ? st.Bag[thing] : 0, U16(d, q + 2)); q += 4; break;       // how many of an item
+                                    case 5: s0 = Compare(mode, st.Money, Long(q + 2)); q += 6; break;   // Bits
+                                    default: s0 = false; q += 2; Note("game-state condition " + (c & 7) + " treated as false"); break;
+                                }
+                            }
                             else if (t == 16 || t == 24)
                             {
                                 int off = U16(d, q); q += 2;
@@ -227,7 +258,7 @@ namespace DW1Remake.Formats
                             else if (c == 0x0D) { sb.Append('\n'); j += 2; }
                             else if (c == 0x01) j += 2;                       // colour
                             else if (c == 0x00) { j += 2; break; }
-                            else if (c < 0x20) { sb.Append("[name]"); j += 2; } // a value the game fills in (name, number, time...)
+                            else if (c < 0x20) { sb.Append(st.CodeText(c, d[j + 1], speaker)); j += 2; } // a value the game fills in (names, numbers, time...)
                             else j++;
                         }
                         p = j;
@@ -240,7 +271,12 @@ namespace DW1Remake.Formats
                     case 0x1D: st.SetFlag(U16(d, p + 2), false); p += 4; continue;
                     case 0x1E: st.Vars[d[p + 2]] = d[p + 3]; p += 4; continue;
                     case 0x23: st.ItemSlots = d[p + 1]; p += 2; continue;
-                    case 0x29: st.ItemTable[d[p + 2]] = d[p + 3]; p += 4; continue;
+                    case 0x24: st.Vars[d[p + 2]] = (byte)Rng.Next(d[p + 3] + 1); p += 4; continue;   // random number 0..n into a variable
+                    case 0x28: st.SetFlag(0, !st.AddItem(d[p + 2], d[p + 3])); p += 4; continue;     // give item; flag 0 = did not fit
+                    case 0x29: st.RemoveItem(d[p + 2], d[p + 3]); p += 4; continue;                  // take item
+                    case 0x2A: st.Money += Long(p + 2); p += 6; continue;
+                    case 0x2B: st.Money = Math.Max(0, st.Money - Long(p + 2)); p += 6; continue;
+                    case 0x2D: st.Techs[d[p + 1]] = true; p += 2; continue;                          // teach a technique
                     case 0x34: st.SetStat(d[p + 1], U16(d, p + 2)); p += 4; continue;
                     case 0x35: st.AddStat(d[p + 1], U16(d, p + 2)); p += 4; continue;
                     case 0x1F: st.Vars[d[p + 2]] = (byte)Math.Min(255, st.Vars[d[p + 2]] + d[p + 3]); p += 4; continue;

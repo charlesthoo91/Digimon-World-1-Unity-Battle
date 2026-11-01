@@ -144,7 +144,18 @@ namespace DW1Remake.Game
             _clock = StartHour;
             _scripts = MapScripts.Load(_disc);
             _menus = new GameMenus(_state, ItemCatalog.Load(_disc));
+            _menus.Icons = ItemIcons.Load(_disc);
             _menus.OnSleep = () => { _clock = (_clock + 8f) % 24f; _dayCount++; };
+            _menus.PlayerName = PlayerNameText; _menus.PartnerName = PartnerNameText;
+            _state.SpeciesNameOf = t =>
+            {
+                if (_entries == null) _entries = new List<DigimonEntry>(DigimonCatalog.Load(_disc));
+                foreach (var e in _entries) if (e.Type == t) return e.Name;
+                return "";
+            };
+            var itemList = ItemCatalog.Load(_disc);
+            _state.ItemNameOf = id => id >= 0 && id < itemList.Count ? itemList[id].Name : "";
+            _state.TimeValue = a => a == 0x69 ? 1 : a == 0x6A ? _dayCount + 1 : a == 0x6B ? (int)_clock : (int)((_clock % 1f) * 60f);
 
             if (NewGame) DigimonType = 0;       // the human boy
             DigimonEntry entry = null;
@@ -342,9 +353,57 @@ namespace DW1Remake.Game
         // the opening: the real script runs in TOPN01, goes to Jijimon's house, then out to File City
         void BeginNewGame()
         {
-            _intro = true;
             _state.Vars[103] = (byte)PartnerType;   // the opening picks the partner's starting stats by this (3 = Agumon)
-            if (!StartScript(54, null)) FinishIntro();
+            // first the character setup (Jijimon's questions and the name screens), then the opening script
+            _setup = new CharacterSetup(_scripts != null ? _scripts.GetDgEntry(0) : null, _menus);
+            _setup.DrawBackground = !BuildSetupStage();
+            _setup.OnDone = () => { DestroySetupStage(); _intro = true; if (!StartScript(54, null)) FinishIntro(); };
+            _setup.Start();
+        }
+
+        // ---- the black stage with Jijimon during the character setup
+        GameObject _stageCam, _stageJiji;
+
+        bool BuildSetupStage()
+        {
+            try
+            {
+                if (_entries == null) _entries = new List<DigimonEntry>(DigimonCatalog.Load(_disc));
+                if (_allTim == null) _allTim = _disc.ReadFile("/CHDAT/ALLTIM.TIM");
+                DigimonEntry je = null;
+                foreach (var e in _entries) if (e.Name == "Jijimon") { je = e; break; }
+                if (je == null) return false;
+                bool lit = MmdModel.UseLit; float br = MmdModel.Brightness;
+                MmdModel.UseLit = false; MmdModel.Brightness = 1f;
+                var go = MmdModel.Parse(_disc.ReadFile(je.MmdPath)).Build(je, _allTim);
+                MmdModel.UseLit = lit; MmdModel.Brightness = br;
+                const int layer = 31;
+                foreach (var t in go.GetComponentsInChildren<Transform>(true)) t.gameObject.layer = layer;
+                Vector3 origin = new Vector3(5000f, 0f, 0f);
+                go.transform.position = origin + new Vector3(0.77f, -1.44f, 0f);
+                go.transform.localScale = Vector3.one * 0.35f;
+                var an = go.GetComponent<DigimonAnimator>();
+                if (an != null) an.SetSlot(IdleSlot);
+                _stageJiji = go;
+                _stageCam = new GameObject("SetupCam");
+                var cam = _stageCam.AddComponent<Camera>();
+                cam.clearFlags = CameraClearFlags.SolidColor; cam.backgroundColor = Color.black;
+                cam.cullingMask = 1 << layer; cam.fieldOfView = 30f;
+                cam.depth = (_cam != null ? _cam.depth : 0f) + 50f;
+                cam.transform.position = origin + new Vector3(0f, 0f, -6f);
+                cam.transform.rotation = Quaternion.identity;
+                var ad = cam.GetUniversalAdditionalCameraData();
+                if (ad != null) ad.renderPostProcessing = false;
+                return true;
+            }
+            catch (System.Exception ex) { Debug.LogWarning("Setup stage failed: " + ex.Message); return false; }
+        }
+
+        void DestroySetupStage()
+        {
+            if (_stageCam != null) Destroy(_stageCam);
+            if (_stageJiji != null) Destroy(_stageJiji);
+            _stageCam = null; _stageJiji = null;
         }
 
         void FinishIntro()
@@ -1028,10 +1087,11 @@ namespace DW1Remake.Game
             if (OverlayKeyPressed()) { ShowOverlays = !ShowOverlays; if (_overlayRoot != null) _overlayRoot.SetActive(ShowOverlays); }
             TickOverlayAnimations();
             if (_player == null || _map == null || _changing) return;
+            if (_setup != null && _setup.Active) { _setup.Tick(MenuStep(), GameMenus.SideStep(), ActionPressed(), GameMenus.CancelKey()); return; }
             _state.PlayMinutes += Time.deltaTime / 60f;
             if (_menus != null)
             {
-                _menus.PlayerName = PlayerNameText; _menus.PartnerName = PartnerNameText; _menus.Species = _partnerName; _menus.Day = _dayCount + 1;
+                _menus.Species = _partnerName; _menus.Day = _dayCount + 1;
                 if (_menus.Active) { _menus.Tick(MenuStep(), GameMenus.SideStep(), ActionPressed(), GameMenus.CancelKey()); return; }
                 if (_runner == null)
                 {
@@ -1101,6 +1161,7 @@ namespace DW1Remake.Game
 
         bool _showStats;
         GameMenus _menus;
+        CharacterSetup _setup;
         int _speaker = 255, _dayCount;
         [Tooltip("Name shown for the boy in menus and dialogue (the real game lets the player type one).")] public string PlayerNameText = "A";
         [Tooltip("Name shown for the partner.")] public string PartnerNameText = "B";
@@ -1122,8 +1183,7 @@ namespace DW1Remake.Game
             string[] names = { "Offense", "Defense", "Speed", "Brains", "Max HP", "Max MP", "HP", "MP" };
             var sb = new System.Text.StringBuilder("Partner (F4)" + System.Environment.NewLine);
             for (int i = 0; i < names.Length; i++) sb.Append(names[i]).Append(": ").Append(s.Stats[i]).Append(System.Environment.NewLine);
-            int known = 0; foreach (var b in s.ItemTable) if (b != 0) known++;
-            sb.Append("Money: ").Append(s.Money).Append("   Bag slots: ").Append(s.ItemSlots).Append("   Item table entries: ").Append(known);
+            sb.Append("Money: ").Append(s.Money).Append("   Bag slots: ").Append(s.ItemSlots).Append("   Items: ").Append(s.BagKinds());
             GUI.Box(new Rect(10, 40, 330, 190), sb.ToString());
         }
 
@@ -1378,8 +1438,8 @@ namespace DW1Remake.Game
         string SpeakerName(int id, out Color c)
         {
             c = UiKit.Yellow;
-            if (id == 0xFD) { c = new Color(0.55f, 0.65f, 1f); return PlayerNameText; }
-            if (id == 0xFC) { c = new Color(0.55f, 0.65f, 1f); return PartnerNameText; }
+            if (id == 0xFD) { c = new Color(0.55f, 0.65f, 1f); return _menus != null ? _menus.PlayerName : PlayerNameText; }
+            if (id == 0xFC) { c = new Color(0.55f, 0.65f, 1f); return _menus != null ? _menus.PartnerName : PartnerNameText; }
             foreach (var n in _npcs) if (n.Data.Script == id) return n.Name;
             return "";
         }
@@ -1395,9 +1455,14 @@ namespace DW1Remake.Game
             {
                 string name = Path.GetFileNameWithoutExtension(MapPath);
                 string pn = _curPalette == 0 ? "day" : _curPalette == 1 ? "evening" : "night";
-                GUI.Label(new Rect(10, 10, 1400, 24), "Map " + name + "   " + ((int)_clock).ToString("00") + ":" + ((int)((_clock % 1f) * 60f)).ToString("00") + " " + pn + " (T = +1 hour)   |   Arrow keys/WASD walk, Space = action, F1 = walking grid, F2 = foreground on/off, F3 = names, Tab = menu, F4 = stats, I = bag, F5 = shop (test), F6 = +1000 Bits and items (test)   |   grid value here: " + _map.CollisionAt(_player.position.x / Unit, _player.position.z / Unit));
+                GUI.Label(new Rect(10, 10, 1400, 24), "Map " + name + "   " + ((int)_clock).ToString("00") + ":" + ((int)((_clock % 1f) * 60f)).ToString("00") + " " + pn + " (T = +1 hour)   |   Arrow keys/WASD walk, Space = action, F1 = walking grid, F2 = foreground on/off, F3 = names, Tab = menu, F4 = stats, I = bag"
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+                    + ", F5 = shop (test), F6 = +1000 Bits and items (test)"
+#endif
+                    + "   |   grid value here: " + _map.CollisionAt(_player.position.x / Unit, _player.position.z / Unit));
             }
             if (_showStats) DrawStats();
+            if (_setup != null && _setup.Active) { _setup.OnGUI(); return; }
             if (_menus != null) _menus.OnGUI();
             if (ShowNames && _player != null && _map != null && !_changing)
             {

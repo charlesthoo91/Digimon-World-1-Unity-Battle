@@ -72,6 +72,17 @@ namespace DW1Remake.Formats
             return r;
         }
 
+        /// <summary>The bytes of entry 'index' of the DG.SCN table, counting from 0 (GetScriptBytes(0) is MAPHEAD instead). Entry 0 holds the character-setup text.</summary>
+        public byte[] GetDgEntry(int index)
+        {
+            if (!Available || index < 0 || index >= 2047) return null;
+            long a = _table[index], b = _table[index + 1];
+            if (a == 0 || b <= a || b > _dg.Length) return null;
+            var r = new byte[b - a];
+            Array.Copy(_dg, (int)a, r, 0, r.Length);
+            return r;
+        }
+
         internal static string Pair(int w)
         {
             if (w >= 0x824F && w <= 0x8258) return ((char)('0' + w - 0x824F)).ToString();

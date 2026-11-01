@@ -15,7 +15,7 @@ namespace DW1Remake.Game
     /// </summary>
     public sealed class GameMenus
     {
-        enum Mode { None, Main, Bag, Buy, Sell, Digimon, Player, Msg }
+        enum Mode { None, Main, Bag, Buy, Sell, Digimon, Player, Msg, Name }
 
         readonly ScriptState _s;
         readonly List<ItemEntry> _items;
@@ -24,9 +24,17 @@ namespace DW1Remake.Game
         string _msg = "";
 
         // filled in by the room every frame
-        public string PlayerName = "A", PartnerName = "B", Species = "Agumon";
+        public string PlayerName { get { return _s.PlayerName; } set { _s.PlayerName = value; } }
+        public string PartnerName { get { return _s.PartnerName; } set { _s.PartnerName = value; } }
+        public string Species = "Agumon";
         public int Day = 1;
-        public System.Action OnSleep;
+        public ItemIcons Icons;
+        public System.Action OnSleep, OnNameDone;
+        int _nameStage;
+        string _input = "";
+
+        /// <summary>The name screens at the start of a new game: first the boy, then the partner. Calls OnNameDone when finished.</summary>
+        public void OpenNameEntry() { _mode = Mode.Name; _nameStage = 0; _input = PlayerName; }
 
         public GameMenus(ScriptState state, List<ItemEntry> items) { _s = state; _items = items; }
 
@@ -50,7 +58,7 @@ namespace DW1Remake.Game
             var l = new List<int>();
             for (int i = 0; i < _items.Count; i++)
             {
-                if (_mode == Mode.Buy) { if (_s.ItemTable[i] > 0) l.Add(i); }
+                if (_mode == Mode.Buy) { if (_items[i].Price > 0 && _items[i].Category <= 2) l.Add(i); }   // test stock until the real shop command is decoded
                 else if (_s.Bag[i] > 0) l.Add(i);
             }
             return l;
@@ -80,6 +88,8 @@ namespace DW1Remake.Game
                 case Mode.Msg:
                     if (action || cancel) { _mode = Mode.Main; }
                     return;
+                case Mode.Name:
+                    return;   // typing is handled in OnGUI
             }
             // bag and shop
             if (cancel) { GoBack(); return; }
@@ -153,6 +163,7 @@ namespace DW1Remake.Game
                 case Mode.Digimon: DrawDigimon(); break;
                 case Mode.Player: DrawPlayer(); break;
                 case Mode.Msg: DrawMsg(); break;
+                case Mode.Name: DrawName(); break;
             }
             UiKit.End();
         }
@@ -182,8 +193,89 @@ namespace DW1Remake.Game
                     UiKit.Fill(new Rect(tile.x - 6, tile.y - 6, tile.width + 12, tile.height + 12), new Color(1f, 0.75f, 0.1f));
                     UiKit.Fill(new Rect(tile.x - 1, tile.y - 1, tile.width + 2, tile.height + 2), new Color(0.12f, 0.18f, 0.22f));
                 }
-                UiKit.Fill(new Rect(cx - 40, cy - 40, 80, 80), cols[i]);   // simple placeholder icon in our own art
+                DrawIcon(i, cx, cy);
                 UiKit.Text(new Rect(cx - 80, cy + 62, 160, 50), names[i], 34, Color.white, TextAnchor.MiddleCenter);
+            }
+        }
+
+        // ---- icons (our own simple art)
+        static void Rot(float deg, float x, float y, Color c, Rect r)
+        {
+            var old = GUI.matrix;
+            GUIUtility.RotateAroundPivot(deg, new Vector2(x, y));
+            UiKit.Fill(r, c);
+            GUI.matrix = old;
+        }
+
+        static void DrawIcon(int i, float cx, float cy)
+        {
+            switch (i)
+            {
+                case 0:   // bag
+                    UiKit.Fill(new Rect(cx - 36, cy - 30, 72, 70), new Color(0.80f, 0.15f, 0.12f));
+                    UiKit.Fill(new Rect(cx - 40, cy - 42, 80, 26), new Color(0.55f, 0.08f, 0.08f));
+                    UiKit.Fill(new Rect(cx - 20, cy + 2, 40, 28), new Color(0.95f, 0.45f, 0.35f));
+                    UiKit.Fill(new Rect(cx - 8, cy - 52, 16, 14), new Color(0.9f, 0.8f, 0.2f));
+                    break;
+                case 1:   // a friendly creature face (original)
+                    UiKit.Fill(new Rect(cx - 40, cy - 30, 80, 70), new Color(0.95f, 0.85f, 0.25f));
+                    UiKit.Fill(new Rect(cx - 30, cy - 46, 22, 20), new Color(0.95f, 0.85f, 0.25f));
+                    UiKit.Fill(new Rect(cx + 8, cy - 46, 22, 20), new Color(0.95f, 0.85f, 0.25f));
+                    UiKit.Fill(new Rect(cx - 24, cy - 12, 14, 14), new Color(0.1f, 0.3f, 0.1f));
+                    UiKit.Fill(new Rect(cx + 10, cy - 12, 14, 14), new Color(0.1f, 0.3f, 0.1f));
+                    UiKit.Fill(new Rect(cx - 18, cy + 16, 36, 8), new Color(0.5f, 0.2f, 0.1f));
+                    break;
+                case 2:   // the player: face and cap
+                    UiKit.Fill(new Rect(cx - 30, cy - 18, 60, 62), new Color(0.88f, 0.66f, 0.5f));
+                    UiKit.Fill(new Rect(cx - 36, cy - 44, 72, 32), new Color(0.4f, 0.4f, 0.44f));
+                    UiKit.Fill(new Rect(cx - 36, cy - 18, 72, 8), new Color(0.3f, 0.3f, 0.34f));
+                    UiKit.Fill(new Rect(cx - 18, cy + 2, 10, 10), new Color(0.15f, 0.1f, 0.1f));
+                    UiKit.Fill(new Rect(cx + 8, cy + 2, 10, 10), new Color(0.15f, 0.1f, 0.1f));
+                    break;
+                case 3:   // praise: a heart
+                    Rot(45, cx, cy, new Color(0.95f, 0.25f, 0.4f), new Rect(cx - 28, cy - 22, 56, 56));
+                    UiKit.Fill(new Rect(cx - 38, cy - 40, 38, 38), new Color(0.95f, 0.25f, 0.4f));
+                    UiKit.Fill(new Rect(cx, cy - 40, 38, 38), new Color(0.95f, 0.25f, 0.4f));
+                    break;
+                case 4:   // scold: an angry face
+                    UiKit.Fill(new Rect(cx - 42, cy - 40, 84, 84), new Color(0.2f, 0.2f, 0.22f));
+                    Rot(20, cx - 22, cy - 14, new Color(0.9f, 0.2f, 0.15f), new Rect(cx - 38, cy - 20, 32, 8));
+                    Rot(-20, cx + 22, cy - 14, new Color(0.9f, 0.2f, 0.15f), new Rect(cx + 6, cy - 20, 32, 8));
+                    UiKit.Fill(new Rect(cx - 26, cy - 4, 14, 14), Color.white);
+                    UiKit.Fill(new Rect(cx + 12, cy - 4, 14, 14), Color.white);
+                    UiKit.Fill(new Rect(cx - 20, cy + 22, 40, 8), new Color(0.9f, 0.2f, 0.15f));
+                    break;
+                default:  // sleep: a bed with Zz
+                    UiKit.Fill(new Rect(cx - 44, cy - 10, 88, 46), new Color(0.2f, 0.4f, 0.3f));
+                    UiKit.Fill(new Rect(cx - 44, cy - 24, 88, 18), new Color(0.85f, 0.85f, 0.9f));
+                    UiKit.Text(new Rect(cx + 12, cy - 56, 60, 40), "Z", 40, Color.white, TextAnchor.MiddleCenter);
+                    UiKit.Text(new Rect(cx + 32, cy - 72, 50, 34), "z", 30, Color.white, TextAnchor.MiddleCenter);
+                    break;
+            }
+        }
+
+        void DrawName()
+        {
+            UiKit.Fill(new Rect(0, 0, UiKit.W, UiKit.H), new Color(0, 0, 0, 0.75f));
+            var box = new Rect(250, 330, 915, 330);
+            UiKit.Box(box, UiKit.PanelFill);
+            UiKit.Text(new Rect(box.x + 40, box.y + 30, box.width - 80, 70), _nameStage == 0 ? "What is your name?" : "What is the name of your partner?", 54, UiKit.Yellow, TextAnchor.MiddleLeft);
+            UiKit.Fill(new Rect(box.x + 40, box.y + 125, box.width - 80, 90), new Color(0.08f, 0.12f, 0.16f));
+            var st = new GUIStyle(GUI.skin.textField) { fontSize = 52, alignment = TextAnchor.MiddleLeft, fontStyle = FontStyle.Bold };
+            st.normal.textColor = Color.white; st.focused.textColor = Color.white;
+            st.normal.background = null; st.focused.background = null; st.hover.background = null;
+            GUI.SetNextControlName("nameField");
+            _input = GUI.TextField(new Rect(box.x + 55, box.y + 130, box.width - 110, 80), _input, 10, st);
+            GUI.FocusControl("nameField");
+            UiKit.Text(new Rect(box.x + 40, box.y + 240, box.width - 80, 60), "Type a name (up to 10 letters), then press Enter.", 34, UiKit.Grey, TextAnchor.MiddleLeft);
+            var e = Event.current;
+            if (e.type == EventType.KeyDown && (e.keyCode == KeyCode.Return || e.keyCode == KeyCode.KeypadEnter))
+            {
+                string n = _input.Trim();
+                if (n.Length == 0) n = _nameStage == 0 ? "A" : "B";
+                if (_nameStage == 0) { PlayerName = n; _nameStage = 1; _input = PartnerName; }
+                else { PartnerName = n; _mode = Mode.None; if (OnNameDone != null) OnNameDone(); }
+                e.Use();
             }
         }
 
@@ -202,7 +294,8 @@ namespace DW1Remake.Game
                 var it = _items[list[i]];
                 float y = box.y + 135 + (i - first) * 52;
                 if (i == _sel) UiKit.Fill(new Rect(box.x + 20, y, box.width - 40, 50), new Color(0.25f, 0.45f, 0.6f));
-                UiKit.Text(new Rect(box.x + 40, y, 600, 50), it.Name, 38, Color.white, TextAnchor.MiddleLeft);
+                if (Icons != null) GUI.DrawTextureWithTexCoords(new Rect(box.x + 32, y + 1, 48, 48), Icons.Sheet, Icons.Uv(it.Id));
+                UiKit.Text(new Rect(box.x + 92, y, 600, 50), it.Name, 38, Color.white, TextAnchor.MiddleLeft);
                 string right = _mode == Mode.Buy ? it.Price + " Bits" : "x " + _s.Bag[it.Id];
                 UiKit.Text(new Rect(box.x + 700, y, 360, 50), right, 38, Color.white, TextAnchor.MiddleRight);
             }
@@ -392,7 +485,9 @@ namespace DW1Remake.Game
         }
         public static bool ShopKey()
         {
-#if ENABLE_INPUT_SYSTEM
+#if !UNITY_EDITOR && !DEVELOPMENT_BUILD
+            return false;   // test key: development only
+#elif ENABLE_INPUT_SYSTEM
             var k = Keyboard.current; return k != null && k.f5Key.wasPressedThisFrame;
 #elif ENABLE_LEGACY_INPUT_MANAGER
             return Input.GetKeyDown(KeyCode.F5);
@@ -402,7 +497,9 @@ namespace DW1Remake.Game
         }
         public static bool GiveKey()
         {
-#if ENABLE_INPUT_SYSTEM
+#if !UNITY_EDITOR && !DEVELOPMENT_BUILD
+            return false;   // test key: development only
+#elif ENABLE_INPUT_SYSTEM
             var k = Keyboard.current; return k != null && k.f6Key.wasPressedThisFrame;
 #elif ENABLE_LEGACY_INPUT_MANAGER
             return Input.GetKeyDown(KeyCode.F6);
