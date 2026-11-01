@@ -13,6 +13,19 @@ namespace DW1Remake.Formats
         // 4,5 = max HP, max MP; 6,7 = current HP, MP (0x35 with 9999 = refill); 8+ not understood yet.
         public ushort[] Stats = new ushort[32];
         public int Money;                         // bits; the real game starts at 0 (0x2B is NOT money - its meaning is unknown)
+        public byte[] Bag = new byte[128];        // how many of each item the player carries (item number = position in the game's item list)
+        public int BagKinds() { int n = 0; foreach (var b in Bag) if (b > 0) n++; return n; }
+        public bool AddItem(int id, int n)
+        {
+            if (id < 0 || id >= Bag.Length || n <= 0) return false;
+            if (Bag[id] == 0 && ItemSlots > 0 && BagKinds() >= ItemSlots) return false;   // no free slot
+            if (Bag[id] + n > 99) return false;
+            Bag[id] += (byte)n; return true;
+        }
+        public void RemoveItem(int id, int n) { if (id >= 0 && id < Bag.Length) Bag[id] = (byte)Math.Max(0, Bag[id] - n); }
+        public int Happiness = 50, Discipline = 50;   // partner care values 0-100 (starting numbers are guesses)
+        public int Age, Weight = 15, Life = 3;
+        public float PlayMinutes;                    // time played
         public int ItemSlots;                     // 0x23: how many items the bag holds (10 at the start, 20/30 with each Dimensional Key Chain)
         public byte[] ItemTable = new byte[256];  // 0x29 item id -> number (99 in the opening); exact meaning (shop stock?) not confirmed
         public void SetStat(int i, int v) { if (i >= 0 && i < Stats.Length) Stats[i] = (ushort)Math.Max(0, Math.Min(9999, v)); }
@@ -36,6 +49,7 @@ namespace DW1Remake.Formats
     {
         public string Text;                  // text box
         public List<string> Options;         // a menu: the player must pick one (then call Choose)
+        public int Speaker = 255;            // who talks (0xFD = the player, 0xFC = the partner, 255 = nobody, otherwise a map Digimon's script number)
         public int Cmd = -1;                 // cutscene command (0x4C face, 0x4D angle, 0x4E walk, 0x4F camera, 0x6C place, 0x56 animation, 0x67 wait, 0x4A wait for all)
         public int Actor, Target, Frames;    // Actor: 0xFD = the player, 0xFC = the partner, otherwise the map Digimon whose script number matches
         public float X, Z, Angle;            // game units / game angle (4096 = full turn)
@@ -96,6 +110,7 @@ namespace DW1Remake.Formats
         readonly Dictionary<int, byte[]> cache = new Dictionary<int, byte[]>();
         readonly Stack<int[]> stack = new Stack<int[]>();
         byte[] d; int curId, p, steps;
+        int speaker = 255;
         int[] menuOffsets; List<string> menuOptions; int[] awaiting;
         /// <summary>Digimon slots the script switched on (command 0x47: Digimon type, slot in the map's Digimon list, flag).</summary>
         public readonly List<int[]> Spawns = new List<int[]>();
@@ -200,6 +215,7 @@ namespace DW1Remake.Formats
                         p = jumpTo >= 0 ? jumpTo : q;
                         continue;
                     }
+                    case 0x1B: speaker = d[p + 1]; p += 2; continue;
                     case 0x1A:
                     {
                         var sb = new StringBuilder();
@@ -217,7 +233,7 @@ namespace DW1Remake.Formats
                         p = j;
                         string text = sb.ToString().Trim('\n', ' ');
                         if (menuOffsets != null && menuOptions == null) { menuOptions = new List<string>(text.Split('\n')); continue; }
-                        if (text.Length > 0) return new ScriptAction { Text = text };
+                        if (text.Length > 0) return new ScriptAction { Text = text, Speaker = speaker };
                         continue;
                     }
                     case 0x1C: st.SetFlag(U16(d, p + 2), true); p += 4; continue;

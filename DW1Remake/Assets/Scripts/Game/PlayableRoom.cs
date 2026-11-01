@@ -143,6 +143,8 @@ namespace DW1Remake.Game
             MapCatalog.LoadImageCounts(_disc, out _num8, out _num4);
             _clock = StartHour;
             _scripts = MapScripts.Load(_disc);
+            _menus = new GameMenus(_state, ItemCatalog.Load(_disc));
+            _menus.OnSleep = () => { _clock = (_clock + 8f) % 24f; _dayCount++; };
 
             if (NewGame) DigimonType = 0;       // the human boy
             DigimonEntry entry = null;
@@ -375,7 +377,7 @@ namespace DW1Remake.Game
                 var a = _runner.Next();
                 if (a == null) { _runner = null; _line = null; _choiceOpts = null; _talkingTo = null; EndCutscene(); if (_intro) FinishIntro(); return; }
                 if (a.Cmd >= 0) { if (ExecCmd(a)) return; continue; }
-                if (a.Text != null) { _line = a.Text; _choiceOpts = null; _scriptAny = true; return; }
+                if (a.Text != null) { _line = a.Text; _speaker = a.Speaker; _choiceOpts = null; _scriptAny = true; return; }
                 if (a.Options != null) { _choiceOpts = a.Options; _choiceSel = 0; _scriptAny = true; return; }
                 if (a.Map >= 0 && DoChangeMap(a)) { _scriptAny = true; _runner = null; _line = null; _choiceOpts = null; _talkingTo = null; return; }
             }
@@ -989,7 +991,9 @@ namespace DW1Remake.Game
         void UpdateClock()
         {
             if (_map == null) return;
+            float before = _clock;
             if (AutoClock) _clock = (_clock + GameMinutesPerSecond / 60f * Time.deltaTime) % 24f;
+            if (_clock < before - 12f) _dayCount++;     // the clock wrapped past midnight
 #if ENABLE_INPUT_SYSTEM
             var k = Keyboard.current;
             if (k != null && k.tKey.wasPressedThisFrame) _clock = (Mathf.Floor(_clock) + 1f) % 24f;   // T = jump forward one hour
@@ -1024,6 +1028,19 @@ namespace DW1Remake.Game
             if (OverlayKeyPressed()) { ShowOverlays = !ShowOverlays; if (_overlayRoot != null) _overlayRoot.SetActive(ShowOverlays); }
             TickOverlayAnimations();
             if (_player == null || _map == null || _changing) return;
+            _state.PlayMinutes += Time.deltaTime / 60f;
+            if (_menus != null)
+            {
+                _menus.PlayerName = PlayerNameText; _menus.PartnerName = PartnerNameText; _menus.Species = _partnerName; _menus.Day = _dayCount + 1;
+                if (_menus.Active) { _menus.Tick(MenuStep(), GameMenus.SideStep(), ActionPressed(), GameMenus.CancelKey()); return; }
+                if (_runner == null)
+                {
+                    if (GameMenus.TriangleKey()) { _menus.OpenMain(); return; }
+                    if (GameMenus.BagKey()) { _menus.OpenBag(); return; }
+                    if (GameMenus.ShopKey()) { _menus.OpenShop(); return; }
+                    if (GameMenus.GiveKey()) _menus.DebugGive();
+                }
+            }
             UpdateNpcs();
             TickActors();
             if (_runner != null)
@@ -1083,6 +1100,10 @@ namespace DW1Remake.Game
         }
 
         bool _showStats;
+        GameMenus _menus;
+        int _speaker = 255, _dayCount;
+        [Tooltip("Name shown for the boy in menus and dialogue (the real game lets the player type one).")] public string PlayerNameText = "A";
+        [Tooltip("Name shown for the partner.")] public string PartnerNameText = "B";
         static bool StatsKeyPressed()
         {
 #if ENABLE_INPUT_SYSTEM
@@ -1354,6 +1375,15 @@ namespace DW1Remake.Game
             if (_shadow2 != null && _partner != null) _shadow2.position = new Vector3(_partner.position.x, 0.03f, _partner.position.z);
         }
 
+        string SpeakerName(int id, out Color c)
+        {
+            c = UiKit.Yellow;
+            if (id == 0xFD) { c = new Color(0.55f, 0.65f, 1f); return PlayerNameText; }
+            if (id == 0xFC) { c = new Color(0.55f, 0.65f, 1f); return PartnerNameText; }
+            foreach (var n in _npcs) if (n.Data.Script == id) return n.Name;
+            return "";
+        }
+
         void OnGUI()
         {
             if (!string.IsNullOrEmpty(_error))
@@ -1365,9 +1395,10 @@ namespace DW1Remake.Game
             {
                 string name = Path.GetFileNameWithoutExtension(MapPath);
                 string pn = _curPalette == 0 ? "day" : _curPalette == 1 ? "evening" : "night";
-                GUI.Label(new Rect(10, 10, 1400, 24), "Map " + name + "   " + ((int)_clock).ToString("00") + ":" + ((int)((_clock % 1f) * 60f)).ToString("00") + " " + pn + " (T = +1 hour)   |   Arrow keys/WASD walk, Space = action, F1 = walking grid, F2 = foreground on/off, F3 = names   |   grid value here: " + _map.CollisionAt(_player.position.x / Unit, _player.position.z / Unit));
+                GUI.Label(new Rect(10, 10, 1400, 24), "Map " + name + "   " + ((int)_clock).ToString("00") + ":" + ((int)((_clock % 1f) * 60f)).ToString("00") + " " + pn + " (T = +1 hour)   |   Arrow keys/WASD walk, Space = action, F1 = walking grid, F2 = foreground on/off, F3 = names, Tab = menu, F4 = stats, I = bag, F5 = shop (test), F6 = +1000 Bits and items (test)   |   grid value here: " + _map.CollisionAt(_player.position.x / Unit, _player.position.z / Unit));
             }
             if (_showStats) DrawStats();
+            if (_menus != null) _menus.OnGUI();
             if (ShowNames && _player != null && _map != null && !_changing)
             {
                 DrawName(_player, _playerName, new Color(1f, 0.95f, 0.5f));
@@ -1376,21 +1407,22 @@ namespace DW1Remake.Game
             }
             if (_runner != null && (_line != null || _choiceOpts != null))
             {
-                var st = new GUIStyle(GUI.skin.label) { fontSize = 20, wordWrap = true };
-                st.normal.textColor = Color.white;
-                float w = Mathf.Min(Screen.width - 40, 900);
-                string txt = _line ?? "";
+                UiKit.Begin();
+                var r = new Rect(135, 730, 1152, 275);
+                UiKit.Box(r, new Color(0.10f, 0.17f, 0.15f, 0.93f));
+                Color spc; string spk = SpeakerName(_speaker, out spc);
+                float ty = r.y + 28;
+                if (spk.Length > 0) { UiKit.Text(new Rect(r.x + 32, r.y + 12, 800, 60), spk, 48, spc); ty = r.y + 72; }
+                string body = _line ?? "";
+                UiKit.Text(new Rect(r.x + 32, ty, r.width - 64, r.height - (ty - r.y) - 10), body, 46, Color.white, TextAnchor.UpperLeft, true);
                 if (_choiceOpts != null)
                 {
-                    txt += "\n";
-                    for (int i = 0; i < _choiceOpts.Count; i++) txt += (i == _choiceSel ? "> " : "   ") + _choiceOpts[i] + "\n";
-                    txt += "(Up/Down + Space)";
+                    float oy = ty + (body.Length > 0 ? 62 : 0);
+                    for (int i = 0; i < _choiceOpts.Count; i++)
+                        UiKit.Text(new Rect(r.x + 32, oy + i * 54, r.width - 64, 54), (i == _choiceSel ? "> " : "   ") + _choiceOpts[i], 46, i == _choiceSel ? UiKit.Yellow : Color.white);
                 }
-                else txt += "   [Space]";
-                float h = Mathf.Max(110, st.CalcHeight(new GUIContent(txt), w - 28) + 20);
-                var box = new Rect((Screen.width - w) / 2, Screen.height - h - 20, w, h);
-                GUI.Box(box, "");
-                GUI.Label(new Rect(box.x + 14, box.y + 8, w - 28, h - 16), txt, st);
+                else if ((int)(Time.time * 2f) % 2 == 0) UiKit.Text(new Rect(r.xMax - 90, r.yMax - 70, 60, 50), "X", 40, new Color(0.5f, 0.6f, 1f), TextAnchor.MiddleCenter);
+                UiKit.End();
             }
             if (!string.IsNullOrEmpty(_message) && Time.time < _messageUntil) GUI.Label(new Rect(10, 34, 1400, 24), _message);
             if (_fade > 0.001f)
