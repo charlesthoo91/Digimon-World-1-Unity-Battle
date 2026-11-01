@@ -278,13 +278,21 @@ namespace DW1Remake.Game
                         return true;
                     }
                     break;
-                case 0x27:   // fight the Digimon whose script this is; the script goes on when the fight is over
-                    if (_talkingTo != null && _talkingTo.T != null && _battle != null && !_battle.Active)
+                case 0x66:   // the fight: enemy = actor in script variable 251 (unset = the Digimon being talked to); Frames = variable 250 (1 = no running away)
+                {
+                    Npc foe = null;
+                    if (a.Actor != 0 && a.Actor != 0xFF) foreach (var n in _npcs) if (n.Data.Script == a.Actor && n.T != null) { foe = n; break; }
+                    if (foe == null) foe = _talkingTo;
+                    if (foe != null && foe.T != null && _battle != null && !_battle.Active)
                     {
                         _line = null; _choiceOpts = null; _battleWait = true;
-                        StartBattle(_talkingTo);
+                        StartBattle(foe, a.Frames != 0);
                         return true;
                     }
+                    break;
+                }
+                case 0x48:   // an actor leaves the map
+                    foreach (var n in _npcs) if (n.Data.Script == a.Actor && n.T != null) { n.T.gameObject.SetActive(false); break; }
                     break;
                 case 0x67: _wait = a.Frames / 30f; return _wait > 0f;
                 case 0x4A: _waitAll = ActorsBusy(); return _waitAll;
@@ -533,7 +541,6 @@ namespace DW1Remake.Game
             foreach (var n in _npcs)
             {
                 if (n.T == null || n == _talkingTo || n == _battleNpc) continue;
-                if (Chase(n)) continue;
                 if (n.Path.Count == 0) continue;
                 if (n.Wait > 0) { n.Wait -= Time.deltaTime; if (n.Anim != null && n.Anim.Slot != IdleSlot) n.Anim.SetSlot(IdleSlot); continue; }
                 Vector3 pos = n.T.position, to = n.Path[n.Next] - pos; to.y = 0;
@@ -589,8 +596,8 @@ namespace DW1Remake.Game
             {
                 if (!Hostile(n)) continue;
                 Vector3 d = n.T.position - _player.position; d.y = 0;
-                if (d.magnitude > 1.5f) continue;
-                // the Digimon's own script shouts a line and then starts the fight (command 0x27); without one, fight at once
+                // they do not chase: walk up to one (scripted ones notice you from a bit further) and its own script runs: lines, then the fight (command 0x66)
+                if (d.magnitude > (n.Data.FollowMode == 16 ? 3.2f : 2.2f)) continue;
                 if (n.Data.Script > 0 && StartScript(n.Data.Script, n)) { Vector3 look = _player.position - n.T.position; look.y = 0; if (look.sqrMagnitude > 0.01f) n.T.rotation = FaceRot(look); return; }
                 StartBattle(n);
                 return;
@@ -600,24 +607,10 @@ namespace DW1Remake.Game
         // wild Digimon: follow mode 12 (wanders, chases when you come close) and 16 (scripted: chases you from anywhere on the map)
         static bool Hostile(Npc n) { return n.T != null && n.T.gameObject.activeInHierarchy && (n.Data.FollowMode == 12 || n.Data.FollowMode == 16); }
 
-        bool Chase(Npc n)
-        {
-            if (!Hostile(n) || _player == null || _runner != null || _intro || _changing || _battleCooldown > 0f || (_battle != null && _battle.Active)) return false;
-            if (_partner == null || !_partner.gameObject.activeInHierarchy) return false;
-            Vector3 to = _player.position - n.T.position; to.y = 0;
-            float dist = to.magnitude, range = n.Data.FollowMode == 16 ? 60f : 6f;
-            if (dist > range || dist < 1.2f) return false;
-            Vector3 dir = to / dist, pos = n.T.position;
-            float step = WalkSpeed * 0.75f * Time.deltaTime;
-            if (Free(pos + new Vector3(dir.x * step, 0, 0))) pos.x += dir.x * step;
-            if (Free(pos + new Vector3(0, 0, dir.z * step))) pos.z += dir.z * step;
-            n.T.position = pos;
-            n.T.rotation = Quaternion.RotateTowards(n.T.rotation, FaceRot(dir), TurnSpeed * Time.deltaTime);
-            if (n.Anim != null && n.Anim.Slot != WalkSlot) n.Anim.SetSlot(WalkSlot);
-            return true;
-        }
 
-        void StartBattle(Npc enemy)
+        Vector3 _prePlayerPos;
+
+        void StartBattle(Npc enemy, bool noFlee = false)
         {
             if (_state.Stats[4] == 0)   // not a New Game start: give the partner the opening's Agumon numbers so a fight can be tried
             {
@@ -627,8 +620,10 @@ namespace DW1Remake.Game
             }
             _battleNpc = enemy;
             if (_anim != null) _anim.SetSlot(IdleSlot);
-            _battle.Start(_partner, _partnerAnim, _menus != null ? _menus.PartnerName : _partnerName, DigimonStatsCatalog.Get(_disc, PartnerType),
-                          enemy.T, enemy.Anim, enemy.Name, DigimonStatsCatalog.Get(_disc, enemy.Data.Type));
+            _prePlayerPos = _player.position;
+            Vector3 right = _cam != null ? _cam.transform.right : Vector3.right;
+            _battle.Start(_player, _anim, _partner, _partnerAnim, _menus != null ? _menus.PartnerName : _partnerName, DigimonStatsCatalog.Get(_disc, PartnerType),
+                          enemy.T, enemy.Anim, enemy.Name, DigimonStatsCatalog.Get(_disc, enemy.Data.Type), right, noFlee);
             Debug.Log("[battle] " + _battle.Partner.Name + " vs " + enemy.Name + " (" + (_battle.Enemy.Info != null ? _battle.Enemy.Info.LevelName : "?") + ", HP " + _battle.Enemy.MaxHp + ", Off " + _battle.Enemy.Off + ")");
         }
 
@@ -637,7 +632,9 @@ namespace DW1Remake.Game
             if (_partnerAnim != null) _partnerAnim.SetSlot(IdleSlot);
             _battleCooldown = 5f;
             _trail.Clear();
-            if (_battle.Won && _battleNpc != null)
+            if (_anim != null) _anim.SetSlot(IdleSlot);
+            if (!Free(_player.position)) _player.position = _prePlayerPos;
+            if (_battle.Won && _battleNpc != null && !_battle.NoFlee)   // a beaten wild Digimon is gone; a scripted opponent (the first Agumon) stays for the script's ending
             {
                 if (_battleNpc.T != null) Destroy(_battleNpc.T.gameObject);
                 _npcs.Remove(_battleNpc);
