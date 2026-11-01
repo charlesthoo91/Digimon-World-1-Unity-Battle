@@ -90,8 +90,8 @@ namespace DW1Remake.Formats
                 case 0x8151: return "_";
                 case 0x815E: return "/";
                 case 0x8160: return "~";
-                case 0x8165: case 0x8166: return "'";
-                case 0x8168: case 0x8175: case 0x8176: return "\"";
+                case 0x8165: case 0x8166: case 0x8175: return "'";   // 0x8175 is this game's apostrophe (we're, it's)
+                case 0x8168: case 0x8176: return "\"";
                 case 0x8169: return "(";
                 case 0x816A: return ")";
                 case 0x817B: return "+";
