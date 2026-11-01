@@ -31,8 +31,12 @@ namespace DW1Remake.Game
             public int Flash = -1;
             public readonly List<Sprite> Sprites = new List<Sprite>();
             public readonly List<Model> Models = new List<Model>();
-            public int[] UvNum; public Vector2[] UvOff;
+            public int[] UvPtr, UvKey, UvFrame; public Vector2[] UvOff;
+            public readonly List<Emitter> Emitters = new List<Emitter>();
         }
+        // BTL_addParticleEmitter: a spray from the owner's place, one new spark a frame, up to 20
+        sealed class Spark { public int Dist, Vel; public Vector3 Dir, Pos; }
+        sealed class Emitter { public int Owner, Frames, Start, Vel, Acc, Kind; public Color Col; public readonly Spark[] Sparks = new Spark[20]; }
         sealed class Asset { public TimImage Tim; public Texture2D[] Tex = new Texture2D[16]; public Mesh[] Meshes; public int Width, Height; }
         sealed class Flash { public Vector3 Pos; public int T, Max; public float S0, S1; public Color C0, C1; }
 
@@ -125,7 +129,7 @@ namespace DW1Remake.Game
             for (int i = 0; i < subs; i++) r.Ctxs[i] = new Ctx { Src = src, Tgt = tgt };
             var asset = AssetOf(tech);
             int objs = asset.Meshes != null ? asset.Meshes.Length : 0;
-            r.UvOff = new Vector2[objs]; r.UvNum = new int[objs];
+            r.UvOff = new Vector2[objs]; r.UvPtr = new int[objs]; r.UvKey = new int[objs]; r.UvFrame = new int[objs];
             Exec(r, r.Ctxs[0], 0, 0, init);     // the program's setup
             Exec(r, r.Ctxs[0], 0, 0, start);    // and its first step
             if (_section == -1 && r.Ctxs[0].Inst == 0) return false;   // no bones listed for this Digimon
@@ -167,7 +171,58 @@ namespace DW1Remake.Game
                 Exec(r, c, c.Instance, c.Parent, c.Inst);
                 if (c.Inst != 0) alive = true;
             }
-            return alive;
+            for (int i = 0; i < r.UvPtr.Length; i++) StepUv(r, i);
+            StepEmitters(r);
+            return alive || r.Emitters.Count > 0;
+        }
+
+        // BTL_tickEFEUVAnimation: list of {frames, du, dv}; the offsets add up, as the game adds them into the model
+        void StepUv(Run r, int i)
+        {
+            int p = r.UvPtr[i];
+            if (p <= 0) return;
+            int n = I32(r.M, p);
+            if (n <= 0) return;
+            int key = p + 4 + r.UvKey[i] * 4;
+            if (++r.UvFrame[i] < S16(r.M, key)) return;
+            r.UvFrame[i] = 0;
+            r.UvKey[i] = (r.UvKey[i] + 1) % n;
+            key = p + 4 + r.UvKey[i] * 4;
+            r.UvOff[i] += new Vector2((sbyte)r.M[key + 2], (sbyte)r.M[key + 3]);
+        }
+
+        // BTL_tickParticleEmitters
+        void StepEmitters(Run r)
+        {
+            for (int i = r.Emitters.Count - 1; i >= 0; i--)
+            {
+                var e = r.Emitters[i];
+                if (I32(r.M, e.Owner) == -1 || --e.Frames <= 0) { r.Emitters.RemoveAt(i); continue; }
+                for (int k = 0; k < 20; k++)
+                    if (e.Sparks[k] == null || e.Sparks[k].Dist <= 0)
+                    {
+                        int rx = ((_rng.Next(128) - 64) << 12) / 64, ry = ((_rng.Next(128) - 64) << 12) / 64, rz = ((_rng.Next(128) - 64) << 12) / 64;
+                        e.Sparks[k] = new Spark
+                        {
+                            Dist = e.Start, Vel = e.Vel, Pos = new Vector3(I32(r.M, e.Owner + 4), I32(r.M, e.Owner + 8), I32(r.M, e.Owner + 12)),
+                            Dir = (RotZ(rz) * RotY(ry) * RotX(rx)).MultiplyVector(new Vector3(0, 0, e.Start))
+                        };
+                        break;
+                    }
+                foreach (var s in e.Sparks) if (s != null && s.Dist > 0) { s.Dist -= s.Vel; s.Vel -= e.Acc; }
+            }
+        }
+
+        void DrawEmitters(Run r, Camera cam)
+        {
+            foreach (var e in r.Emitters)
+                foreach (var s in e.Sparks)
+                {
+                    if (s == null || s.Dist <= 0 || e.Start == 0) continue;
+                    int f = e.Kind == 0 || e.Kind == 1 ? s.Dist << 4 : (e.Start - s.Dist) << 4;
+                    Vector3 g = s.Pos + s.Dir * (f / (float)e.Start / 256f);
+                    DrawQuad(_glow, ToUnity((int)g.x, (int)g.y, (int)g.z), 0.2f, 0.2f, 0f, new Rect(0, 0, 1, 1), e.Col, cam);
+                }
         }
 
         // ---------------------------------------------------------------- the machine
@@ -343,7 +398,7 @@ namespace DW1Remake.Game
                 case 1:
                 {
                     int ptr = Pop(); Pop(); int idx = Pop();
-                    if (idx >= 0 && idx < _r.UvNum.Length && ptr != -1) _r.UvNum[idx] = ptr;
+                    if (idx >= 0 && idx < _r.UvPtr.Length && ptr != -1) { _r.UvPtr[idx] = ptr; _r.UvKey[idx] = 0; _r.UvFrame[idx] = 0; _r.UvOff[idx] = Vector2.zero; }
                     break;
                 }
                 case 2: { int a = Pop(), b = Pop(); Put(m, _cur, 0); _ctx.Inst = b; _ctx.Some = a; break; }
@@ -393,7 +448,13 @@ namespace DW1Remake.Game
                 }
                 case 14: SetVec(Pop(), ToGame(_ctx.Tgt.T.position)); break;
                 case 15: Pop(); Pop(); break;
-                case 16: Pop(); Pop(); Pop(); Pop(); break;
+                case 16:
+                {
+                    int frames = Pop(), vec = Pop(), n = Pop(), kind = Pop();
+                    if (_r.Emitters.Count < 4)
+                        _r.Emitters.Add(new Emitter { Owner = _cur, Frames = frames, Kind = kind, Start = n * 16, Vel = n / 8 * 16, Acc = n / 160 * 16, Col = new Color(I32(m, vec) / 255f, I32(m, vec + 4) / 255f, I32(m, vec + 8) / 255f, 1f) });
+                    break;
+                }
                 case 17: { int o = Pop(); Put(m, o, _hitIndex == 0 ? 1 : -1); _hitIndex++; break; }
                 case 18: CreateFlash(); break;
                 case 19: Pop(); break;
@@ -541,10 +602,11 @@ namespace DW1Remake.Game
         {
             var a = AssetOf(r.Tech);
             foreach (var s in r.Sprites) DrawQuad(TextureOf(a, s.Row), s.Pos, s.W, s.H, s.Roll, s.Uv, s.Col, cam);
+            DrawEmitters(r, cam);
             if (a.Meshes == null) return;
             foreach (var o in r.Models)
             {
-                _mp.SetTexture("_MainTex", TextureOf(a, 0)); _mp.SetColor("_Color", Color.white); _mp.SetVector("_Rect", new Vector4(0, 0, 1, 1));
+                _mp.SetTexture("_MainTex", TextureOf(a, 0)); _mp.SetColor("_Color", Color.white); _mp.SetVector("_Rect", new Vector4(r.UvOff[o.Object].x / Mathf.Max(1, a.Width), r.UvOff[o.Object].y / Mathf.Max(1, a.Height), 1, 1));
                 Graphics.DrawMesh(a.Meshes[o.Object], o.M, _mat, 0, null, 0, _mp);
             }
         }
