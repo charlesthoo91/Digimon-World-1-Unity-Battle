@@ -743,6 +743,104 @@ namespace DW1Remake.Game
             p.CareMistakes = 0; p.Battles = 0;
         }
 
+        // ---------------------------------------------------------------- training (trn_reward.c)
+        public int LastLearned;
+
+        // TRN_calculateTrainingMultiplier, without the gym upgrades' flag argument: the game calls it with 0
+        int TrainMultiplier(int mode, bool manual)
+        {
+            int tt = Raise.TrainingType, num;
+            int[,] byType = { { 10, 10, 9, 11, 8 }, { 10, 9, 11, 10, 8 }, { 10, 11, 10, 9, 8 }, { 10, 10, 9, 11, 8 }, { 10, 11, 10, 9, 8 }, { 10, 9, 11, 10, 8 } };
+            num = byType[mode, tt > 3 ? 4 : tt];
+            int den = 10, level = Level;
+            num *= level <= 2 ? 9 : level == 3 ? 10 : level == 4 ? 11 : 12;
+            den *= 10;
+            if ((mode == 0 || mode == 3 || mode == 4) && _s.GetFlag(0xDB)) { num *= 6; den *= 5; }
+            if ((mode == 2 || mode == 1 || mode == 5) && _s.GetFlag(0xFB)) { num *= 6; den *= 5; }
+            if (P.Upgrades[mode] >= 10) { num *= 6; den *= 5; }
+            if (manual) { num *= 11; den *= 10; }
+            return num * 10 / den;
+        }
+
+        int Boosted(int v, int m, int bit)
+        {
+            return (P.TrainBoostFlag & bit) != 0 ? v * (m * P.TrainBoostValue) / 100 : v * m / 10;
+        }
+
+        /// <summary>The gains of a finished session, in the order HP, MP, Off, Def, Speed, Brains, and the hour that passes. kind: 0 HP, 1 Off, 2 Speed, 3 Def, 4 MP, 5 Brains.</summary>
+        public void Train(int kind, int[] g, bool manual)
+        {
+            for (int i = 0; i < 6; i++) g[i] = 0;
+            int m, tired;
+            if (Level < 3) P.Upgrades[kind == 1 ? 2 : kind == 2 ? 4 : kind == 4 ? 1 : kind]++;
+            switch (kind)
+            {
+                case 0: m = TrainMultiplier(0, manual); g[0] = Boosted(80, m, 0x10); g[2] = Boosted(2, m, 1); tired = 10; break;
+                case 1: m = TrainMultiplier(2, manual); g[2] = Boosted(8, m, 1); g[4] = Boosted(2, m, 4); tired = 9; break;
+                case 2: m = TrainMultiplier(4, manual); g[0] = Boosted(10, m, 0x10); g[4] = Boosted(8, m, 4); tired = 8; break;
+                case 3: m = TrainMultiplier(3, manual); g[3] = Boosted(8, m, 2); g[5] = Boosted(2, m, 8); tired = 9; break;
+                case 4: m = TrainMultiplier(1, manual); g[1] = Boosted(80, m, 0x20); g[3] = Boosted(2, m, 2); tired = 7; break;
+                default: m = TrainMultiplier(1, manual); g[1] = Boosted(10, m, 0x20); g[5] = Boosted(8, m, 8); tired = 6; break;
+            }
+            if (P.Tiredness == 100) for (int i = 0; i < 6; i++) if (g[i] > 0) g[i] = 1;
+            AdvanceTrainingTime(tired, 1, 1);
+        }
+
+        // TRN_advanceTrainingTime
+        void AdvanceTrainingTime(int tired, int energy, int happy)
+        {
+            var p = P;
+            p.Tiredness += tired; p.Energy -= energy; _s.Happiness -= happy;
+            if (p.Tiredness >= 70) { _s.Happiness -= 3; _s.Discipline -= 3; }
+            Hour++; Frame += 1200;
+            if (Hour >= 24) { _s.Age++; Hour -= 24; Frame -= 28800; if (OnNewDay != null) OnNewDay(); }
+            if (Hour % 4 == 0 && _s.Happiness < 80) p.Lifetime -= (_s.Happiness - 80) / -50 + 1;
+            if (Has(Sleepy)) { p.SicknessCounter++; p.MissedSleepHours++; }
+            if (Has(Hungry))
+            {
+                p.StarvationTimer -= 120;
+                if (p.StarvationTimer <= 0 && p.Energy < Raise.EnergyThreshold) p.CareMistakes++;
+            }
+            else p.FoodLevel -= 60;
+            p.Energy -= Raise.EnergyUsage;
+            if (Has(Poopy)) p.PoopingTimer -= 1200; else p.PoopLevel -= 6;
+            p.Lifetime--; p.EvoTimer++;
+            if (p.Lifetime < 0) p.Lifetime = 0;
+            if (Has(Injured)) p.InjuryTimer++;
+            if (Has(Sick)) p.SicknessTimer++;
+            Boundaries();
+        }
+
+        /// <summary>TRN_tryLearnMove: Brains passing 150, 250, 350 ... can teach a technique. Tables from TRN_REL.BIN.</summary>
+        public bool LearnFromTraining(byte[] trn, int kind)
+        {
+            if (kind != 5 || trn == null) return false;
+            int total = _s.Stats[3], before = total - 8;
+            int[] marks = { 150, 250, 350, 450, 550, 650, 750, 800, 850, 900, 950, 999 };
+            bool hit = false;
+            foreach (int m in marks) if (before < m && total >= m) hit = true;
+            if (!hit) return false;
+            const int order = 26956, chance = order + 56;
+            var info = InfoOf(PartnerType);
+            int best = -1, move = -1;
+            for (int i = 0; i < 3; i++)
+            {
+                int sp = info.Specials[i];
+                if (sp == 0xFF) continue;
+                for (int k = 0; k < 8; k++)
+                {
+                    int tech = trn[order + k + sp * 8];
+                    if (_s.Techs[tech] || System.Array.IndexOf(info.RawMoves, tech) < 0) continue;
+                    int w = (sbyte)trn[chance + k * 3 + i];
+                    if (w > best) { best = w; move = tech; }
+                    break;
+                }
+            }
+            if (move < 0 || best <= RandomLimit(100)) return false;
+            _s.Techs[move] = true; LastLearned = move;
+            return true;
+        }
+
         // ---------------------------------------------------------------- death and rebirth
         /// <summary>reincarnatePartner: the egg's starting numbers plus, after a natural death, Tamer Level percent of the old ones.</summary>
         public void Reincarnate(int babyType)

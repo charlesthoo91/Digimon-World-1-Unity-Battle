@@ -337,6 +337,7 @@ namespace DW1Remake.Game
                     {
                         if (ActorOf(a.Actor, out t, out an) && an != null) { Debug.Log("[anim] 0x64 releases the loop of actor 0x" + a.Actor.ToString("X")); an.ReleaseLoop(); }
                     }
+                    else if (a.Frames == 7) { _syncBit = false; Run(Training(_state.Vars[0xFE]), false); _waitAll = true; return true; }
                     else if (a.Frames == 0x1D) { _eggOpen = true; _eggSlot = 0; return true; }   // "Which egg do you want?" (script 212)
                     else if (a.Frames == 8 && _menus != null)   // the shop screen; the script switched on flag 0x180 + item for each item it sells
                     {
@@ -1918,6 +1919,7 @@ namespace DW1Remake.Game
         {
             DrawScreen();
             DrawCareOverlay();
+            DrawTraining();
             DrawDebugMenu();        // last, so nothing covers it
         }
 

@@ -25,6 +25,7 @@ namespace DW1Remake.Formats
         public int SukaHp, SukaMp, SukaOff, SukaDef, SukaSpeed, SukaBrain;   // the stats before turning into Sukamon
         public int ItemScoldFlag, EvolutionTarget = -1, ImmortalHour = -1, RaisedCount = 1, CurrentPoop;
         public bool NanimonTrigger, HasImmortalHour, IsNaturalDeath;
+        public int[] Upgrades = new int[6];                       // gym upgrade counters: HP, MP, Off, Def, Speed, Brains
         public PoopPile[] Piles = NewPiles();                     // WORLD_POOP
         static PoopPile[] NewPiles() { var a = new PoopPile[100]; for (int i = 0; i < a.Length; i++) a[i] = new PoopPile(); return a; }
     }
