@@ -14,7 +14,7 @@ namespace DW1Remake.Formats
 
         public sealed class Inst
         {
-            public short[] Frames = new short[8];   // piece numbers of the animation, -1 = end, -2 = blank frame
+            public short[] Frames = new short[8];   // piece numbers of the animation, -1 = end, -2 = hold the previous frame for its time
             public int[] Times = new int[8];        // how long each frame stays (ticks)
             public int X, Y;                        // top-left corner on the painted map (pixels)
             public int Flag;                        // 1 = hidden, 0x80 = free floating (snow)

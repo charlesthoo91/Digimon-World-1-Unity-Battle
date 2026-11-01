@@ -723,6 +723,7 @@ namespace DW1Remake.Game
 
                 int frames = 0;
                 for (int k = 0; k < 8 && inst.Frames[k] != -1; k++) frames++;
+                if (frames > 1) { var fs = new System.Text.StringBuilder(); for (int k = 0; k < 8; k++) fs.Append(inst.Frames[k]).Append('/').Append(inst.Times[k]).Append(' '); Debug.Log("[overlay anim] frames/times: " + fs); }
                 if (frames > 1) _ovAnims.Add(new OvAnim { T = go.transform, R = mr, I = inst, Cur = 0, Timer = 0, Dm = dm });
             }
         }
@@ -742,6 +743,7 @@ namespace DW1Remake.Game
                     a.Cur++;
                     if (a.Cur >= 8 || a.I.Frames[a.Cur] == -1) a.Cur = 0;
                     int f = a.I.Frames[a.Cur];
+                    if (f == -2) continue;                       // -2 = keep showing the last piece for this long (the PS1 game never blanks them)
                     if (f < 0 || f >= _overlay.Objects.Length) { a.R.enabled = false; continue; }
                     var mat = GetOverlayMaterial(f);
                     if (mat == null) continue;
