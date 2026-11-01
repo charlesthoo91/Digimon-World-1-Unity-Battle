@@ -60,7 +60,8 @@ namespace DW1Remake.Game
         public bool Won { get; private set; }
         public bool Fled { get; private set; }
         public bool NoFlee;                     // scripted fights (script variable 250 = 1): running away is locked
-        public Fighter Partner, Enemy;
+        public Fighter Partner, Enemy;           // Enemy = the one the partner is after; the others wait in Extras (up to three enemies, "Change target!")
+        readonly List<Fighter> Extras = new List<Fighter>();
         public BattleIcons Icons; public ItemIcons Items;
         public int LastItem = -1;               // the room tells which bag item was just used
 
@@ -142,6 +143,7 @@ namespace DW1Remake.Game
                           Transform enemy, DigimonAnimator enemyAnim, string enemyName, DigimonStats enemyInfo, MapDigimon enemyData, Vector3 right, bool noFlee, List<Vector2Int> route, Vector2Int startTile, float boyRadius)
         {
             NoFlee = noFlee;
+            Extras.Clear();
             Partner = new Fighter
             {
                 T = partner, A = partnerAnim, Name = partnerName, Info = partnerInfo,
@@ -232,6 +234,7 @@ namespace DW1Remake.Game
             float dt = Time.deltaTime; _time += dt;
             if (Effects != null) Effects.Tick(dt, Camera.main);
             Animate(Partner); Animate(Enemy);
+            foreach (var x in Extras) Animate(x);
             for (int i = _pops.Count - 1; i >= 0; i--) { _pops[i].T += dt; if (_pops[i].T > 1.2f) _pops.RemoveAt(i); }
             foreach (var f in new[] { Partner, Enemy })
             {
@@ -288,10 +291,11 @@ namespace DW1Remake.Game
                     if (action) { Snd(3); if (_playerA != null) _playerA.SetSlot(14, true); Choose(_hover - 1); }
                     if (_charging) { TickCharge(dt); TickSwings(dt); TickShots(dt); break; }
                     _acc += dt;
-                    while (_acc >= Frame) { _acc -= Frame; _frame++; FrameTick(Partner, Enemy); FrameTick(Enemy, Partner); if (_shoutFrame >= 0 && ++_shoutFrame > 20) _shoutFrame = -1; }
+                    while (_acc >= Frame) { _acc -= Frame; _frame++; FrameTick(Partner, Enemy); if (Enemy.Hp > 0) FrameTick(Enemy, Partner); foreach (var x in Extras) if (x.Hp > 0) FrameTick(x, Partner); if (_shoutFrame >= 0 && ++_shoutFrame > 20) _shoutFrame = -1; }
                     Move(Partner, Enemy, dt); Move(Enemy, Partner, dt);
+                    foreach (var x in Extras) if (x.Hp > 0) Move(x, Partner, dt);
                     TickSwings(dt); TickShots(dt);
-                    if (Enemy.Hp <= 0) Finish(true);
+                    if (Enemy.Hp <= 0) { if (!NextEnemy()) Finish(true); }
                     else if (Partner.Hp <= 0) Finish(false);
                     break;
                 case Phase.Win:
@@ -333,6 +337,32 @@ namespace DW1Remake.Game
             _statWait = 0;
         }
 
+        /// <summary>A second or third enemy of a scripted fight.</summary>
+        public void AddEnemy(Transform t, DigimonAnimator a, string name, DigimonStats info, MapDigimon data)
+        {
+            var f = new Fighter
+            {
+                T = t, A = a, Name = name, Info = info, Off = data.Off, Def = data.Def, Spd = data.Spd, Brain = data.Brain,
+                MaxHp = Mathf.Max(1, data.Hp), Hp = Mathf.Max(1, data.Hp), MaxMp = data.Mp, Mp = data.Mp, Scale = t.localScale
+            };
+            SetupTechs(f, info, data);
+            f.FinishMax = 3000 - f.Spd; f.Bore = f.Brain / 10 + 5; f.SelfUses = f.Brain < 400 ? f.Brain / 100 + 1 : f.Brain < 600 ? 4 : 5;
+            f.ShownHp = f.Hp;
+            _enemyBits += data.Bits;
+            t.rotation = _face(Partner.T.position - t.position);
+            Stand(f);
+            if (a != null) a.BodyMovesItself = true;
+            Extras.Add(f);
+        }
+
+        // the partner turns to the next living enemy; false when there is none
+        bool NextEnemy()
+        {
+            foreach (var x in Extras)
+                if (x.Hp > 0) { Extras.Remove(x); Extras.Add(Enemy); Enemy = x; _barFrames = 0; return true; }
+            return false;
+        }
+
         void SetPhase(Phase p) { _phase = p; _phaseStart = _time; if (p == Phase.Banner) { Snd(0x11); StartWord(); } }
 
         void End()
@@ -341,6 +371,7 @@ namespace DW1Remake.Game
             ClearShots();
             Active = false;
             foreach (var f in new[] { Partner, Enemy }) if (f.A != null) f.A.BodyMovesItself = false;
+            foreach (var f in Extras) if (f.A != null) f.A.BodyMovesItself = false;
         }
 
         // left moves on along the row, right back; Run is skipped in a scripted fight (main/battle_tick.c)
@@ -360,7 +391,7 @@ namespace DW1Remake.Game
                 _running = true; _runFrames = 0; _order = RunOrder; Shout("Run!");
                 return;
             }
-            if (o == ChangeOrder) { Shout("Change!"); return; }              // only one enemy so far
+            if (o == ChangeOrder) { Shout("Change!"); NextEnemy(); return; }
             _running = false;
             _order = o;
             int k = System.Array.IndexOf(OrderNames, o);
@@ -899,12 +930,18 @@ namespace DW1Remake.Game
         {
             int[] mine = { Partner.MaxHp, Partner.MaxMp, Partner.Off, Partner.Def, Partner.Spd, Partner.Brain };
             int[] foe = { Enemy.MaxHp, Enemy.MaxMp, Enemy.Off, Enemy.Def, Enemy.Spd, Enemy.Brain };
+            foreach (var x in Extras)
+            {
+                int[] v = { x.MaxHp, x.MaxMp, x.Off, x.Def, x.Spd, x.Brain };
+                for (int i = 0; i < 6; i++) if (v[i] > foe[i]) foe[i] = v[i];
+            }
+            int scale = Extras.Count == 0 ? 10 : Extras.Count == 1 ? 12 : 16;     // table 0x801344D0 by enemy count
             int hurt = (_startHp - Partner.Hp) * 100 / Partner.MaxHp;
             for (int i = 0; i < 6; i++)
             {
                 int own = mine[i] * 10; if (own == 0) own = 10;
-                if (foe[i] >= mine[i]) _gain[i] = (foe[i] * 10 + own - 1) / own;
-                else if (_rng.Next(100) < foe[i] * 1000 / own) _gain[i] = 1;
+                if (foe[i] >= mine[i]) _gain[i] = (foe[i] * scale + own - 1) / own;
+                else if (_rng.Next(100) < foe[i] * scale * 100 / own) _gain[i] = 1;
                 if (_gain[i] != 0) continue;
                 int second = i == 0 ? hurt : i == 1 || i == 2 ? _used * 10 : i == 3 ? _bigHits * 10 : i == 4 ? hurt / 2 + _blocks * 10 : (_used + _bigHits) * 5;
                 if (_rng.Next(100) < second) _gain[i] = 1;

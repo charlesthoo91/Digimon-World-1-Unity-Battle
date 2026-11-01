@@ -6,7 +6,7 @@ namespace DW1Remake.Game
     /// <summary>The partner's rules, each frame and for each action: hunger, toilet, sleep, tiredness, moods, sickness, food and items, evolution, rebirth. Port of the US game, bugs included (decompilation: main/partner_impl.c, item.c, evolution.c, evl/evl.c).</summary>
     public sealed partial class PartnerCare
     {
-        public bool WantWildPoop, WantLifeLost, WantEvolve, GotSick;   // the room acts on these
+        public bool WantWildPoop, WantLifeLost, WantEvolve, GotSick, WantAutoPilot;   // the room acts on these
         public int AreaResponse;                                       // 1 the map suits it, 2 the map does not
         public bool HasUsedEvoItem;                                    // as in the game, stays on until the program restarts
         public System.Func<int, int> EvoItemTarget;
@@ -420,7 +420,8 @@ namespace DW1Remake.Game
                 case 0x20:
                     if (Has(Poopy)) { P.PoopLevel = Raise.PoopTimer; P.Condition &= ~Poopy; PoopWeightLoss(); }
                     return;
-                default: return;   // 0x16, Auto Pilot, is a script of its own (section 0x4DD): not built yet
+                case 0x16: WantAutoPilot = true; return;      // Auto Pilot: a script of its own, section 0x4DD
+                default: return;
             }
             AddBase(4, hp, 9999); AddBase(5, mp, 9999); AddBase(0, off, 999); AddBase(1, def, 999); AddBase(2, speed, 999); AddBase(3, brain, 999);
             P.Lifetime += life; if (P.Lifetime < 0) P.Lifetime = 0;

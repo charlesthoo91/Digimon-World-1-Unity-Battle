@@ -338,7 +338,7 @@ namespace DW1Remake.Game
                     // 0x64 n = run built-in function n (variable 254 = its parameter, usually an actor)
                     if (a.Frames == 0x37)   // ends the endless lying loop of the actor (the boy waking up)
                     {
-                        if (ActorOf(a.Actor, out t, out an) && an != null) { Debug.Log("[anim] 0x64 releases the loop of actor 0x" + a.Actor.ToString("X")); an.ReleaseLoop(); }
+                        if (ActorOf(a.Actor, out t, out an) && an != null) { an.ReleaseLoop(); }
                     }
                     else if (a.Frames == 7) { _syncBit = false; Run(Training(_state.Vars[0xFE]), false); _waitAll = true; return true; }
                     else if (a.Frames == 0x1D) { _eggOpen = true; _eggSlot = 0; return true; }   // "Which egg do you want?" (script 212)
@@ -358,6 +358,12 @@ namespace DW1Remake.Game
                     {
                         _line = null; _choiceOpts = null; _battleWait = true;
                         StartBattle(foe, a.Frames != 0);
+                        foreach (int id in new[] { (int)_state.Vars[0xFC], (int)_state.Vars[0xFD] })     // the second and third enemy of a scripted fight
+                        {
+                            if (a.Frames == 0 || id == 0 || id == 0xFF) continue;
+                            foreach (var n in _npcs)
+                                if (n.Data.Script == id && n.T != null && n != foe) { _battle.AddEnemy(n.T, n.Anim, n.Name, DigimonStatsCatalog.Get(_disc, n.Data.Type), n.Data); break; }
+                        }
                         return true;
                     }
                     break;
@@ -420,8 +426,7 @@ namespace DW1Remake.Game
                 case 0x6C:
                     if (ActorOf(a.Actor, out t, out an))
                     {
-                        Debug.Log("[place] actor 0x" + a.Actor.ToString("X") + " -> (" + (a.X * Unit).ToString("F1") + ", " + (a.Z * Unit).ToString("F1") + "), player is at (" + _player.position.x.ToString("F1") + ", " + _player.position.z.ToString("F1") + ")");
-                        float zFix = a.Actor == 0xFC ? PartnerPlaceZOffset : 0f;   // measured against the PS1 game: Agumon starts further from the boy than the script's number
+                                                float zFix = a.Actor == 0xFC ? PartnerPlaceZOffset : 0f;   // measured against the PS1 game: Agumon starts further from the boy than the script's number
                         t.position = new Vector3(a.X * Unit, 0, a.Z * Unit + zFix);
                         _movers.Remove(t);
                     }
@@ -436,8 +441,7 @@ namespace DW1Remake.Game
                 }
                 case 0x56:
                     // the number is the animation slot of that Digimon (0 = idle, 2 = walk, ~29 = talking...); ignored if the model has no such slot
-                    Debug.Log("[anim] actor 0x" + a.Actor.ToString("X") + " slot " + a.Target + (ActorOf(a.Actor, out t, out an) && an != null ? " (model has " + an.SlotCount + " slots, has this slot: " + an.HasSlot(a.Target) + ", busy: " + an.Busy + ", walking: " + (_movers.ContainsKey(t) && _movers[t].Walking) + ")" : " - actor not found"));
-                    if (ActorOf(a.Actor, out t, out an) && an != null && !(_movers.ContainsKey(t) && _movers[t].Walking)) { an.QueueSlot(a.Target, a.Target != 0 && a.Target != 2); _animated.Add(an); }
+                                        if (ActorOf(a.Actor, out t, out an) && an != null && !(_movers.ContainsKey(t) && _movers[t].Walking)) { an.QueueSlot(a.Target, a.Target != 0 && a.Target != 2); _animated.Add(an); }
                     break;
             }
             return false;
@@ -638,11 +642,8 @@ namespace DW1Remake.Game
                 if (n.Anim != null) n.Anim.SetSlot(IdleSlot);
                 _npcs.Add(n);
             }
-            var sb = new System.Text.StringBuilder();
-            foreach (var n in _npcs) sb.Append(n.Name).Append(" (").Append(n.T.position.x.ToString("0.0")).Append(", ").Append(n.T.position.z.ToString("0.0")).Append(")  ");
             _battleCooldown = Mathf.Max(_battleCooldown, 2f);   // no fight in the first seconds after arriving
-            Debug.Log("[npcs] " + _mapNames[_mapId] + ": " + _npcs.Count + " of " + _map.Npcs.Count + " shown: " + sb);
-        }
+                    }
 
         void UpdateNpcs()
         {
@@ -937,6 +938,18 @@ namespace DW1Remake.Game
             _partnerAnim = go.GetComponent<DigimonAnimator>();
             if (_partnerAnim != null) _partnerAnim.DigimonType = PartnerType;
             if (_audio != null) _audio.SetPartner(PartnerType);
+        }
+
+        // the boy slides round his partner (collisionGrace); after half a second pressing against it he passes, so it cannot shut him in a corridor
+        float _pressing;
+        bool IntoPartner(Vector3 next)
+        {
+            if (_partner == null || !_partner.gameObject.activeInHierarchy || _pressing > 0.5f) { _pressing = Mathf.Max(0f, _pressing - Time.deltaTime); return false; }
+            float gap = (_menus.PartnerInfo != null ? _menus.PartnerInfo.Radius : 120) * 0.005f + 0.5f;     // half boxes: it should slide, not stop far away
+            Vector3 q = _partner.position, d0 = _player.position - q, d1 = next - q;
+            if (Mathf.Abs(d1.x) >= gap || Mathf.Abs(d1.z) >= gap || d1.sqrMagnitude >= d0.sqrMagnitude) return false;
+            _pressing += Time.deltaTime;
+            return true;
         }
 
         // the partner walks along the path you took, keeping some distance behind you
@@ -1257,8 +1270,7 @@ namespace DW1Remake.Game
                 int f0 = inst.Frames[0];
                 if (f0 < 0 || f0 >= _overlay.Objects.Length) continue;
                 var ob = _overlay.Objects[f0];
-                Debug.Log("[overlay piece] obj " + f0 + " pos " + inst.X + "," + inst.Y + " size " + ob.W + "x" + ob.H + " clut " + ob.Clut + " trans " + ob.Trans + " worldY " + ob.WY + " frames " + inst.Frames[0] + "," + inst.Frames[1]);
-
+                
                 // how far away it is decides whether it is in front of or behind the Digimon
                 Vector3 world = new Vector3(ob.WX, ob.WY, ob.WZ);
                 float z = Vector3.Dot(world - _vpG, _fG);
@@ -1279,7 +1291,7 @@ namespace DW1Remake.Game
 
                 int frames = 0;
                 for (int k = 0; k < 8 && inst.Frames[k] != -1; k++) frames++;
-                if (frames > 1) { var fs = new System.Text.StringBuilder(); for (int k = 0; k < 8; k++) fs.Append(inst.Frames[k]).Append('/').Append(inst.Times[k]).Append(' '); Debug.Log("[overlay anim] frames/times: " + fs); }
+                if (frames > 1) { var fs = new System.Text.StringBuilder(); for (int k = 0; k < 8; k++) fs.Append(inst.Frames[k]).Append('/').Append(inst.Times[k]).Append(' '); }
                 if (frames > 1) _ovAnims.Add(new OvAnim { T = go.transform, R = mr, I = inst, Cur = 0, Timer = 0, Dm = dm });
             }
         }
@@ -1646,6 +1658,7 @@ namespace DW1Remake.Game
                 return;
             }
             CheckCareRequests();
+            if (_care.WantAutoPilot) { _care.WantAutoPilot = false; StartDgSection(0x4DD); }
             if (_pBusy || _runner != null) return;
             if (_battleCooldown > 0f) _battleCooldown -= Time.deltaTime;
             if (!_changing) { TryStartBattle(); if (_battle != null && _battle.Active) return; if (_runner != null) return; }
@@ -1665,8 +1678,8 @@ namespace DW1Remake.Game
                 TickTamerWay();
                 Vector3 step = dir * (_anim != null ? _anim.TakeForward() : WalkSpeed * Time.deltaTime);
                 Vector3 pos = _player.position;
-                if (Free(pos + new Vector3(step.x, 0, 0))) pos.x += step.x;
-                if (Free(pos + new Vector3(0, 0, step.z))) pos.z += step.z;
+                if (Free(pos + new Vector3(step.x, 0, 0)) && !IntoPartner(pos + new Vector3(step.x, 0, 0))) pos.x += step.x;
+                if (Free(pos + new Vector3(0, 0, step.z)) && !IntoPartner(pos + new Vector3(0, 0, step.z))) pos.z += step.z;
                 _player.position = pos;
                 var target = Quaternion.LookRotation(-dir) * Quaternion.Euler(0, FacingOffset, 0);
                 _player.rotation = Quaternion.RotateTowards(_player.rotation, target, TurnSpeed * Time.deltaTime);

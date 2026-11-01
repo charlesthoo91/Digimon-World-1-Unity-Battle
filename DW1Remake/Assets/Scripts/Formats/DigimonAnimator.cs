@@ -166,8 +166,7 @@ namespace DW1Remake.Formats
                 {
                     if (_once)
                     {
-                        _held = true; Debug.Log("[anim] slot " + _slot + " finished at " + Time.realtimeSinceStartup.ToString("F1") + "s, body movement max loc " + _maxLoc + " rot " + _maxRot);
-                        if (_pending >= 0) { int ps = _pending; SetSlot(ps, _pendingOnce); }   // the queued animation starts now
+                        _held = true;                         if (_pending >= 0) { int ps = _pending; SetSlot(ps, _pendingOnce); }   // the queued animation starts now
                         break;
                     }                                   // finished: keep the last pose
                     _sim = new AnimSim(_anims[_slot], _nodes.Length);                    // finished: start over
@@ -175,7 +174,7 @@ namespace DW1Remake.Formats
                 }
                 moved = true;
             }
-            if (_once && _sim != null && _sim.Endless != _wasEndless) { _wasEndless = _sim.Endless; Debug.Log("[anim] slot " + _slot + " endless loop: " + _wasEndless + " at " + Time.realtimeSinceStartup.ToString("F1") + "s"); }
+            if (_once && _sim != null && _sim.Endless != _wasEndless) { _wasEndless = _sim.Endless; }
             if (moved) Apply();
         }
 
