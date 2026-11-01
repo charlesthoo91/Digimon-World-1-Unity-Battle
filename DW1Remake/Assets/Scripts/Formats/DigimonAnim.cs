@@ -194,6 +194,9 @@ namespace DW1Remake.Formats
             }
         }
 
+        /// <summary>True while the animation sits in a loop that never ends (loop count 0xFF), e.g. lying asleep.</summary>
+        public bool Endless { get { return _running && _loopCount == 0xFF; } }
+
         /// <summary>Advances one game tick. Returns false once the animation has finished.</summary>
         public bool Tick()
         {

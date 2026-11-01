@@ -283,6 +283,7 @@ namespace DW1Remake.Game
                 }
                 case 0x56:
                     // the number is the animation slot of that Digimon (0 = idle, 2 = walk, ~29 = talking...); ignored if the model has no such slot
+                    Debug.Log("[anim] actor 0x" + a.Actor.ToString("X") + " slot " + a.Target + (ActorOf(a.Actor, out t, out an) && an != null ? " (model has " + an.SlotCount + " slots, has this slot: " + an.HasSlot(a.Target) + ", busy: " + an.Busy + ", walking: " + (_movers.ContainsKey(t) && _movers[t].Walking) + ")" : " - actor not found"));
                     if (ActorOf(a.Actor, out t, out an) && an != null && !(_movers.ContainsKey(t) && _movers[t].Walking)) { an.QueueSlot(a.Target, a.Target != 0 && a.Target != 2); _animated.Add(an); }
                     break;
             }
