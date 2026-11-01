@@ -82,7 +82,11 @@ namespace DW1Remake.Game
         readonly List<Shot> _shots = new List<Shot>();
         readonly List<Pop> _pops = new List<Pop>();
         readonly List<Throw> _throws = new List<Throw>();
-        readonly int[] _before = new int[6], _gain = new int[6];
+        readonly int[] _before = new int[6], _gain = new int[6], _shown = new int[6], _left = new int[6];
+        int _bitsLeft, _statWait; float _countAcc; bool _fanfare;
+        public System.Action<int> Sfx;           // playSound(0, n)
+        public System.Action OnStopMusic;
+        void Snd(int n) { if (Sfx != null) Sfx(n); }
         int _bits, _enemyBits, _startHp, _used, _blocks, _bigHits;
         readonly List<int> _seen = new List<int>();     // the Tech page techniques the enemy used in this fight (the game keeps up to 12)
         string _learned, _dropped;
@@ -169,6 +173,7 @@ namespace DW1Remake.Game
 
             _route = route; _startTile = startTile; _boyRadius = boyRadius; _boyDone = false; _boyStart = 0f;       // a random fight: the boy goes back to the entrance he came in by
             _player = player; _playerA = playerAnim;
+            Snd(0x10);
             Active = true; Won = false; Fled = false; _phase = Phase.Notice; _time = 0f; _phaseStart = 0f; _running = false; _bannerUntil = 0f;
             _swings.Clear(); _pops.Clear(); _throws.Clear(); ClearShots(); _log = ""; _startHp = Partner.Hp;
             Partner.Scale = partner.localScale; Enemy.Scale = enemy.localScale;
@@ -277,8 +282,8 @@ namespace DW1Remake.Game
                 case Phase.Fight:
                     if (!_charging && SquarePressed() && Partner.Finisher != null && Partner.Finish >= Partner.FinishMax) { _wantFinish = true; Partner.Pending = null; Partner.Wait = 0; }
                     if (triangle) { if (OnOpenBag != null) OnOpenBag(); }
-                    if (side != 0) MoveHover(side);
-                    if (action) { if (_playerA != null) _playerA.SetSlot(14, true); Choose(_hover - 1); }
+                    if (side != 0) { Snd(2); MoveHover(side); }
+                    if (action) { Snd(3); if (_playerA != null) _playerA.SetSlot(14, true); Choose(_hover - 1); }
                     if (_charging) { TickCharge(dt); TickSwings(dt); TickShots(dt); break; }
                     _acc += dt;
                     while (_acc >= Frame) { _acc -= Frame; _frame++; FrameTick(Partner, Enemy); FrameTick(Enemy, Partner); if (_shoutFrame >= 0 && ++_shoutFrame > 20) _shoutFrame = -1; }
@@ -288,6 +293,16 @@ namespace DW1Remake.Game
                     else if (Partner.Hp <= 0) Finish(false);
                     break;
                 case Phase.Win:
+                    TickSwings(dt); TickShots(dt);
+                    if (!_fanfare && inPhase >= 41 * Frame) { _fanfare = true; Snd(0x18); }
+                    if (_fanfare && inPhase > 1.2f)
+                    {
+                        bool counting = _bitsLeft > 0 || HasLeft();
+                        if (counting && (action || cancel)) SkipCounting();
+                        else if (!counting && (action || cancel)) End();
+                        else { _countAcc += dt; while (_countAcc >= Frame) { _countAcc -= Frame; CountFrame(); } }
+                    }
+                    break;
                 case Phase.Lose:
                     TickSwings(dt); TickShots(dt);
                     if (inPhase > 3f && (action || cancel)) End();
@@ -298,7 +313,25 @@ namespace DW1Remake.Game
             }
         }
 
-        void SetPhase(Phase p) { _phase = p; _phaseStart = _time; if (p == Phase.Banner) StartWord(); }
+        bool HasLeft() { foreach (int v in _left) if (v > 0) return true; return false; }
+
+        // the result boxes (battle_ui.c): after 100 frames one stat point a frame, then one Bit a frame, each with sound 0x16; 0x17 when the Bits are done
+        void CountFrame()
+        {
+            if (_statWait > 0) { _statWait--; return; }
+            for (int i = 0; i < 6; i++)
+                if (_left[i] > 0) { Snd(0x16); _left[i]--; _shown[i]++; return; }
+            if (_bitsLeft > 0) { Snd(0x16); if (--_bitsLeft == 0) Snd(0x17); }
+        }
+
+        void SkipCounting()     // Cross or Triangle: everything lands at once
+        {
+            for (int i = 0; i < 6; i++) { _shown[i] += _left[i]; _left[i] = 0; }
+            if (_bitsLeft > 0) { _bitsLeft = 0; Snd(0x17); }
+            _statWait = 0;
+        }
+
+        void SetPhase(Phase p) { _phase = p; _phaseStart = _time; if (p == Phase.Banner) { Snd(0x11); StartWord(); } }
 
         void End()
         {
@@ -740,10 +773,11 @@ namespace DW1Remake.Game
             Vector3 dir = sw.From.Blind ? Flat(-sw.From.T.forward).normalized : (to - from).normalized;
             var go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
             var col = go.GetComponent<Collider>(); if (col != null) UnityEngine.Object.Destroy(col);
-            float size = sw.Tech.Finisher ? 0.8f : 0.3f;
-            go.transform.localScale = Vector3.one * size;
+            // a soft flame, 0.8 m long and 0.45 m wide in the recording (53.2 s, against Agumon's 2.5 m height); finishers are not measured
+            go.transform.localScale = sw.Tech.Finisher ? Vector3.one * 0.8f : new Vector3(0.45f, 0.45f, 0.8f);
+            go.transform.rotation = Quaternion.LookRotation(dir);
             if (_shotMat == null) _shotMat = new Material(Shader.Find("Sprites/Default"));
-            var mr = go.GetComponent<MeshRenderer>(); mr.sharedMaterial = new Material(_shotMat) { color = sw.Tech.Col };
+            var mr = go.GetComponent<MeshRenderer>(); mr.sharedMaterial = new Material(_shotMat) { color = sw.Tech.Finisher ? sw.Tech.Col : Color.Lerp(sw.Tech.Col, new Color(1f, 0.92f, 0.6f), 0.6f) };
             Vector3 p = from + dir * 0.8f + Vector3.up * 0.9f;
             go.transform.position = p;
             _shots.Add(new Shot { From = sw.From, To = sw.To, Tech = sw.Tech, Pos = p, Dir = dir, Go = go, Boost = sw.Boost });
@@ -754,7 +788,7 @@ namespace DW1Remake.Game
             for (int i = _shots.Count - 1; i >= 0; i--)
             {
                 var s = _shots[i];
-                float step = (s.Tech.Finisher ? 10f : 8f) * dt;
+                float step = (s.Tech.Finisher ? 10f : 18f) * dt;     // 3.6 m in 0.2 s in the recording
                 s.Pos += s.Dir * step; s.Travelled += step;
                 if (s.Go != null) s.Go.transform.position = s.Pos;
                 bool hit = Vector3.Distance(Flat(s.Pos), Flat(s.To.T.position)) < 0.85f;
@@ -792,12 +826,12 @@ namespace DW1Remake.Game
         // the hit in the recording: a white-yellow flash, then yellow sparks flying out for half a second
         void Burst(Vector3 pos, Color tint, float size, bool big)
         {
-            NewFx(pos, new Color(1f, 0.97f, 0.8f, 1f), 0.4f * size, 1.4f * size, 0.28f, Vector3.zero);
-            int n = big ? 14 : 7;
+            NewFx(pos, new Color(1f, 0.97f, 0.8f, 1f), 3.4f * size, 0.9f * size, 0.22f, Vector3.zero);    // 3.5 m wide at first, gone in about 0.2 s (53.4-53.6 s)
+            int n = big ? 34 : 7;     // about 35 sparks of 0.3 m, spreading about 2.5 m in 0.6 s (33.9 and 53.8 s)
             for (int i = 0; i < n; i++)
             {
                 Vector3 v = UnityEngine.Random.onUnitSphere; v.y = Mathf.Abs(v.y) * 0.8f + 0.2f;
-                NewFx(pos, Color.Lerp(new Color(1f, 0.9f, 0.35f), tint, 0.35f), 0.14f * size, 0.04f, 0.45f, v * UnityEngine.Random.Range(2f, 4f));
+                NewFx(pos, Color.Lerp(new Color(1f, 0.9f, 0.45f), tint, 0.25f), 0.32f * size, 0.2f, 0.7f, v * UnityEngine.Random.Range(1.5f, 4f));
             }
         }
 
@@ -975,7 +1009,10 @@ namespace DW1Remake.Game
             if (won)
             {
                 SetPhase(Phase.Win);
+                if (OnStopMusic != null) OnStopMusic();
+                Snd(0x15);
                 _bits = _enemyBits;
+                _bitsLeft = _bits; _statWait = 100; _countAcc = 0f; _fanfare = false;
                 _dropped = null;
                 if (Enemy.Info != null && _rng.Next(100) < Enemy.Info.DropChance && Enemy.Info.DropItem != 0xFF)    // the enemy's item, at its chance
                 {
@@ -986,6 +1023,7 @@ namespace DW1Remake.Game
                 int[] idx = { 4, 5, 0, 1, 2, 3 };
                 for (int i = 0; i < 6; i++) { _before[i] = _s.Stats[idx[i]]; _gain[i] = 0; }
                 StatGains();
+                for (int i = 0; i < 6; i++) { _shown[i] = _before[i]; _left[i] = _gain[i]; }
                 if (Partner.A != null) Partner.A.SetSlot(CheerSlot, true);
             }
             else
@@ -1317,23 +1355,22 @@ namespace DW1Remake.Game
         void ResultWindow()
         {
             string[] names = { "HP", "MP", "Off", "Def", "Speed", "Brain" };
-            bool grown = _time - _phaseStart > 2.2f;
             var box = new Rect(60, 60, 880, 600);
             UiKit.Box(box, new Color(0.12f, 0.2f, 0.16f, 0.95f));
             UiKit.Fill(new Rect(box.x + 600, box.y + 8, 5, box.height - 16), UiKit.Frame);
             for (int i = 0; i < 6; i++)
             {
                 float y = box.y + 30 + i * 90;
-                int v = _before[i] + (grown ? _gain[i] : 0);
+                int v = _shown[i];
                 UiKit.Text(new Rect(box.x + 30, y, 200, 70), names[i], 52, UiKit.Yellow, TextAnchor.MiddleLeft);
                 UiKit.Text(new Rect(box.x + 270, y - 8, 160, 60), v.ToString(), 48, Color.white, TextAnchor.MiddleRight);
                 UiKit.Bar(new Rect(box.x + 270, y + 48, 300, 14), i < 2 ? v / 1500f : v / 999f, UiKit.Cyan);
-                if (_gain[i] > 0) UiKit.Text(new Rect(box.x + 640, y, 220, 70), "^ " + _gain[i], 52, new Color(0.35f, 0.75f, 1f), TextAnchor.MiddleLeft);
+                if (_left[i] > 0) UiKit.Text(new Rect(box.x + 640, y, 220, 70), "^ " + _left[i], 52, new Color(0.35f, 0.75f, 1f), TextAnchor.MiddleLeft);
             }
             var bits = new Rect(60, 690, 880, 120);
             UiKit.Box(bits, new Color(0.12f, 0.2f, 0.16f, 0.95f));
             UiKit.Text(new Rect(bits.x + 30, bits.y + 20, 300, 80), "Bits", 56, UiKit.Yellow, TextAnchor.MiddleLeft);
-            UiKit.Text(new Rect(bits.x + 360, bits.y + 20, 480, 80), (_s.Money + (grown ? _bits : 0)).ToString() + (grown ? "" : "   (+" + _bits + ")"), 56, Color.white, TextAnchor.MiddleRight);
+            UiKit.Text(new Rect(bits.x + 360, bits.y + 20, 480, 80), (_s.Money + _bits - _bitsLeft).ToString() + (_bitsLeft > 0 ? "   (+" + _bitsLeft + ")" : ""), 56, Color.white, TextAnchor.MiddleRight);
             if (_learned != null) Outlined(new Rect(0, 50, 1415, 80), _learned + " learned!", 56, UiKit.Yellow, TextAnchor.MiddleCenter);
             if (_dropped != null) Outlined(new Rect(0, 130, 1415, 80), _dropped, 50, Color.white, TextAnchor.MiddleCenter);
         }

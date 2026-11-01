@@ -175,6 +175,8 @@ namespace DW1Remake.Game
             if (_audio != null)
             {
                 _state.OnSound = _audio.Play;
+                _battle.Sfx = n => _audio.Play(0, n);
+                _battle.OnStopMusic = _audio.StopMusic;
                 _state.OnBgm = id => _audio.SetBgm(id, _care.Hour);
                 _menus.Sfx = n => _audio.Play(0, n);
                 DigimonAnimator.SoundSink = (a, bank, val) =>
@@ -999,6 +1001,18 @@ namespace DW1Remake.Game
             }
 
             float step = _partnerAnim != null ? _partnerAnim.TakeForward() : WalkSpeed * Time.deltaTime;
+            // entityCheckCollision: the two are boxes of their radii, and it stops the moment it touches the boy, even in mid step
+            var boyInfo = DigimonStatsCatalog.Get(_disc, 0);
+            float touch = radius + (boyInfo != null ? boyInfo.Radius * 0.01f : 1f);
+            if (away < radius * 3.5f && Mathf.Abs(p.x - _partner.position.x) < touch && Mathf.Abs(p.z - _partner.position.z) < touch)
+            {
+                if (next == WalkSlot || next == 3 || next == RunSlot)
+                {
+                    next = IdleOrSlow;
+                    if (_partnerAnim != null) { _partnerAnim.SetSlot(next); _partnerStepEnd = Time.time + _partnerAnim.SecondsOf(next); }
+                }
+                step = 0f;
+            }
             if ((next == WalkSlot || next == 3 || next == RunSlot) && step > 0f)
             {
                 Vector3 pos = _partner.position, by = heading * step;
