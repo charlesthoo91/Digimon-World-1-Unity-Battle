@@ -22,7 +22,10 @@ namespace DW1Remake.Formats
     {
         public string Text;                  // text box
         public List<string> Options;         // a menu: the player must pick one (then call Choose)
-        public int Map = -1, Exit;           // map change
+        public int Cmd = -1;                 // cutscene command (0x4C face, 0x4D angle, 0x4E walk, 0x4F camera, 0x6C place, 0x56 animation, 0x67 wait, 0x4A wait for all)
+        public int Actor, Target, Frames;    // Actor: 0xFD = the player, 0xFC = the partner, otherwise the map Digimon whose script number matches
+        public float X, Z, Angle;            // game units / game angle (4096 = full turn)
+        public int Map = -1, Exit, Arrive = 255;   // map change (Arrive = script section to run on arrival, 255 = none)
     }
 
     /// <summary>
@@ -45,6 +48,7 @@ namespace DW1Remake.Formats
             {0x7C,8},{0x7D,10},{0x7E,4},{0xFB,6},{0xFC,2},{0xFD,2}
         };
 
+        static int S16(byte[] d, int o) { return (short)U16(d, o); }
         static int U16(byte[] d, int o) { return o + 1 < d.Length ? d[o] | d[o + 1] << 8 : 0; }
 
         static int SectionStart(byte[] d, int section)
@@ -208,9 +212,17 @@ namespace DW1Remake.Formats
                     case 0x1F: st.Vars[d[p + 2]] = (byte)Math.Min(255, st.Vars[d[p + 2]] + d[p + 3]); p += 4; continue;
                     case 0x20: st.Vars[d[p + 2]] = (byte)Math.Max(0, st.Vars[d[p + 2]] - d[p + 3]); p += 4; continue;
                     case 0x47: Spawns.Add(new int[] { d[p + 1], d[p + 2], d[p + 3] }); p += 4; continue;
+                    case 0x4A: { p += 2; return new ScriptAction { Cmd = 0x4A }; }
+                    case 0x4C: { var a = new ScriptAction { Cmd = op, Actor = d[p + 2], Target = d[p + 3] }; p += 4; return a; }
+                    case 0x4D: { var a = new ScriptAction { Cmd = op, Actor = d[p + 1], Angle = U16(d, p + 2) }; p += 4; return a; }
+                    case 0x4E: { var a = new ScriptAction { Cmd = op, Actor = d[p + 1], X = S16(d, p + 2), Z = S16(d, p + 4) }; p += 8; return a; }
+                    case 0x4F: { var a = new ScriptAction { Cmd = op, Frames = d[p + 1], X = S16(d, p + 2), Z = S16(d, p + 4) }; p += 6; return a; }
+                    case 0x6C: { var a = new ScriptAction { Cmd = op, Actor = d[p + 1], X = S16(d, p + 2), Z = S16(d, p + 4) }; p += 8; return a; }
+                    case 0x56: { var a = new ScriptAction { Cmd = op, Actor = d[p + 2], Target = d[p + 3] }; p += 4; return a; }
+                    case 0x67: { var a = new ScriptAction { Cmd = op, Frames = U16(d, p + 2) }; p += 4; return a; }
                     case 0x4B:
                     {
-                        var a = new ScriptAction { Map = d[p + 1], Exit = d[p + 2] };
+                        var a = new ScriptAction { Map = d[p + 1], Exit = d[p + 2], Arrive = d[p + 3] };
                         p = -1; return a;
                     }
                 }

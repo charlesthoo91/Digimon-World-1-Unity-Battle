@@ -141,6 +141,7 @@ namespace DW1Remake.Game
             _clock = StartHour;
             _scripts = MapScripts.Load(_disc);
 
+            if (NewGame) DigimonType = 0;       // the human boy
             DigimonEntry entry = null;
             foreach (var e in DigimonCatalog.Load(_disc)) if (e.Type == DigimonType) { entry = e; break; }
             if (entry == null) throw new InvalidDataException("Digimon type " + DigimonType + " not found.");
@@ -161,8 +162,15 @@ namespace DW1Remake.Game
 
             if (HasPartner) BuildPartner();
 
-            foreach (var f in InitialFlags) _state.SetFlag(f, true);
-            LoadMap(MapPath, -1);
+            if (NewGame)
+            {
+                int ti = _mapNames.IndexOf("TOPN01");        // the opening takes place here
+                if (ti >= 0) MapPath = MapCatalog.PathFor(_mapNames, ti);
+                _state.SetFlag(54, true); _state.SetFlag(55, true);      // the same flags as the game's own "Opening mode"
+            }
+            else foreach (var f in InitialFlags) _state.SetFlag(f, true);
+            LoadMap(MapPath, NewGame ? 9 : -1);
+            if (NewGame) BeginNewGame();
             if (Hd2D) SetupHd2DOnce();
         }
 
@@ -182,7 +190,157 @@ namespace DW1Remake.Game
         readonly ScriptState _state = new ScriptState();     // story flags and variables
         [Tooltip("Story flags that are on at the start of a game. Flag 54 = the early-game state (no debug Digimon in town).")]
         public int[] InitialFlags = { 54 };
+        [Tooltip("Start like a real new game: you arrive in File City (TWNA01) as the boy, the Digimon gather round and the opening scene plays. Tick it before pressing Play.")]
+        public bool NewGame = false;
+        bool _intro, _spawnAll;
+        int _arrive = 255;
         ScriptRunner _runner; string _line; List<string> _choiceOpts; int _choiceSel; bool _scriptAny;
+
+        // ------------------------------------------------------------------ cutscene commands (walk, turn, camera, wait)
+
+        sealed class Mover
+        {
+            public Transform T; public DigimonAnimator A;
+            public Vector3 Goal; public bool Walking;
+            public bool HasTurn; public Quaternion TurnTo;
+        }
+        readonly Dictionary<Transform, Mover> _movers = new Dictionary<Transform, Mover>();
+        readonly HashSet<DigimonAnimator> _animated = new HashSet<DigimonAnimator>();   // Digimon the script put into a special animation
+        float _wait; bool _waitAll;
+        bool _camOn; Vector3 _camPos, _camGoal; float _camSpeed;
+        const float ActorSpeed = 4f;      // metres per second for scripted walks
+
+        // actor 0xFD = the player, 0xFC = the partner, anything else = the map Digimon with that script number
+        bool ActorOf(int id, out Transform t, out DigimonAnimator a)
+        {
+            t = null; a = null;
+            if (id == 0xFD) { t = _player; a = _anim; }
+            else if (id == 0xFC) { t = _partner; a = _partnerAnim; }
+            else foreach (var n in _npcs) if (n.Data.Script == id) { t = n.T; a = n.Anim; break; }
+            return t != null && t.gameObject.activeInHierarchy;
+        }
+
+        Mover MoverFor(Transform t, DigimonAnimator a)
+        {
+            Mover m;
+            if (!_movers.TryGetValue(t, out m)) { m = new Mover { T = t, A = a }; _movers[t] = m; }
+            return m;
+        }
+
+        // the rotation that makes a Digimon look along a ground direction (the model's front is -Z)
+        Quaternion FaceRot(Vector3 dir)
+        {
+            dir.y = 0;
+            if (dir.sqrMagnitude < 1e-4f) return Quaternion.identity;
+            return Quaternion.LookRotation(-dir.normalized) * Quaternion.Euler(0, FacingOffset, 0);
+        }
+
+        bool ActorsBusy()
+        {
+            return _movers.Count > 0 || (_camOn && (_camPos - _camGoal).sqrMagnitude > 0.0004f);
+        }
+
+        // runs one cutscene command; true = the script must wait here
+        bool ExecCmd(ScriptAction a)
+        {
+            Transform t, t2; DigimonAnimator an, an2;
+            switch (a.Cmd)
+            {
+                case 0x67: _wait = a.Frames / 30f; return _wait > 0f;
+                case 0x4A: _waitAll = ActorsBusy(); return _waitAll;
+                case 0x4C:
+                    if (ActorOf(a.Actor, out t, out an) && ActorOf(a.Target, out t2, out an2))
+                    { var m = MoverFor(t, an); m.HasTurn = true; m.TurnTo = FaceRot(t2.position - t.position); }
+                    break;
+                case 0x4D:
+                    if (ActorOf(a.Actor, out t, out an))
+                    {
+                        float ang = a.Angle * 2f * Mathf.PI / 4096f;
+                        var m = MoverFor(t, an); m.HasTurn = true; m.TurnTo = FaceRot(new Vector3(-Mathf.Sin(ang), 0, -Mathf.Cos(ang)));
+                    }
+                    break;
+                case 0x4E:
+                    if (ActorOf(a.Actor, out t, out an))
+                    {
+                        var m = MoverFor(t, an); m.Goal = new Vector3(a.X * Unit, 0, a.Z * Unit); m.Walking = true;
+                        if (an != null) an.SetSlot(WalkSlot);
+                    }
+                    break;
+                case 0x6C:
+                    if (ActorOf(a.Actor, out t, out an))
+                    {
+                        t.position = new Vector3(a.X * Unit, 0, a.Z * Unit);
+                        _movers.Remove(t);
+                    }
+                    break;
+                case 0x4F:
+                {
+                    if (!_camOn) { _camOn = true; _camPos = _player.position; }
+                    _camGoal = new Vector3(a.X * Unit, 0, a.Z * Unit);
+                    float secs = Mathf.Max(0.1f, a.Frames / 30f);
+                    _camSpeed = (_camGoal - _camPos).magnitude / secs;
+                    break;
+                }
+                case 0x56:
+                    // the number is the animation slot of that Digimon (0 = idle, 2 = walk, ~29 = talking...); ignored if the model has no such slot
+                    if (ActorOf(a.Actor, out t, out an) && an != null && !(_movers.ContainsKey(t) && _movers[t].Walking)) { an.QueueSlot(a.Target, a.Target != 0 && a.Target != 2); _animated.Add(an); }
+                    break;
+            }
+            return false;
+        }
+
+        void TickActors()
+        {
+            if (_camOn) _camPos = Vector3.MoveTowards(_camPos, _camGoal, _camSpeed * Time.deltaTime);
+            if (_movers.Count == 0) return;
+            var list = new List<Mover>(_movers.Values);
+            foreach (var m in list)
+            {
+                if (m.T == null) { _movers.Remove(m.T); continue; }
+                if (m.Walking)
+                {
+                    Vector3 to = m.Goal - m.T.position; to.y = 0;
+                    float step = ActorSpeed * Time.deltaTime;
+                    if (to.magnitude <= step) { m.T.position = m.Goal; m.Walking = false; if (m.A != null) m.A.SetSlot(IdleSlot); }
+                    else
+                    {
+                        m.T.position += to.normalized * step;
+                        m.T.rotation = Quaternion.RotateTowards(m.T.rotation, FaceRot(to), 720f * Time.deltaTime);
+                    }
+                }
+                else if (m.HasTurn)
+                {
+                    m.T.rotation = Quaternion.RotateTowards(m.T.rotation, m.TurnTo, 540f * Time.deltaTime);
+                    if (Quaternion.Angle(m.T.rotation, m.TurnTo) < 1f) m.HasTurn = false;
+                }
+                if (!m.Walking && !m.HasTurn) _movers.Remove(m.T);
+            }
+        }
+
+        // a script ended (or changed map): stop scripted movement and give the camera back to the player
+        void EndCutscene()
+        {
+            foreach (var m in _movers.Values) if (m.A != null) m.A.SetSlot(IdleSlot);
+            foreach (var an in _animated) if (an != null) an.SetSlot(IdleSlot);
+            _animated.Clear();
+            _movers.Clear(); _camOn = false; _wait = 0f; _waitAll = false;
+        }
+
+        // the opening: the real script runs in TOPN01, goes to Jijimon's house, then out to File City
+        void BeginNewGame()
+        {
+            _intro = true;
+            if (!StartScript(54, null)) FinishIntro();
+        }
+
+        void FinishIntro()
+        {
+            if (!_intro) return;
+            _intro = false;
+            _state.SetFlag(55, false); _state.SetFlag(54, true);
+            if (_partner != null) { _partner.gameObject.SetActive(true); PlacePartner(_player.position, Vector3.back); }
+            Debug.Log("[new game] opening finished - you can walk around.");
+        }
 
         // starts a map script section (NPC talk, door trigger). False if it produced nothing.
         bool StartScript(int section, Npc who)
@@ -191,9 +349,10 @@ namespace DW1Remake.Game
             var log = new List<string>();
             _runner = new ScriptRunner(_scripts, _state, _scripts.ScriptIdForMap(_mapId), section, log);
             _talkingTo = who; _scriptAny = false; _line = null; _choiceOpts = null;
+            if (_anim != null) _anim.SetSlot(IdleSlot);
             AdvanceScript();
             foreach (var l in log) Debug.Log("[script section " + section + " in " + _mapNames[_mapId] + "] " + l);
-            return _scriptAny;
+            return _scriptAny || _runner != null;
         }
 
         // moves the running script to its next text box, menu or map change
@@ -202,7 +361,8 @@ namespace DW1Remake.Game
             while (_runner != null)
             {
                 var a = _runner.Next();
-                if (a == null) { _runner = null; _line = null; _choiceOpts = null; _talkingTo = null; return; }
+                if (a == null) { _runner = null; _line = null; _choiceOpts = null; _talkingTo = null; EndCutscene(); if (_intro) FinishIntro(); return; }
+                if (a.Cmd >= 0) { if (ExecCmd(a)) return; continue; }
                 if (a.Text != null) { _line = a.Text; _choiceOpts = null; _scriptAny = true; return; }
                 if (a.Options != null) { _choiceOpts = a.Options; _choiceSel = 0; _scriptAny = true; return; }
                 if (a.Map >= 0 && DoChangeMap(a)) { _scriptAny = true; _runner = null; _line = null; _choiceOpts = null; _talkingTo = null; return; }
@@ -215,7 +375,8 @@ namespace DW1Remake.Game
             string next = MapCatalog.PathFor(_mapNames, a.Map);
             if (!_disc.Exists(next) || !_disc.Exists(next.Substring(0, next.Length - 4) + ".TFS")) return false;
             Debug.Log("Script: " + _mapNames[_mapId] + " -> " + _mapNames[a.Map] + " exit " + a.Exit);
-            StartCoroutine(ChangeMap(next, a.Exit));
+            EndCutscene();
+            _arrive = a.Arrive; StartCoroutine(ChangeMap(next, a.Exit));
             return true;
         }
 
@@ -223,6 +384,7 @@ namespace DW1Remake.Game
         {
             foreach (var n in _npcs) if (n.T != null) Destroy(n.T.gameObject);
             _npcs.Clear(); _runner = null; _line = null; _choiceOpts = null; _talkingTo = null;
+            _movers.Clear(); _camOn = false; _wait = 0f; _waitAll = false; _animated.Clear();
         }
 
         void BuildNpcs()
@@ -243,11 +405,11 @@ namespace DW1Remake.Game
             }
             for (int ni = 0; ni < _map.Npcs.Count; ni++)
             {
-                if (!active.Contains(ni)) continue;
+                if (!active.Contains(ni) && !_spawnAll) continue;
                 var d = _map.Npcs[ni];
                 DigimonEntry entry = null;
                 foreach (var e in _entries) if (e.Type == d.Type) { entry = e; break; }
-                if (entry == null) continue;
+                if (entry == null) { Debug.LogWarning("[npcs] " + _mapNames[_mapId] + " #" + ni + ": Digimon type " + d.Type + " has no model entry - not shown."); continue; }
                 GameObject go;
                 try
                 {
@@ -268,6 +430,9 @@ namespace DW1Remake.Game
                 if (n.Anim != null) n.Anim.SetSlot(IdleSlot);
                 _npcs.Add(n);
             }
+            var sb = new System.Text.StringBuilder();
+            foreach (var n in _npcs) sb.Append(n.Name).Append(" (").Append(n.T.position.x.ToString("0.0")).Append(", ").Append(n.T.position.z.ToString("0.0")).Append(")  ");
+            Debug.Log("[npcs] " + _mapNames[_mapId] + ": " + _npcs.Count + " of " + _map.Npcs.Count + " shown: " + sb);
         }
 
         void UpdateNpcs()
@@ -835,9 +1000,15 @@ namespace DW1Remake.Game
             TickOverlayAnimations();
             if (_player == null || _map == null || _changing) return;
             UpdateNpcs();
+            TickActors();
             if (_runner != null)
             {
-                if (_anim != null && _anim.Slot != IdleSlot) _anim.SetSlot(IdleSlot);
+                if (_wait > 0f || _waitAll)
+                {
+                    _wait -= Time.deltaTime;
+                    if (_wait <= 0f && (!_waitAll || !ActorsBusy())) { _wait = 0f; _waitAll = false; AdvanceScript(); }
+                    return;
+                }
                 if (_choiceOpts != null)
                 {
                     int ms = MenuStep();
@@ -1074,6 +1245,9 @@ namespace DW1Remake.Game
             for (float t = 1f; t > 0f; t -= Time.deltaTime / Mathf.Max(0.01f, FadeSeconds)) { _fade = t; yield return null; }
             _fade = 0f;
             _changing = false;
+            int arrive = _arrive; _arrive = 255;
+            if (_intro && _mapId >= 0 && _mapNames[_mapId] == "TWNA01") FinishIntro();
+            else if (arrive != 255) StartScript(arrive, null);
         }
 
         void Say(string text) { _message = text; _messageUntil = Time.time + 3f; }
@@ -1107,7 +1281,7 @@ namespace DW1Remake.Game
         void LateUpdate()
         {
             if (_player == null || _map == null) return;
-            Vector3 focus = _player.position + Vector3.up * 1f;
+            Vector3 focus = (_camOn ? _camPos : _player.position) + Vector3.up * 1f;
 
             if (!_calibrated)
             {
