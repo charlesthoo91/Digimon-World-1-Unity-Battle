@@ -147,6 +147,12 @@ namespace DW1Remake.Game
             _menus.Icons = ItemIcons.Load(_disc);
             _battle = new Battle(_state, FaceRot);
             _battle.OnOpenBag = () => _menus.OpenBag();
+            _battle.Icons = BattleIcons.Load(_disc);
+            _menus.BIcons = _battle.Icons;
+            _menus.Faces = Portraits.Load(_disc);
+            _menus.PartnerInfo = DigimonStatsCatalog.Get(_disc, PartnerType);
+            if (_menus.PartnerInfo != null && _menus.PartnerInfo.Learnable.Count > 0) _state.Techs[_menus.PartnerInfo.Learnable[0]] = true;   // Agumon starts with Spit Fire
+            _battle.Items = _menus.Icons;
             _menus.OnSleep = () => { _clock = (_clock + 8f) % 24f; _dayCount++; };
             _menus.PlayerName = PlayerNameText; _menus.PartnerName = PartnerNameText;
             _state.SpeciesNameOf = t =>
@@ -541,6 +547,7 @@ namespace DW1Remake.Game
             foreach (var n in _npcs)
             {
                 if (n.T == null || n == _talkingTo || n == _battleNpc) continue;
+                if (ChaseScripted(n)) continue;
                 if (n.Path.Count == 0) continue;
                 if (n.Wait > 0) { n.Wait -= Time.deltaTime; if (n.Anim != null && n.Anim.Slot != IdleSlot) n.Anim.SetSlot(IdleSlot); continue; }
                 Vector3 pos = n.T.position, to = n.Path[n.Next] - pos; to.y = 0;
@@ -604,6 +611,26 @@ namespace DW1Remake.Game
             }
         }
 
+        [Tooltip("Metres per second of the scripted opponent (the first Agumon) when it runs after you. The real speed is not measured yet.")] public float ScriptedChaseSpeed = 4.6f;
+
+        // the scripted opponent (follow mode 16, the first Agumon) runs after you on its map until you fight it: the story cannot go on without that fight
+        bool ChaseScripted(Npc n)
+        {
+            if (!Hostile(n) || n.Data.FollowMode != 16 || _player == null || _runner != null || _intro || _changing || _battleCooldown > 0f || (_battle != null && _battle.Active)) return false;
+            if (_partner == null || !_partner.gameObject.activeInHierarchy) return false;
+            Vector3 to = _player.position - n.T.position; to.y = 0;
+            float dist = to.magnitude;
+            if (dist < 1.2f) return false;
+            Vector3 dir = to / dist, pos = n.T.position;
+            float step = ScriptedChaseSpeed * Time.deltaTime;
+            if (Free(pos + new Vector3(dir.x * step, 0, 0))) pos.x += dir.x * step;
+            if (Free(pos + new Vector3(0, 0, dir.z * step))) pos.z += dir.z * step;
+            n.T.position = pos;
+            n.T.rotation = Quaternion.RotateTowards(n.T.rotation, FaceRot(dir), TurnSpeed * Time.deltaTime);
+            if (n.Anim != null && n.Anim.Slot != WalkSlot) n.Anim.SetSlot(WalkSlot);
+            return true;
+        }
+
         // wild Digimon: follow mode 12 (wanders, chases when you come close) and 16 (scripted: chases you from anywhere on the map)
         static bool Hostile(Npc n) { return n.T != null && n.T.gameObject.activeInHierarchy && (n.Data.FollowMode == 12 || n.Data.FollowMode == 16); }
 
@@ -621,6 +648,7 @@ namespace DW1Remake.Game
             _battleNpc = enemy;
             if (_anim != null) _anim.SetSlot(IdleSlot);
             _prePlayerPos = _player.position;
+            if (_menus != null) _menus.LastUsedItem = -1;
             Vector3 right = _cam != null ? _cam.transform.right : Vector3.right;
             _battle.Start(_player, _anim, _partner, _partnerAnim, _menus != null ? _menus.PartnerName : _partnerName, DigimonStatsCatalog.Get(_disc, PartnerType),
                           enemy.T, enemy.Anim, enemy.Name, DigimonStatsCatalog.Get(_disc, enemy.Data.Type), right, noFlee);
@@ -1226,13 +1254,14 @@ namespace DW1Remake.Game
                 if (_menus.Active)
                 {
                     _menus.Tick(MenuStep(), GameMenus.SideStep(), ActionPressed(), GameMenus.CancelKey());
+                    if (_battle != null && _battle.Active && _menus.LastUsedItem >= 0) { _battle.LastItem = _menus.LastUsedItem; _menus.LastUsedItem = -1; }   // the boy throws it to the partner
                     if (!_menus.Active && _shopWait) { _shopWait = false; AdvanceScript(); }   // the shop closed: the script goes on
                     return;
                 }
                 if (_battle != null && _battle.Active)
                 {
                     _battle.ReadBack();
-                    _battle.Tick(MenuStep(), ActionPressed(), GameMenus.CancelKey());
+                    _battle.Tick(MenuStep(), ActionPressed(), GameMenus.TriangleKey() || GameMenus.BagKey(), GameMenus.CancelKey());   // Triangle opens the item page
                     if (!_battle.Active)
                     {
                         EndBattle();

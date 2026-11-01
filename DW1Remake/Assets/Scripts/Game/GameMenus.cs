@@ -30,6 +30,11 @@ namespace DW1Remake.Game
         public string Species = "Agumon";
         public int Day = 1;
         public ItemIcons Icons;
+        public BattleIcons BIcons;
+        public Portraits Faces;
+        public DigimonStats PartnerInfo;   // the partner's techniques (the Tech page greys out the ones it cannot use)
+        int _tr, _tc;                      // cursor on the Tech page: row, column
+        public int LastUsedItem = -1;   // set when a bag item was used (the battle shows it being thrown to the partner)
         public System.Action OnSleep, OnNameDone;
         int _nameStage;
         string _input = "";
@@ -85,6 +90,7 @@ namespace DW1Remake.Game
                 {
                     int n = _mode == Mode.Digimon ? 2 : 4;
                     if (cancel) { _mode = Mode.Main; return; }
+                    if (_mode == Mode.Digimon && _tab == 1) { TickTech(step, side, action); return; }
                     if (side != 0) _tab = (_tab + side + n) % n;
                     return;
                 }
@@ -151,6 +157,7 @@ namespace DW1Remake.Game
             else if (id == 7) { _s.AddStat(6, 1500); _s.AddStat(7, 1500); }
             else return "Can't use " + it.Name + " yet.";
             _s.RemoveItem(id, 1);
+            LastUsedItem = id;
             return "Used " + it.Name + ".  HP " + _s.Stats[6] + "/" + _s.Stats[4] + "  MP " + _s.Stats[7] + "/" + _s.Stats[5];
         }
 
@@ -363,20 +370,94 @@ namespace DW1Remake.Game
             }
         }
 
+        // ---- the Tech page (layout of the PS1 game): Techset on top, 7 rows of 8 techniques below
+        static readonly int[] RowStarts = { 0, 40, 8, 32, 16, 24, 44 };
+        static readonly int[] RowCounts = { 8, 4, 8, 8, 8, 8, 8 };
+        static readonly string[] RowNames = { "FIRE", "BATTLE", "AIR", "EARTH", "ICE", "MECH", "FILTH" };
+        static readonly int[] RowIcon = { BattleIcons.Fire, BattleIcons.Retreat, BattleIcons.Thunder, BattleIcons.Plant, BattleIcons.Water, BattleIcons.Gear, BattleIcons.Poop };
+
+        int TechAt(int r, int c) { return c < RowCounts[r] ? RowStarts[r] + c : -1; }
+        bool Usable(int id) { return PartnerInfo != null && PartnerInfo.Learnable.Contains(id); }
+        static string Range(Battle.Tech t) { return t.Wide ? "W" : t.Melee ? "S" : "L"; }
+
+        void TickTech(int step, int side, bool action)
+        {
+            if (side < 0 && _tc == 0) { _tab = 0; return; }              // left of the first column: back to the Status tab
+            if (side != 0) _tc = Mathf.Clamp(_tc + side, 0, 7);
+            if (step != 0) _tr = (_tr + step + 7) % 7;
+            if (!action) return;
+            int id = TechAt(_tr, _tc);
+            if (id < 0 || !Usable(id) || !_s.Techs[id]) return;          // only mastered techniques can be put in the Techset
+            if (_s.TechSet.Contains(id)) _s.TechSet.Remove(id);
+            else if (_s.TechSet.Count < 3) _s.TechSet.Add(id);
+        }
+
         void DrawTech()
         {
-            UiKit.Fill(new Rect(52, 435, 1308, 4), UiKit.Frame);
-            UiKit.Fill(new Rect(52, 610, 1308, 4), UiKit.Frame);
-            UiKit.Text(new Rect(80, 125, 400, 60), "Techset", 54, UiKit.Yellow);
+            UiKit.Text(new Rect(95, 118, 400, 60), "Techset", 54, UiKit.Yellow);
             string[] cols = { "POWER", "MP", "RANG", "SPEC" };
-            float[] cx = { 840, 1040, 1180, 1280 };
-            for (int i = 0; i < 4; i++) UiKit.Text(new Rect(cx[i] - 35, 170, 150, 40), cols[i], 28, UiKit.Grey);
-            for (int r = 0; r < 3; r++) UiKit.Text(new Rect(150, 215 + r * 75, 600, 60), "-", 50, UiKit.Grey);
-            UiKit.Text(new Rect(80, 455, 400, 60), "Final", 54, UiKit.Yellow);
-            UiKit.Text(new Rect(150, 530, 600, 60), "-", 50, UiKit.Grey);
-            UiKit.Text(new Rect(130, 640, 900, 60), "X   Change Techniques", 50, Color.white);
-            UiKit.Text(new Rect(130, 710, 900, 60), "^   Cancel (Tab)", 50, Color.white);
-            UiKit.Text(new Rect(130, 800, 1150, 100), "(Technique data has not been decoded from the disc yet.)", 36, UiKit.Grey);
+            float[] cx = { 850, 1040, 1190, 1275 };
+            for (int i = 0; i < 4; i++) UiKit.Text(new Rect(cx[i] - 10, 168, 150, 40), cols[i], 28, UiKit.Grey);
+            for (int r = 0; r < 3; r++)
+            {
+                float y = 215 + r * 75;
+                if (r < _s.TechSet.Count)
+                {
+                    int id = _s.TechSet[r]; var t = Battle.MakeTech(id, DigimonStatsCatalog.NameOf(id), false);
+                    UiKit.Text(new Rect(190, y, 650, 70), t.Name, 54, Color.white);
+                    UiKit.Text(new Rect(cx[0] - 10, y, 150, 70), t.Power.ToString(), 54, Color.white);
+                    UiKit.Text(new Rect(cx[1] - 10, y, 150, 70), t.Mp.ToString(), 54, Color.white);
+                    UiKit.Text(new Rect(cx[2] - 10, y, 80, 70), Range(t), 54, Color.white);
+                    UiKit.Text(new Rect(cx[3] - 10, y, 120, 70), t.Stun ? "stun" : "", 40, Color.white);
+                }
+                else UiKit.Text(new Rect(cx[0] + 90, y + 30, 500, 40), ".          .          .", 30, UiKit.Grey);
+            }
+            UiKit.Fill(new Rect(52, 435, 1308, 4), UiKit.Frame);
+            UiKit.Text(new Rect(140, 450, 400, 60), "Techs", 54, UiKit.Yellow);
+            for (int c = 0; c < 8; c++) UiKit.Text(new Rect(588 + c * 76, 450, 60, 40), (c + 1).ToString(), 28, Color.white, TextAnchor.MiddleCenter);
+            var gold = new Color(1f, 0.85f, 0.1f);
+            for (int r = 0; r < 7; r++)
+            {
+                float y = 495 + r * 70;
+                UiKit.Text(new Rect(380, y, 160, 60), RowNames[r], 34, Color.white, TextAnchor.MiddleRight);
+                UiKit.Text(new Rect(1180, y, 160, 60), RowNames[r], 34, Color.white, TextAnchor.MiddleLeft);
+                for (int c = 0; c < 8; c++)
+                {
+                    var cell = new Rect(560 + c * 76, y, 64, 62);
+                    int id = TechAt(r, c);
+                    bool usable = id >= 0 && Usable(id), mastered = usable && _s.Techs[id], current = id >= 0 && _s.TechSet.Contains(id);
+                    UiKit.Fill(cell, id < 0 ? Color.black : new Color(0.05f, 0.08f, 0.1f));
+                    UiKit.Fill(new Rect(cell.x + 3, cell.y + 3, cell.width - 6, cell.height - 6), current ? new Color(0.8f, 0.3f, 0.4f) : id < 0 ? Color.black : usable && !mastered ? new Color(0.3f, 0.42f, 0.48f) : new Color(0.25f, 0.27f, 0.28f));
+                    if (id >= 0 && BIcons != null && (mastered || !usable))
+                    {
+                        var o = GUI.color; GUI.color = usable ? Color.white : new Color(1, 1, 1, 0.3f);
+                        GUI.DrawTextureWithTexCoords(new Rect(cell.x + 8, cell.y + 7, 48, 48), BIcons.Sheet, BIcons.Uv(RowIcon[r], 1, 0));
+                        GUI.color = o;
+                    }
+                    if (r == _tr && c == _tc)
+                    {
+                        UiKit.Fill(new Rect(cell.x - 5, cell.y - 5, cell.width + 10, 5), gold); UiKit.Fill(new Rect(cell.x - 5, cell.yMax, cell.width + 10, 5), gold);
+                        UiKit.Fill(new Rect(cell.x - 5, cell.y, 5, cell.height), gold); UiKit.Fill(new Rect(cell.xMax, cell.y, 5, cell.height), gold);
+                    }
+                }
+            }
+            int cur = TechAt(_tr, _tc);
+            if (cur >= 0 && Usable(cur))
+            {
+                var t = Battle.MakeTech(cur, DigimonStatsCatalog.NameOf(cur), false);
+                float px = _tc < 4 ? 860 : 110;
+                var box = new Rect(px, 540, 430, 440);
+                UiKit.Box(box, new Color(0.18f, 0.16f, 0.5f, 0.97f));
+                UiKit.Tag(new Rect(box.x + 10, box.y - 25, 200, 36), "TECH. DATA");
+                UiKit.Text(new Rect(box.x + 25, box.y + 20, box.width - 40, 70), t.Name, 48, Color.white);
+                string[] lab = { "POWER", "MP", "RANG", "SPEC" };
+                string[] val = { t.Power.ToString(), t.Mp.ToString(), Range(t), t.Stun ? "stun" : "-" };
+                for (int i = 0; i < 4; i++)
+                {
+                    UiKit.Text(new Rect(box.x + 25, box.y + 110 + i * 80, 160, 60), lab[i], 30, UiKit.Grey);
+                    UiKit.Text(new Rect(box.x + 220, box.y + 100 + i * 80, 200, 70), val[i], 56, Color.white);
+                }
+            }
         }
 
         void DrawPlayer()
@@ -459,7 +540,15 @@ namespace DW1Remake.Game
         void DrawCards()
         {
             UiKit.Text(new Rect(47, 125, 1318, 80), "Card List", 56, UiKit.Yellow, TextAnchor.MiddleCenter);
-            for (int r = 0; r < 6; r++) for (int c = 0; c < 11; c++) UiKit.Square(new Rect(130 + c * 106, 200 + r * 113, 85, 88));
+            for (int r = 0; r < 6; r++)
+                for (int c = 0; c < 11; c++)
+                {
+                    var cell = new Rect(130 + c * 106, 200 + r * 113, 85, 88);
+                    UiKit.Square(cell);
+                    int n = r * 11 + c;
+                    if (Faces != null && n < Portraits.Count && _s.Cards[n])
+                        GUI.DrawTextureWithTexCoords(new Rect(cell.x + 6, cell.y + 8, 73, 73), Faces.Sheet, Faces.Uv(n, ((int)(Time.time * 2f) + n) % 2));
+                }
             UiKit.Text(new Rect(555, 880, 400, 70), "X  Select", 50, Color.white);
             UiKit.Text(new Rect(900, 880, 400, 70), "^  Cancel", 50, Color.white);
         }

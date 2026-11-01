@@ -6,27 +6,38 @@ using UnityEngine;
 namespace DW1Remake.Game
 {
     /// <summary>
-    /// A fight between the partner and a wild Digimon, played on the map in real time, laid out like the PS1 game (from a recording):
-    /// anger icon over the enemy, the red BATTLE banner, the boy standing at the right edge, the enemy on the left and the partner in the middle.
-    /// HP/MP of the partner top right, the enemy's HP over its head, damage numbers, FINISH letters, "Your Call" for orders,
-    /// and a result window with the stat gains and Bits.
-    /// From the disc: names, stage, type, each Digimon's own technique. Our own formulas (not decoded yet): enemy stats, damage, rewards.
+    /// A fight between the partner and a wild Digimon, played on the map in real time, laid out like the PS1 game (from a recording).
+    /// Techniques: each Digimon's usable techniques and its own finishing move come from the disc. Special techniques are projectiles that fly
+    /// at where the target was when they were fired, so a target that moves can be missed. Every Digimon has a finishing-move gauge (F-I-N-I-S-H)
+    /// that fills with time and with damage taken; when full its next action is its own finishing move (Agumon: Pepper Breath).
+    /// Our own formulas (not decoded yet): enemy stats, damage, technique power and MP cost, rewards.
     /// </summary>
     public sealed class Battle
     {
+        public sealed class Tech
+        {
+            public int Id; public string Name; public int Mp, Power; public float Mult; public bool Melee, Finisher, Wide, Stun; public Color Col;
+        }
+
+        /// <summary>The Tech page groups the techniques in rows of 8: Fire, Battle (4), Air, Earth, Ice, Mech, Filth. This is where the row of technique n starts.</summary>
+        public static int RowStart(int id) { return id < 8 ? 0 : id < 16 ? 8 : id < 24 ? 16 : id < 32 ? 24 : id < 40 ? 32 : id < 44 ? 40 : 44; }
+
         public sealed class Fighter
         {
             public Transform T; public DigimonAnimator A; public string Name;
             public DigimonStats Info;
             public int Off, Def, Spd, Brain, Hp, MaxHp, Mp, MaxMp;
-            public string Tech; public int TechMp;
-            public float NextAct, AnimReset;
-            public Vector3 Slot;
+            public List<Tech> Techs = new List<Tech>(); public Tech Finisher;
+            public float Gauge;                 // finishing-move gauge, 0-6 (one letter of FINISH per unit)
+            public float NextAct, AnimReset, WanderWait;
+            public Vector3 Slot, Wander;
             public bool Guarding;
         }
 
-        sealed class Swing { public Fighter From, To; public float T; public bool Hit, Tech; public Vector3 Start; }
+        sealed class Swing { public Fighter From, To; public float T; public bool Done; public Tech Tech; public Vector3 Start; }
+        sealed class Shot { public Fighter From, To; public Tech Tech; public Vector3 Pos, Dir; public float Travelled; public GameObject Go; }
         sealed class Pop { public string Text; public Vector3 Pos; public float T; public Color Col; }
+        sealed class Throw { public int Item; public float T; public int Heal, Mana; }
 
         enum Phase { Notice, Banner, Fight, Win, Lose, Fled }
 
@@ -35,31 +46,35 @@ namespace DW1Remake.Game
 
         // orders the partner learns as its Brains grow: the first two are always there, then one more per 100 Brains (order of unlocking is a guess)
         static readonly string[] Learned = { "Give it all you got!", "Take it easy!", "Get back!", "Change target!", "Hang in there!" };
-        const string CallOrder = "Your Call", RunOrder = "Run away", ItemOrder = "Item";
+        const string CallOrder = "Your Call", RunOrder = "Run away";
 
         public bool Active { get; private set; }
         public bool Won { get; private set; }
         public bool Fled { get; private set; }
         public bool NoFlee;                     // scripted fights (script variable 250 = 1): running away is locked
         public Fighter Partner, Enemy;
+        public BattleIcons Icons; public ItemIcons Items;
+        public int LastItem = -1;               // the room tells which bag item was just used
 
         readonly ScriptState _s;
         readonly Func<Vector3, Quaternion> _face;
         readonly System.Random _rng = new System.Random();
-        Phase _phase; float _time, _phaseStart, _fleeAt = -1f, _retreatUntil, _nextAsk;
-        Transform _player; DigimonAnimator _playerA; Vector3 _playerSlot;
+        Phase _phase; float _time, _phaseStart, _fleeAt = -1f, _retreatUntil, _nextAsk, _bannerUntil;
+        string _banner = "";
+        Transform _player; DigimonAnimator _playerA; Vector3 _playerSlot, _right;
         readonly List<string> _orders = new List<string>();
         string _order = CallOrder;
         bool _menuOpen; int _sel;
         readonly List<Swing> _swings = new List<Swing>();
+        readonly List<Shot> _shots = new List<Shot>();
         readonly List<Pop> _pops = new List<Pop>();
-        readonly List<string> _result = new List<string>();
+        readonly List<Throw> _throws = new List<Throw>();
         readonly int[] _before = new int[6], _gain = new int[6];
         int _bits;
         string _log = ""; float _logUntil;
-        static Texture2D _disc;
+        static Texture2D _disc; static Material _shotMat;
 
-        public System.Action OnOpenBag;         // the room opens the bag (items work in battle)
+        public System.Action OnOpenBag;         // the room opens the bag (items work in battle: Triangle)
 
         public Battle(ScriptState state, Func<Vector3, Quaternion> face) { _s = state; _face = face; }
 
@@ -67,7 +82,37 @@ namespace DW1Remake.Game
         public static int StartHp(int level) { int[] v = { 80, 80, 200, 400, 900, 2000, 4000, 6500 }; return v[Mathf.Clamp(level, 0, 7)]; }
         public static int StartOff(int level) { int[] v = { 15, 15, 30, 55, 100, 170, 260, 330 }; return v[Mathf.Clamp(level, 0, 7)]; }
 
-        /// <summary>center = middle of the arena, right = the screen's right direction on the ground.</summary>
+        public static Tech MakeTech(int id, string name, bool finisher)
+        {
+            string n = name.ToLowerInvariant();
+            string[] melee = { "kick", "punch", "claw", "jab", "charge", "dive", "slap", "whack", "crane", "sprinter", "scissor", "sword", "drill", "wing", "strike", "fist", "attack" };
+            bool m = false; foreach (var k in melee) if (n.Contains(k)) m = true;
+            Color c = id <= 7 ? new Color(1f, 0.55f, 0.1f) : id <= 12 ? new Color(1f, 0.95f, 0.2f) : id <= 15 ? new Color(0.7f, 1f, 0.7f)
+                : id <= 19 ? new Color(0.6f, 0.95f, 1f) : id <= 23 ? new Color(0.3f, 0.5f, 1f) : id <= 31 ? new Color(0.85f, 0.9f, 1f) : id <= 38 ? new Color(0.5f, 0.9f, 0.3f) : new Color(1f, 0.8f, 0.5f);
+            // Real values seen on the PS1 Tech page: Spit Fire power 66 / MP 30 / range L; Odor Spray 88 / 75 / L / stun; Ult Poop Hell 333 / 333 / W / flat.
+            // The table itself is not found, so the others follow a formula fitted to Spit Fire (power 50 + 8 x slot in its row, MP 10 + 10 x slot).
+            int slot = id - RowStart(id);
+            int power = 50 + 8 * slot, mp = 10 + 10 * slot;
+            bool wide = n.Contains("hell") || n.Contains("plague") || n.Contains("storm") || n.Contains("blizzard") || n.Contains("inferno") || n.Contains("cloud");
+            bool stun = n.Contains("spray") || n.Contains("powder") || n.Contains("perfume") || n.Contains("static") || n.Contains("shock");
+            return new Tech { Id = id, Name = name, Power = finisher ? 200 : power, Mp = finisher ? 0 : mp, Mult = (finisher ? 200 : power) / 66f * 1.5f, Melee = m && !finisher, Finisher = finisher, Wide = wide, Stun = stun, Col = c };
+        }
+
+        /// <summary>The techniques a Digimon can use: the learned ones (all of them for wild Digimon, the first two), and its own finishing move.</summary>
+        void SetupTechs(Fighter f, DigimonStats info, bool isPartner)
+        {
+            if (info == null) return;
+            if (isPartner)
+            {
+                for (int i = 0; i < info.Learnable.Count; i++)
+                    if (_s.Techs[info.Learnable[i]] && (_s.TechSet.Count == 0 || _s.TechSet.Contains(info.Learnable[i]))) f.Techs.Add(MakeTech(info.Learnable[i], info.LearnableNames[i], false));
+                if (f.Techs.Count == 0 && info.Learnable.Count > 0) f.Techs.Add(MakeTech(info.Learnable[0], info.LearnableNames[0], false));   // Agumon starts with Spit Fire
+            }
+            else for (int i = 0; i < info.Learnable.Count && i < 2; i++) f.Techs.Add(MakeTech(info.Learnable[i], info.LearnableNames[i], false));
+            if (info.SignatureId >= 0) f.Finisher = MakeTech(info.SignatureId, info.SignatureTech, true);
+        }
+
+        /// <summary>right = the screen's right direction on the ground.</summary>
         public void Start(Transform player, DigimonAnimator playerAnim, Transform partner, DigimonAnimator partnerAnim, string partnerName, DigimonStats partnerInfo,
                           Transform enemy, DigimonAnimator enemyAnim, string enemyName, DigimonStats enemyInfo, Vector3 right, bool noFlee)
         {
@@ -76,11 +121,10 @@ namespace DW1Remake.Game
             {
                 T = partner, A = partnerAnim, Name = partnerName, Info = partnerInfo,
                 Off = _s.Stats[0], Def = _s.Stats[1], Spd = _s.Stats[2], Brain = _s.Stats[3],
-                MaxHp = Mathf.Max(1, _s.Stats[4]), MaxMp = _s.Stats[5], Hp = _s.Stats[6], Mp = _s.Stats[7],
-                Tech = partnerInfo != null ? partnerInfo.SignatureTech : null
+                MaxHp = Mathf.Max(1, _s.Stats[4]), MaxMp = _s.Stats[5], Hp = _s.Stats[6], Mp = _s.Stats[7]
             };
-            Partner.TechMp = TechCost(partnerInfo);
             if (Partner.Hp <= 0) Partner.Hp = 1;
+            SetupTechs(Partner, partnerInfo, true);
             int lv = enemyInfo != null ? Mathf.Max(1, enemyInfo.Level) : 3;
             float r = 0.9f + (float)_rng.NextDouble() * 0.2f;
             int off = Mathf.RoundToInt(StartOff(lv) * r);
@@ -88,28 +132,27 @@ namespace DW1Remake.Game
             {
                 T = enemy, A = enemyAnim, Name = enemyName, Info = enemyInfo,
                 Off = off, Def = Mathf.RoundToInt(off * 0.8f), Spd = Mathf.RoundToInt(off * 0.9f), Brain = Mathf.RoundToInt(off * 0.8f),
-                MaxHp = Mathf.RoundToInt(StartHp(lv) * r), MaxMp = 9999, Mp = 9999,
-                Tech = enemyInfo != null ? enemyInfo.SignatureTech : null
+                MaxHp = Mathf.RoundToInt(StartHp(lv) * r), MaxMp = 9999, Mp = 9999
             };
             Enemy.Hp = Enemy.MaxHp;
+            SetupTechs(Enemy, enemyInfo, false);
 
             _orders.Clear(); _orders.Add(CallOrder); _orders.Add(RunOrder);
             for (int i = 0; i < Learned.Length && i < Partner.Brain / 100; i++) _orders.Add(Learned[i]);
             _order = CallOrder; _menuOpen = false; _sel = 0;
 
-            right.y = 0; right = right.sqrMagnitude < 0.01f ? Vector3.right : right.normalized;
+            right.y = 0; _right = right.sqrMagnitude < 0.01f ? Vector3.right : right.normalized;
             Vector3 center = (partner.position + enemy.position) * 0.5f; center.y = 0;
-            Enemy.Slot = center - right * 1.8f; Partner.Slot = center + right * 1.2f; _playerSlot = center + right * 4.2f;
+            Enemy.Slot = center - _right * 1.8f; Partner.Slot = center + _right * 1.2f; _playerSlot = center + _right * 4.2f;
+            Enemy.Wander = Enemy.Slot; Partner.Wander = Partner.Slot;
             _player = player; _playerA = playerAnim;
-            Active = true; Won = false; Fled = false; _phase = Phase.Notice; _time = 0f; _phaseStart = 0f; _fleeAt = -1f; _retreatUntil = 0f; _nextAsk = 6f;
-            _swings.Clear(); _pops.Clear(); _result.Clear(); _log = "";
+            Active = true; Won = false; Fled = false; _phase = Phase.Notice; _time = 0f; _phaseStart = 0f; _fleeAt = -1f; _retreatUntil = 0f; _nextAsk = 6f; _bannerUntil = 0f;
+            _swings.Clear(); _pops.Clear(); _throws.Clear(); ClearShots(); _log = "";
             Partner.NextAct = Enemy.NextAct = 0f;
             enemy.rotation = _face(partner.position - enemy.position);
             if (Partner.A != null) Partner.A.SetSlot(0);
             if (Enemy.A != null) Enemy.A.SetSlot(0);
         }
-
-        static int TechCost(DigimonStats i) { return i == null ? 30 : 10 * Mathf.Max(1, i.Level); }   // Pepper Breath (Rookie) costs 30 MP in the game
 
         float Interval(Fighter f) { return Mathf.Clamp(4.0f - f.Spd / 60f, 1.3f, 3.8f); }
 
@@ -126,13 +169,23 @@ namespace DW1Remake.Game
         }
 
         // -------------------------------------------------------------- per frame
-        /// <summary>step = up/down, action = Cross, cancel = Triangle. Called every frame while Active (not while the bag is open).</summary>
-        public void Tick(int step, bool action, bool cancel)
+        /// <summary>step = up/down, action = Cross (order list), triangle = item page, cancel = Triangle/back. Called every frame while Active (not while the bag is open).</summary>
+        public void Tick(int step, bool action, bool triangle, bool cancel)
         {
             if (!Active) return;
             float dt = Time.deltaTime; _time += dt;
             Animate(Partner); Animate(Enemy);
             for (int i = _pops.Count - 1; i >= 0; i--) { _pops[i].T += dt; if (_pops[i].T > 1.2f) _pops.RemoveAt(i); }
+            for (int i = _throws.Count - 1; i >= 0; i--)
+            {
+                _throws[i].T += dt;
+                if (_throws[i].T >= 0.55f)
+                {
+                    var th = _throws[i]; _throws.RemoveAt(i);
+                    if (th.Heal > 0) _pops.Add(new Pop { Text = th.Heal.ToString(), Pos = Partner.T.position + Vector3.up * 0.9f, Col = new Color(0.4f, 1f, 0.4f) });
+                    if (th.Mana > 0) _pops.Add(new Pop { Text = th.Mana.ToString(), Pos = Partner.T.position + Vector3.up * 1.4f, Col = new Color(0.5f, 0.8f, 1f) });
+                }
+            }
             float inPhase = _time - _phaseStart;
 
             switch (_phase)
@@ -157,24 +210,27 @@ namespace DW1Remake.Game
                     break;
                 }
                 case Phase.Fight:
-                    if (_menuOpen)
+                    if (triangle && !_menuOpen) { if (OnOpenBag != null) OnOpenBag(); }
+                    else if (_menuOpen)
                     {
-                        if (step != 0) _sel = (_sel + step + _orders.Count + 1) % (_orders.Count + 1);
+                        if (step != 0) _sel = (_sel + step + _orders.Count) % _orders.Count;
                         if (cancel) _menuOpen = false;
                         else if (action) { _menuOpen = false; Choose(_sel); }
                     }
                     else if (action) { _menuOpen = true; _sel = Mathf.Max(0, _orders.IndexOf(_order)); }
+                    Gauge(Partner, dt); Gauge(Enemy, dt);
                     if (_time >= _retreatUntil) TickFighter(Partner, Enemy, dt); else MoveTo(Partner.T, Partner.A, _playerSlot - (_playerSlot - Partner.Slot).normalized * 1.5f, 4f, dt);
                     if (_retreatUntil > 0f && _time >= _retreatUntil) { _retreatUntil = 0f; Partner.T.rotation = _face(Enemy.T.position - Partner.T.position); }
                     TickFighter(Enemy, Partner, dt);
-                    TickSwings(dt);
+                    Drift(Partner, Enemy, dt, _time >= _retreatUntil); Drift(Enemy, Partner, dt, true);
+                    TickSwings(dt); TickShots(dt);
                     if (_fleeAt > 0f && _time >= _fleeAt) TryFlee();
                     if (Enemy.Hp <= 0) Finish(true);
                     else if (Partner.Hp <= 0) Finish(false);
                     break;
                 case Phase.Win:
                 case Phase.Lose:
-                    TickSwings(dt);
+                    TickSwings(dt); TickShots(dt);
                     if (inPhase > 3f && (action || cancel)) End();
                     break;
                 case Phase.Fled:
@@ -187,14 +243,13 @@ namespace DW1Remake.Game
 
         void End()
         {
-            if (_phase == Phase.Win) { for (int i = 0; i < 6; i++) { int[] idx = { 4, 5, 0, 1, 2, 3 }; _s.SetStat(idx[i], _before[i] + _gain[i]); } _s.Money += _bits; }
-            if (_phase == Phase.Win && Partner.A != null) Partner.A.SetSlot(0);
+            if (_phase == Phase.Win) { int[] idx = { 4, 5, 0, 1, 2, 3 }; for (int i = 0; i < 6; i++) _s.SetStat(idx[i], _before[i] + _gain[i]); _s.Money += _bits; if (Partner.A != null) Partner.A.SetSlot(0); }
+            ClearShots();
             Active = false;
         }
 
         void Choose(int i)
         {
-            if (i >= _orders.Count) { if (OnOpenBag != null) OnOpenBag(); return; }
             string o = _orders[i];
             if (o == RunOrder)
             {
@@ -211,7 +266,7 @@ namespace DW1Remake.Game
         {
             _fleeAt = -1f;
             float chance = Mathf.Clamp(0.4f + (Partner.Spd - Enemy.Spd) / 200f, 0.15f, 0.9f);
-            if (_rng.NextDouble() < chance) { Fled = true; Sync(); SetPhase(Phase.Fled); }
+            if (_rng.NextDouble() < chance) { Fled = true; Sync(); ClearShots(); SetPhase(Phase.Fled); }
             else Log("Couldn't get away!");
         }
 
@@ -223,6 +278,29 @@ namespace DW1Remake.Game
             if (f.A.HasSlot(slot)) { f.A.SetSlot(slot, true); f.AnimReset = _time + seconds; }
         }
 
+        // the finishing-move gauge fills with time (a full gauge in about 100 s) and with damage taken (see Apply)
+        void Gauge(Fighter f, float dt) { if (f.Hp > 0) f.Gauge = Mathf.Min(6f, f.Gauge + dt * 0.06f); }
+
+        // fighters shuffle around so that a shot can miss
+        void Drift(Fighter me, Fighter foe, float dt, bool allowed)
+        {
+            if (!allowed || me.Hp <= 0) return;
+            foreach (var sw in _swings) if (sw.From == me) return;
+            if (me.AnimReset > 0f) return;
+            if (me.WanderWait > 0f) { me.WanderWait -= dt; if (me.A != null && me.A.Slot != 0) me.A.SetSlot(0); return; }
+            Vector3 to = me.Wander - me.T.position; to.y = 0;
+            if (to.magnitude < 0.1f)
+            {
+                Vector3 fwd = Vector3.Cross(Vector3.up, _right);
+                me.Wander = me.Slot + _right * ((float)_rng.NextDouble() * 1.6f - 0.8f) + fwd * ((float)_rng.NextDouble() * 3f - 1.5f);
+                me.WanderWait = 0.4f + (float)_rng.NextDouble() * 1.4f;
+                return;
+            }
+            me.T.position += to.normalized * Mathf.Min(to.magnitude, 1.8f * dt);
+            me.T.rotation = Quaternion.RotateTowards(me.T.rotation, _face(foe.T.position - me.T.position), 400f * dt);
+            if (me.A != null && me.A.Slot != 2) me.A.SetSlot(2);
+        }
+
         void TickFighter(Fighter me, Fighter foe, float dt)
         {
             if (me.Hp <= 0 || foe.Hp <= 0 || _time < me.NextAct) return;
@@ -230,23 +308,22 @@ namespace DW1Remake.Game
             bool isPartner = me == Partner;
             if (isPartner && _order == Learned[4]) { me.NextAct = _time + Interval(me); me.Mp = Mathf.Min(me.MaxMp, me.Mp + me.MaxMp / 50); me.Guarding = true; Sync(); return; }
             me.Guarding = false;
-            bool tech;
-            if (isPartner)
+
+            Tech tech = null;
+            if (me.Gauge >= 6f && me.Finisher != null) { tech = me.Finisher; me.Gauge = 0f; }       // the full gauge: its own finishing move
+            else if (me.Techs.Count > 0)
             {
-                double want = _order == Learned[0] ? 0.9 : _order == Learned[1] ? 0.0 : 0.5;   // all out / take it easy / your call
-                tech = me.Tech != null && me.Mp >= me.TechMp && _rng.NextDouble() < want;
+                double want = isPartner ? (_order == Learned[0] ? 0.9 : _order == Learned[1] ? 0.0 : 0.5) : 0.35;   // all out / take it easy / your call
+                var t = me.Techs[_rng.Next(me.Techs.Count)];
+                if (_rng.NextDouble() < want && (!isPartner || me.Mp >= t.Mp)) { tech = t; if (isPartner) me.Mp -= t.Mp; }
             }
-            else tech = me.Tech != null && _rng.NextDouble() < 0.25;
-            if (isPartner)
-            {
-                if (tech) me.Mp -= me.TechMp;
-                else if (_order == Learned[1]) me.Mp = Mathf.Min(me.MaxMp, me.Mp + me.MaxMp / 40);   // taking it easy lets MP come back
-            }
+            if (isPartner && tech == null && _order == Learned[1]) me.Mp = Mathf.Min(me.MaxMp, me.Mp + me.MaxMp / 40);   // taking it easy lets MP come back
             me.NextAct = _time + Interval(me) * (0.9f + (float)_rng.NextDouble() * 0.3f);
+            me.WanderWait = 0.2f; me.Wander = me.T.position;
             _swings.Add(new Swing { From = me, To = foe, Tech = tech, Start = me.T.position });
             me.T.rotation = _face(foe.T.position - me.T.position);
-            Play(me, tech ? TechSlot : AttackSlot, 0.9f);
-            if (tech) Log(me.Name + ": " + me.Tech + "!");
+            Play(me, tech != null && !tech.Melee ? TechSlot : AttackSlot, 0.9f);
+            if (tech != null && tech.Finisher) { _banner = tech.Name; _bannerUntil = _time + 1.8f; }
             Sync();
         }
 
@@ -255,48 +332,104 @@ namespace DW1Remake.Game
             for (int i = _swings.Count - 1; i >= 0; i--)
             {
                 var sw = _swings[i]; sw.T += dt;
+                bool ranged = sw.Tech != null && !sw.Tech.Melee;
                 Vector3 dir = sw.To.T.position - sw.Start; dir.y = 0;
                 float dist = dir.magnitude; Vector3 d = dist > 0.01f ? dir / dist : Vector3.forward;
-                // lunge in, hit, and back (technique users stay back and shoot)
-                float go = Mathf.Clamp01(sw.T / 0.35f), back = Mathf.Clamp01((sw.T - 0.5f) / 0.35f);
-                float reach = Mathf.Max(0f, dist - 1.3f) * (sw.Tech ? 0f : 0.8f);
-                sw.From.T.position = sw.Start + d * reach * (go - back);
-                if (!sw.Hit && sw.T >= 0.35f) { sw.Hit = true; Apply(sw); }
-                if (sw.T >= 0.9f) { sw.From.T.position = sw.Start; _swings.RemoveAt(i); }
+                if (!ranged)   // lunge in, hit, and back
+                {
+                    float go = Mathf.Clamp01(sw.T / 0.35f), back = Mathf.Clamp01((sw.T - 0.5f) / 0.35f);
+                    sw.From.T.position = sw.Start + d * Mathf.Max(0f, dist - 1.3f) * (go - back);
+                }
+                if (!sw.Done && sw.T >= 0.35f)
+                {
+                    sw.Done = true;
+                    if (ranged && sw.Tech.Wide) Apply(sw.From, sw.To, sw.Tech);   // a wide technique covers the whole area: it cannot be dodged
+                    else if (ranged) Fire(sw);
+                    else
+                    {
+                        // the blow lands only if the target is still within reach where the lunge ends
+                        float reach = Vector3.Distance(Flat(sw.From.T.position), Flat(sw.To.T.position));
+                        if (reach <= 1.9f) Apply(sw.From, sw.To, sw.Tech);
+                        else Miss(sw.To);
+                    }
+                }
+                if (sw.T >= 0.9f) { if (!ranged) sw.From.T.position = sw.Start; _swings.RemoveAt(i); }
             }
         }
 
-        void Apply(Swing sw)
+        static Vector3 Flat(Vector3 v) { v.y = 0; return v; }
+
+        void Fire(Swing sw)
         {
-            var a = sw.From; var d = sw.To;
+            // the shot flies at where the target is right now; it does not follow
+            Vector3 from = Flat(sw.From.T.position), to = Flat(sw.To.T.position);
+            Vector3 dir = (to - from).normalized;
+            var go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            var col = go.GetComponent<Collider>(); if (col != null) UnityEngine.Object.Destroy(col);
+            float size = sw.Tech.Finisher ? 0.8f : 0.4f;
+            go.transform.localScale = Vector3.one * size;
+            if (_shotMat == null) _shotMat = new Material(Shader.Find("Sprites/Default"));
+            var mr = go.GetComponent<MeshRenderer>(); mr.sharedMaterial = new Material(_shotMat) { color = sw.Tech.Col };
+            Vector3 p = from + dir * 0.8f + Vector3.up * 0.9f;
+            go.transform.position = p;
+            _shots.Add(new Shot { From = sw.From, To = sw.To, Tech = sw.Tech, Pos = p, Dir = dir, Go = go });
+        }
+
+        void TickShots(float dt)
+        {
+            for (int i = _shots.Count - 1; i >= 0; i--)
+            {
+                var s = _shots[i];
+                float step = (s.Tech.Finisher ? 10f : 8f) * dt;
+                s.Pos += s.Dir * step; s.Travelled += step;
+                if (s.Go != null) s.Go.transform.position = s.Pos;
+                bool hit = Vector3.Distance(Flat(s.Pos), Flat(s.To.T.position)) < 0.85f;
+                if (hit) { Apply(s.From, s.To, s.Tech); }
+                if (hit || s.Travelled > 14f)
+                {
+                    if (!hit) Miss(s.To);
+                    if (s.Go != null) UnityEngine.Object.Destroy(s.Go);
+                    _shots.RemoveAt(i);
+                }
+            }
+        }
+
+        void ClearShots() { foreach (var s in _shots) if (s.Go != null) UnityEngine.Object.Destroy(s.Go); _shots.Clear(); }
+
+        void Miss(Fighter target) { _pops.Add(new Pop { Text = "MISS", Pos = target.T.position + Vector3.up * 1.2f, Col = new Color(0.8f, 0.85f, 1f) }); }
+
+        void Apply(Fighter a, Fighter d, Tech tech)
+        {
             if (d.Hp <= 0) return;
-            float mult = sw.Tech ? 1.45f + 0.05f * (a.Info != null ? a.Info.Level : 3) : 0.45f;
+            float mult = tech != null ? tech.Mult : 0.45f;
             float v = a.Off * mult * (0.85f + (float)_rng.NextDouble() * 0.3f) * 100f / (100f + d.Def * 0.8f);
             if (d.Guarding) v *= 0.5f;
             int dmg = Mathf.Max(1, Mathf.RoundToInt(v));
             d.Hp = Mathf.Max(0, d.Hp - dmg);
+            d.Gauge = Mathf.Min(6f, d.Gauge + dmg / (float)d.MaxHp * 6f);          // taking damage fills the finishing-move gauge
             _pops.Add(new Pop { Text = dmg.ToString(), Pos = d.T.position + Vector3.up * 0.9f, T = 0f, Col = Color.white });
             if (d.Hp > 0) Play(d, HitSlot, 0.6f);
             else Play(d, DownSlot, 3f);
+            if (tech != null && tech.Stun && d.Hp > 0) { d.NextAct = Mathf.Max(d.NextAct, _time + 2.5f); _pops.Add(new Pop { Text = "stun", Pos = d.T.position + Vector3.up * 1.6f, Col = new Color(1f, 0.95f, 0.4f) }); }
             Sync();
         }
 
         void Sync() { _s.Stats[6] = (ushort)Mathf.Clamp(Partner.Hp, 0, 9999); _s.Stats[7] = (ushort)Mathf.Clamp(Partner.Mp, 0, 9999); }
 
-        /// <summary>Items used from the bag during the fight change the stats; this picks them up.</summary>
+        /// <summary>Items used from the bag during the fight change the stats; this picks them up and starts the boy's throw.</summary>
         public void ReadBack()
         {
             if (Partner == null) return;
-            if (_s.Stats[6] > Partner.Hp) ShowHeal(_s.Stats[6] - Partner.Hp);
+            int dh = _s.Stats[6] - Partner.Hp, dm = _s.Stats[7] - Partner.Mp;
+            if ((dh > 0 || dm > 0) && LastItem >= 0) _throws.Add(new Throw { Item = LastItem, Heal = Mathf.Max(0, dh), Mana = Mathf.Max(0, dm) });
+            if (LastItem >= 0) LastItem = -1;
             Partner.Hp = _s.Stats[6]; Partner.Mp = _s.Stats[7]; Partner.MaxHp = Mathf.Max(1, _s.Stats[4]); Partner.MaxMp = _s.Stats[5];
         }
 
-        /// <summary>An item healed the partner: show the number like the game does.</summary>
-        public void ShowHeal(int amount) { if (Partner != null && Partner.T != null) _pops.Add(new Pop { Text = amount.ToString(), Pos = Partner.T.position + Vector3.up * 0.9f, T = 0f, Col = new Color(0.4f, 1f, 0.4f) }); }
-
         void Finish(bool won)
         {
-            Won = won; _result.Clear();
+            Won = won;
+            ClearShots();
             if (won)
             {
                 SetPhase(Phase.Win);
@@ -345,23 +478,37 @@ namespace DW1Remake.Game
             st.normal.textColor = c; GUI.Label(r, s, st);
         }
 
+        // icon of an order (from ETCDAT/BTLCOMND.TIM); null name = Your Call
+        void OrderIcon(Rect r, string order, bool dim)
+        {
+            if (Icons == null) return;
+            int col, row = 0; int frame = ((int)(Time.time * 2f)) % 2;
+            if (order == CallOrder) col = BattleIcons.YourCall;
+            else if (order == RunOrder) col = BattleIcons.RunAway;
+            else if (order == Learned[0]) col = BattleIcons.Aggressive;
+            else if (order == Learned[1]) col = BattleIcons.Calm;
+            else if (order == Learned[2]) { col = BattleIcons.Retreat; row = 1; }
+            else if (order == Learned[3]) col = BattleIcons.Eyes;
+            else col = BattleIcons.Shout;
+            var o = GUI.color; GUI.color = dim ? new Color(1, 1, 1, 0.35f) : Color.white;
+            GUI.DrawTextureWithTexCoords(r, Icons.Sheet, Icons.Uv(col, row, frame));
+            GUI.color = o;
+        }
+
         public void OnGUI(Camera cam)
         {
             if (!Active || Partner == null) return;
             if (_phase == Phase.Notice && cam != null) AngerIcon(cam, Enemy.T.position + Vector3.up * 2.2f);
             UiKit.Begin();
             if (_phase == Phase.Banner) Banner(_time - _phaseStart);
-            if (_phase != Phase.Notice && _phase != Phase.Banner || (_phase == Phase.Banner))
-            {
-                Hud();
-            }
+            if (_phase != Phase.Notice) Hud();
             if (_phase == Phase.Fight)
             {
-                Outlined(new Rect(50, 160, 400, 60), "Your Call", 46, Color.white);
+                if (_time < _bannerUntil) Outlined(new Rect(0, 250, UiKit.W, 90), _banner + "!", 72, new Color(1f, 0.55f, 0.15f), TextAnchor.MiddleCenter);
                 if (_menuOpen) Menu();
                 else if (_time < _logUntil) Outlined(new Rect(50, 880, 1300, 70), _log, 46, Color.white);
             }
-            if ((_phase == Phase.Win) && _time - _phaseStart > 1.2f) ResultWindow();
+            if (_phase == Phase.Win && _time - _phaseStart > 1.2f) ResultWindow();
             if (_phase == Phase.Lose && _time - _phaseStart > 1.2f)
             {
                 var box = new Rect(300, 380, 815, 260);
@@ -382,6 +529,14 @@ namespace DW1Remake.Game
                     }
                 }
                 foreach (var p in _pops) Floating(cam, p.Pos + Vector3.up * p.T * 0.9f, p.Text, 40, p.Col);
+                foreach (var th in _throws)   // the boy throws the item to the partner
+                {
+                    if (_player == null || Items == null) continue;
+                    float k = Mathf.Clamp01(th.T / 0.55f);
+                    Vector3 w = Vector3.Lerp(_player.position, Partner.T.position, k) + Vector3.up * (1.2f + Mathf.Sin(k * Mathf.PI) * 1.3f);
+                    Vector3 sp = cam.WorldToScreenPoint(w);
+                    if (sp.z > 0) GUI.DrawTextureWithTexCoords(new Rect(sp.x - 24, Screen.height - sp.y - 24, 48, 48), Items.Sheet, Items.Uv(th.Item));
+                }
             }
         }
 
@@ -412,38 +567,35 @@ namespace DW1Remake.Game
             float scale = t < 0.25f ? Mathf.Lerp(3f, 1f, t / 0.25f) : 1f;
             float alpha = t < 1.2f ? 1f : Mathf.Clamp01(1f - (t - 1.2f) / 0.3f);
             var rc = new Rect(UiKit.W / 2 - 600 * scale, 330 - 80 * scale, 1200 * scale, 160 * scale);
-            var c = new Color(0.8f, 0.1f, 0.15f, alpha);
             var st = new GUIStyle(GUI.skin.label) { fontSize = (int)(150 * scale), alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Bold };
             st.normal.textColor = new Color(0.2f, 0f, 0.03f, alpha);
             GUI.Label(new Rect(rc.x + 6, rc.y + 6, rc.width, rc.height), "BATTLE", st);
-            st.normal.textColor = c; GUI.Label(rc, "BATTLE", st);
+            st.normal.textColor = new Color(0.8f, 0.1f, 0.15f, alpha); GUI.Label(rc, "BATTLE", st);
         }
 
         void Hud()
         {
             // partner HP / MP, top right
-            DrawBar(new Rect(900, 40, 330, 34), Partner.MaxHp > 0 ? Partner.Hp / (float)Partner.MaxHp : 0f, new Color(0.9f, 0.25f, 0.3f), new Color(0.95f, 0.3f, 0.4f), true);
-            DrawBar(new Rect(900, 82, 330, 34), Partner.MaxMp > 0 ? Partner.Mp / (float)Partner.MaxMp : 0f, new Color(0.25f, 0.55f, 0.95f), new Color(0.3f, 0.7f, 1f), false);
+            DrawBar(new Rect(900, 40, 330, 34), Partner.MaxHp > 0 ? Partner.Hp / (float)Partner.MaxHp : 0f, new Color(0.95f, 0.3f, 0.4f), true);
+            DrawBar(new Rect(900, 82, 330, 34), Partner.MaxMp > 0 ? Partner.Mp / (float)Partner.MaxMp : 0f, new Color(0.3f, 0.7f, 1f), false);
             Outlined(new Rect(1235, 34, 150, 46), Partner.Hp.ToString(), 40, Color.white, TextAnchor.MiddleRight);
             Outlined(new Rect(1235, 76, 150, 46), Partner.Mp.ToString(), 40, Color.white, TextAnchor.MiddleRight);
-            // mood face and the current order, top left
-            DrawDisc(new Rect(40, 36, 96, 96), new Color(0.35f, 0.3f, 0.05f));
-            DrawDisc(new Rect(46, 42, 84, 84), new Color(1f, 0.85f, 0.15f));
-            UiKit.Fill(new Rect(68, 68, 12, 18), Color.black); UiKit.Fill(new Rect(98, 68, 12, 18), Color.black);
-            UiKit.Fill(new Rect(70, 98, 38, 8), Color.black);
-            UiKit.Fill(new Rect(120, 50, 82, 82), new Color(0.12f, 0.3f, 0.4f));
-            UiKit.Fill(new Rect(124, 54, 74, 74), new Color(0.2f, 0.75f, 0.95f));
-            UiKit.Text(new Rect(124, 54, 74, 74), _order == RunOrder ? ">>" : _order == CallOrder ? "?" : _order.Substring(0, 1), 46, Color.black, TextAnchor.MiddleCenter);
-            // FINISH letters grow as the enemy weakens
-            if (Enemy.MaxHp > 0 && Enemy.Hp < Enemy.MaxHp)
+            // the orders the partner has learned, top left (the current one is lit)
+            for (int i = 0; i < _orders.Count; i++)
             {
-                int letters = Mathf.Clamp(Mathf.FloorToInt(6f * (1f - Enemy.Hp / (float)Enemy.MaxHp)), 0, 6);
-                if (Enemy.Hp <= 0) letters = 6;
-                if (letters > 0) Outlined(new Rect(930, 128, 300, 60), "FINISH".Substring(0, letters), 44, new Color(1f, 0.9f, 0.2f));
+                var r = new Rect(40 + i * 100, 36, 92, 92);
+                bool cur = _orders[i] == _order, locked = _orders[i] == RunOrder && NoFlee;
+                UiKit.Fill(new Rect(r.x - 6, r.y - 6, r.width + 12, r.height + 12), cur ? new Color(1f, 0.85f, 0.1f) : new Color(0.1f, 0.1f, 0.12f, 0.6f));
+                UiKit.Fill(r, new Color(0.12f, 0.17f, 0.2f));
+                OrderIcon(new Rect(r.x + 6, r.y + 6, r.width - 12, r.height - 12), _orders[i], locked);
             }
+            if (_phase == Phase.Fight) Outlined(new Rect(50, 160, 400, 60), "Your Call", 46, Color.white);
+            // the finishing-move gauge of the partner: F, FI, FIN ... FINISH
+            int letters = Mathf.Clamp(Mathf.FloorToInt(Partner.Gauge), 0, 6);
+            if (letters > 0) Outlined(new Rect(930, 128, 300, 60), "FINISH".Substring(0, letters), 44, new Color(1f, 0.9f, 0.2f));
         }
 
-        static void DrawBar(Rect r, float t, Color back, Color fill, bool heart)
+        static void DrawBar(Rect r, float t, Color fill, bool heart)
         {
             DrawDisc(new Rect(r.x - 44, r.y - 4, 42, 42), heart ? new Color(0.95f, 0.25f, 0.35f) : new Color(0.3f, 0.75f, 1f));
             UiKit.Fill(r, new Color(0.08f, 0.08f, 0.1f));
@@ -461,19 +613,22 @@ namespace DW1Remake.Game
             UiKit.Fill(r, new Color(0.9f, 0.92f, 0.85f));
             UiKit.Fill(new Rect(r.x, r.y, r.width * Mathf.Clamp01(Enemy.Hp / (float)Enemy.MaxHp), r.height), new Color(0.95f, 0.3f, 0.3f));
             Outlined(new Rect(r.xMax - 80, r.y - h * 3.2f, 90, 30), Enemy.Hp.ToString(), 24, Color.white, TextAnchor.MiddleRight);
+            int letters = Mathf.Clamp(Mathf.FloorToInt(Enemy.Gauge), 0, 6);   // the enemy has its own gauge too
+            if (letters > 0) Outlined(new Rect(r.x, r.y + h + 2, 120, 26), "FINISH".Substring(0, letters), 22, new Color(1f, 0.9f, 0.2f));
         }
 
         void Menu()
         {
-            int n = _orders.Count + 1;
-            var box = new Rect(40, 620, 640, 80 + n * 62);
+            int n = _orders.Count;
+            var box = new Rect(40, 640, 700, 60 + n * 90);
             UiKit.Box(box, UiKit.PanelFill);
             for (int i = 0; i < n; i++)
             {
-                string o = i < _orders.Count ? _orders[i] : ItemOrder;
+                string o = _orders[i];
                 bool locked = o == RunOrder && NoFlee;
                 Color c = i == _sel ? UiKit.Yellow : locked ? UiKit.Grey : o == _order ? UiKit.Cyan : Color.white;
-                UiKit.Text(new Rect(box.x + 40, box.y + 30 + i * 62, box.width - 60, 60), (i == _sel ? "> " : "   ") + o, 42, c, TextAnchor.MiddleLeft);
+                OrderIcon(new Rect(box.x + 30, box.y + 28 + i * 90, 76, 76), o, locked);
+                UiKit.Text(new Rect(box.x + 125, box.y + 28 + i * 90, box.width - 150, 76), (i == _sel ? "> " : "   ") + o, 44, c, TextAnchor.MiddleLeft);
             }
         }
 

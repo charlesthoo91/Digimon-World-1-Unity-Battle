@@ -44,7 +44,9 @@ namespace DW1Remake.Formats
             }
         }
         public int ItemSlots;                     // 0x23: how many items the bag holds (10 at the start, 20/30 with each Dimensional Key Chain)
+        public bool[] Cards = new bool[256];      // cards collected (command 0x2F n gives card n)
         public bool[] Techs = new bool[256];      // techniques the partner knows (0x2D teaches one)
+        public List<int> TechSet = new List<int>();   // the (up to 3) techniques picked on the Tech page; the battle uses these
         public void SetStat(int i, int v) { if (i >= 0 && i < Stats.Length) Stats[i] = (ushort)Math.Max(0, Math.Min(9999, v)); }
         public void AddStat(int i, int v)
         {
@@ -276,6 +278,7 @@ namespace DW1Remake.Formats
                     case 0x29: st.RemoveItem(d[p + 2], d[p + 3]); p += 4; continue;                  // take item
                     case 0x2A: st.Money += Long(p + 2); p += 6; continue;
                     case 0x2B: st.Money = Math.Max(0, st.Money - Long(p + 2)); p += 6; continue;
+                    case 0x2F: st.Cards[d[p + 1]] = true; p += 2; continue;   // a card for the Card List
                     case 0x2D: st.Techs[d[p + 1]] = true; p += 2; continue;                          // teach a technique
                     case 0x34: st.SetStat(d[p + 1], U16(d, p + 2)); p += 4; continue;
                     case 0x35: st.AddStat(d[p + 1], U16(d, p + 2)); p += 4; continue;

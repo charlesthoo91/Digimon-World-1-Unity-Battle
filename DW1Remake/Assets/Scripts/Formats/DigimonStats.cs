@@ -12,7 +12,10 @@ namespace DW1Remake.Formats
         public string Name;
         public int Level;            // record byte +29: 1 Baby I, 2 Baby II, 3 Rookie, 4 Champion, 5 Ultimate, 6 Mega
         public int Attribute;        // record byte +28: 1 Data, 2 Vaccine, 3 Virus (matches "is a Data Type Digimon" in the scripts)
-        public string SignatureTech; // last technique in the record's list (Agumon: Pepper Breath); null for babies
+        public string SignatureTech; // the Digimon's own finishing move (Agumon: Pepper Breath); null for babies
+        public List<int> Learnable = new List<int>();         // technique numbers (position in the name list) it can use: Agumon 2, 0, 4, 5, 3, 43, 41 = Spit Fire, Fire Tower, Magma Bomb, ...
+        public List<string> LearnableNames = new List<string>();
+        public int SignatureId = -1; // the finishing move's number in the name list (the record stores it plus 6)
 
         public string LevelName { get { string[] n = { "?", "Baby I", "Baby II", "Rookie", "Champion", "Ultimate", "Mega" }; return Level >= 0 && Level < n.Length ? n[Level] : "?"; } }
         public string AttributeName { get { return Attribute == 1 ? "Data" : Attribute == 2 ? "Vaccine" : Attribute == 3 ? "Virus" : "Free"; } }
@@ -44,11 +47,14 @@ namespace DW1Remake.Formats
             }
         }
 
-        public static string TechName(DiscImage disc, int techId)
+        /// <summary>Name of technique n once the catalog has been read (call Get first).</summary>
+        public static string NameOf(int n) { return _techNames != null && n >= 0 && n < _techNames.Count ? _techNames[n] : "?"; }
+
+        /// <summary>Name of technique number n (its position in the name list).</summary>
+        public static string TechName(DiscImage disc, int n)
         {
             Init(disc);
-            int i = techId - TechIdBase;
-            return i >= 0 && i < _techNames.Count ? _techNames[i] : null;
+            return n >= 0 && n < _techNames.Count ? _techNames[n] : null;
         }
 
         public static DigimonStats Get(DiscImage disc, int type)
@@ -59,9 +65,16 @@ namespace DW1Remake.Formats
             var s = new DigimonStats { Type = type, Level = _exe[d + 29], Attribute = _exe[d + 28] };
             int n = 0; while (n < 20 && _exe[d + n] >= 32 && _exe[d + n] < 127) n++;
             s.Name = Encoding.ASCII.GetString(_exe, d, n);
-            int last = -1;
-            for (int i = TechListStart; i < Stride - 1; i++) { if (_exe[d + i] == 0xFF) break; last = _exe[d + i]; }
-            s.SignatureTech = last >= 0 ? TechName(disc, last) : null;
+            // the record lists the usable techniques (their number = position in the name list), then the finishing move stored as number + 6
+            var ids = new List<int>();
+            for (int i = TechListStart; i < Stride - 1; i++) { if (_exe[d + i] == 0xFF) break; ids.Add(_exe[d + i]); }
+            if (ids.Count > 0)
+            {
+                int sig = ids[ids.Count - 1] - TechIdBase;
+                if (sig >= 0 && sig < _techNames.Count) { s.SignatureId = sig; s.SignatureTech = _techNames[sig]; }
+                for (int i = 0; i < ids.Count - 1; i++) if (ids[i] < _techNames.Count) { s.Learnable.Add(ids[i]); s.LearnableNames.Add(_techNames[ids[i]]); }
+                if (s.SignatureId < 0 && ids.Count == 1) { }   // babies: a single entry that is not a technique
+            }
             return s;
         }
     }
