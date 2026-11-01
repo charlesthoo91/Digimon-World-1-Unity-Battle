@@ -335,6 +335,7 @@ namespace DW1Remake.Game
         void BeginNewGame()
         {
             _intro = true;
+            _state.Vars[103] = (byte)PartnerType;   // the opening picks the partner's starting stats by this (3 = Agumon)
             if (!StartScript(54, null)) FinishIntro();
         }
 
@@ -1001,6 +1002,7 @@ namespace DW1Remake.Game
             UpdateClock();
             if (GridKeyPressed()) ToggleGrid();
             if (NamesKeyPressed()) ShowNames = !ShowNames;
+            if (StatsKeyPressed()) _showStats = !_showStats;
             if (OverlayKeyPressed()) { ShowOverlays = !ShowOverlays; if (_overlayRoot != null) _overlayRoot.SetActive(ShowOverlays); }
             TickOverlayAnimations();
             if (_player == null || _map == null || _changing) return;
@@ -1060,6 +1062,30 @@ namespace DW1Remake.Game
                 if (_armed && (cell < 80 || ActionPressed())) TryDoor(cell);
             }
             else _armed = true;
+        }
+
+        bool _showStats;
+        static bool StatsKeyPressed()
+        {
+#if ENABLE_INPUT_SYSTEM
+            var k = Keyboard.current;
+            return k != null && k.f4Key.wasPressedThisFrame;
+#elif ENABLE_LEGACY_INPUT_MANAGER
+            return Input.GetKeyDown(KeyCode.F4);
+#else
+            return false;
+#endif
+        }
+
+        void DrawStats()
+        {
+            var s = _state;
+            string[] names = { "Offense", "Defense", "Speed", "Brains", "Max HP", "Max MP", "HP", "MP" };
+            var sb = new System.Text.StringBuilder("Partner (F4)" + System.Environment.NewLine);
+            for (int i = 0; i < names.Length; i++) sb.Append(names[i]).Append(": ").Append(s.Stats[i]).Append(System.Environment.NewLine);
+            int known = 0; foreach (var b in s.ItemTable) if (b != 0) known++;
+            sb.Append("Money: ").Append(s.Money).Append("   Bag slots: ").Append(s.ItemSlots).Append("   Item table entries: ").Append(known);
+            GUI.Box(new Rect(10, 40, 330, 190), sb.ToString());
         }
 
         static bool NamesKeyPressed()
@@ -1323,6 +1349,7 @@ namespace DW1Remake.Game
                 string pn = _curPalette == 0 ? "day" : _curPalette == 1 ? "evening" : "night";
                 GUI.Label(new Rect(10, 10, 1400, 24), "Map " + name + "   " + ((int)_clock).ToString("00") + ":" + ((int)((_clock % 1f) * 60f)).ToString("00") + " " + pn + " (T = +1 hour)   |   Arrow keys/WASD walk, Space = action, F1 = walking grid, F2 = foreground on/off, F3 = names   |   grid value here: " + _map.CollisionAt(_player.position.x / Unit, _player.position.z / Unit));
             }
+            if (_showStats) DrawStats();
             if (ShowNames && _player != null && _map != null && !_changing)
             {
                 DrawName(_player, _playerName, new Color(1f, 0.95f, 0.5f));

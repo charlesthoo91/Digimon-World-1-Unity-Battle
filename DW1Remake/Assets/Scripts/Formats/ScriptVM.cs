@@ -9,6 +9,20 @@ namespace DW1Remake.Formats
     {
         public byte[] Vars = new byte[256];
         public byte[] Flags = new byte[100];     // 800 flags
+        // Partner / bag values the scripts set (0x34 set, 0x35 add). From the opening: 0-3 = offense, defense, speed, brains;
+        // 4,5 = max HP, max MP; 6,7 = current HP, MP (0x35 with 9999 = refill); 8+ not understood yet.
+        public ushort[] Stats = new ushort[32];
+        public int Money;                         // bits; the real game starts at 0 (0x2B is NOT money - its meaning is unknown)
+        public int ItemSlots;                     // 0x23: how many items the bag holds (10 at the start, 20/30 with each Dimensional Key Chain)
+        public byte[] ItemTable = new byte[256];  // 0x29 item id -> number (99 in the opening); exact meaning (shop stock?) not confirmed
+        public void SetStat(int i, int v) { if (i >= 0 && i < Stats.Length) Stats[i] = (ushort)Math.Max(0, Math.Min(9999, v)); }
+        public void AddStat(int i, int v)
+        {
+            if (i < 0 || i >= Stats.Length) return;
+            int n = Math.Max(0, Math.Min(9999, Stats[i] + v));
+            if ((i == 6 || i == 7) && n > Stats[i - 2]) n = Stats[i - 2];   // HP / MP never go above their maximum
+            Stats[i] = (ushort)n;
+        }
         public bool GetFlag(int i) { return i >= 0 && i < 800 && (Flags[i >> 3] & (1 << (i & 7))) != 0; }
         public void SetFlag(int i, bool on)
         {
@@ -209,6 +223,10 @@ namespace DW1Remake.Formats
                     case 0x1C: st.SetFlag(U16(d, p + 2), true); p += 4; continue;
                     case 0x1D: st.SetFlag(U16(d, p + 2), false); p += 4; continue;
                     case 0x1E: st.Vars[d[p + 2]] = d[p + 3]; p += 4; continue;
+                    case 0x23: st.ItemSlots = d[p + 1]; p += 2; continue;
+                    case 0x29: st.ItemTable[d[p + 2]] = d[p + 3]; p += 4; continue;
+                    case 0x34: st.SetStat(d[p + 1], U16(d, p + 2)); p += 4; continue;
+                    case 0x35: st.AddStat(d[p + 1], U16(d, p + 2)); p += 4; continue;
                     case 0x1F: st.Vars[d[p + 2]] = (byte)Math.Min(255, st.Vars[d[p + 2]] + d[p + 3]); p += 4; continue;
                     case 0x20: st.Vars[d[p + 2]] = (byte)Math.Max(0, st.Vars[d[p + 2]] - d[p + 3]); p += 4; continue;
                     case 0x47: Spawns.Add(new int[] { d[p + 1], d[p + 2], d[p + 3] }); p += 4; continue;
