@@ -18,13 +18,14 @@ namespace DW1Remake.Formats
         AnimSim _sim;
         int _slot = -1;
         double _last, _acc;
-        bool _once, _held;                       // play once and hold the last pose (getting up, lying down...)
+        bool _once, _held, _wasEndless;                       // play once and hold the last pose (getting up, lying down...)
         Quaternion[] _fromRot; Vector3[] _fromPos; float _blend = 1f;
         public float BlendSeconds = 0.2f;        // smooth change from the previous pose to the next animation
 
         public int SlotCount { get { return _anims == null ? 0 : _anims.Length; } }
         public int Slot { get { return _slot; } }
         int _pending = -1; bool _pendingOnce;    // next scripted animation, waits until the current play-once animation has finished (like the game's per-actor command queue)
+        public void ReleaseLoop() { if (_sim != null) _sim.ReleaseLoop(); }
         public bool Busy { get { return _once && !_held && _sim != null && !_sim.Endless; } }   // an endless loop (lying asleep) never blocks the next animation
 
         /// <summary>Scripted animation: starts now, or right after the current play-once animation ends.</summary>
@@ -91,7 +92,7 @@ namespace DW1Remake.Formats
                 {
                     if (_once)
                     {
-                        _held = true;
+                        _held = true; Debug.Log("[anim] slot " + _slot + " finished at " + Time.realtimeSinceStartup.ToString("F1") + "s");
                         if (_pending >= 0) { int ps = _pending; SetSlot(ps, _pendingOnce); }   // the queued animation starts now
                         break;
                     }                                   // finished: keep the last pose
@@ -99,6 +100,7 @@ namespace DW1Remake.Formats
                 }
                 moved = true;
             }
+            if (_once && _sim != null && _sim.Endless != _wasEndless) { _wasEndless = _sim.Endless; Debug.Log("[anim] slot " + _slot + " endless loop: " + _wasEndless + " at " + Time.realtimeSinceStartup.ToString("F1") + "s"); }
             if (moved) Apply();
         }
 

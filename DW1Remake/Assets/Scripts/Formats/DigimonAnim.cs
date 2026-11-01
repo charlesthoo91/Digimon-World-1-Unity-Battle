@@ -194,6 +194,9 @@ namespace DW1Remake.Formats
             }
         }
 
+        /// <summary>The script's 0x64 command: lets an endless loop (loop count 0xFF) end, so the animation goes on to its next part (the boy getting up).</summary>
+        public void ReleaseLoop() { if (_running && _loopCount == 0xFF) _loopCount = 1; }
+
         /// <summary>True while the animation sits in a loop that never ends (loop count 0xFF), e.g. lying asleep.</summary>
         public bool Endless { get { return _running && _loopCount == 0xFF; } }
 

@@ -246,6 +246,10 @@ namespace DW1Remake.Game
             Transform t, t2; DigimonAnimator an, an2;
             switch (a.Cmd)
             {
+                case 0x64:
+                    // ends the endless lying loop of the actor named in variable 254 (the boy waking up)
+                    if (ActorOf(a.Actor, out t, out an) && an != null) { Debug.Log("[anim] 0x64 releases the loop of actor 0x" + a.Actor.ToString("X")); an.ReleaseLoop(); }
+                    break;
                 case 0x67: _wait = a.Frames / 30f; return _wait > 0f;
                 case 0x4A: _waitAll = ActorsBusy(); return _waitAll;
                 case 0x4C:
