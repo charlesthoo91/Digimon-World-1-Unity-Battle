@@ -145,6 +145,8 @@ namespace DW1Remake.Game
             _scripts = MapScripts.Load(_disc);
             _menus = new GameMenus(_state, ItemCatalog.Load(_disc));
             _menus.Icons = ItemIcons.Load(_disc);
+            _battle = new Battle(_state, FaceRot);
+            _battle.OnOpenBag = () => _menus.OpenBag();
             _menus.OnSleep = () => { _clock = (_clock + 8f) % 24f; _dayCount++; };
             _menus.PlayerName = PlayerNameText; _menus.PartnerName = PartnerNameText;
             _state.SpeciesNameOf = t =>
@@ -264,8 +266,17 @@ namespace DW1Remake.Game
             switch (a.Cmd)
             {
                 case 0x64:
-                    // ends the endless lying loop of the actor named in variable 254 (the boy waking up)
-                    if (ActorOf(a.Actor, out t, out an) && an != null) { Debug.Log("[anim] 0x64 releases the loop of actor 0x" + a.Actor.ToString("X")); an.ReleaseLoop(); }
+                    // 0x64 n = run built-in function n (variable 254 = its parameter, usually an actor)
+                    if (a.Frames == 0x37)   // ends the endless lying loop of the actor (the boy waking up)
+                    {
+                        if (ActorOf(a.Actor, out t, out an) && an != null) { Debug.Log("[anim] 0x64 releases the loop of actor 0x" + a.Actor.ToString("X")); an.ReleaseLoop(); }
+                    }
+                    else if (a.Frames == 8 && _menus != null)   // the shop screen; the script switched on flag 0x180 + item for each item it sells
+                    {
+                        _menus.OpenShop(i => _state.GetFlag(0x180 + i));
+                        _shopWait = true;
+                        return true;
+                    }
                     break;
                 case 0x67: _wait = a.Frames / 30f; return _wait > 0f;
                 case 0x4A: _waitAll = ActorsBusy(); return _waitAll;
@@ -505,6 +516,7 @@ namespace DW1Remake.Game
             }
             var sb = new System.Text.StringBuilder();
             foreach (var n in _npcs) sb.Append(n.Name).Append(" (").Append(n.T.position.x.ToString("0.0")).Append(", ").Append(n.T.position.z.ToString("0.0")).Append(")  ");
+            _battleCooldown = Mathf.Max(_battleCooldown, 2f);   // no fight in the first seconds after arriving
             Debug.Log("[npcs] " + _mapNames[_mapId] + ": " + _npcs.Count + " of " + _map.Npcs.Count + " shown: " + sb);
         }
 
@@ -512,7 +524,7 @@ namespace DW1Remake.Game
         {
             foreach (var n in _npcs)
             {
-                if (n.T == null || n.Path.Count == 0 || n == _talkingTo) continue;
+                if (n.T == null || n.Path.Count == 0 || n == _talkingTo || n == _battleNpc) continue;
                 if (n.Wait > 0) { n.Wait -= Time.deltaTime; if (n.Anim != null && n.Anim.Slot != IdleSlot) n.Anim.SetSlot(IdleSlot); continue; }
                 Vector3 pos = n.T.position, to = n.Path[n.Next] - pos; to.y = 0;
                 if (to.magnitude < 0.1f) { n.Next = (n.Next + 1) % n.Path.Count; n.Wait = 1f + (n.Next % 3); continue; }
@@ -553,6 +565,63 @@ namespace DW1Remake.Game
             if (best.Anim != null) best.Anim.SetSlot(IdleSlot);
         }
 
+        // ------------------------------------------------------------------ battles with wild Digimon
+
+        Battle _battle; Npc _battleNpc; float _battleCooldown;
+        bool _shopWait;
+        const int FileCityMap = 204, FileCityExit = 2;   // TWNA01: where a defeated partner is carried
+
+        // walking into a wild Digimon (follow mode 12) starts a fight
+        void TryStartBattle()
+        {
+            if (_battle == null || _partner == null || !_partner.gameObject.activeInHierarchy || _intro) return;
+            foreach (var n in _npcs)
+            {
+                if (n.T == null || n.Data.FollowMode != 12 || !n.T.gameObject.activeInHierarchy) continue;
+                Vector3 d = n.T.position - _player.position; d.y = 0;
+                if (d.magnitude > 1.5f) continue;
+                StartBattle(n);
+                return;
+            }
+        }
+
+        void StartBattle(Npc enemy)
+        {
+            if (_state.Stats[4] == 0)   // not a New Game start: give the partner the opening's Agumon numbers so a fight can be tried
+            {
+                ushort[] v = { 80, 60, 70, 70, 800, 600, 800, 600 };
+                for (int i = 0; i < v.Length; i++) _state.Stats[i] = v[i];
+                if (_state.ItemSlots == 0) _state.ItemSlots = 10;
+            }
+            _battleNpc = enemy;
+            _talkingTo = null;
+            if (_anim != null) _anim.SetSlot(IdleSlot);
+            _battle.Start(_partner, _partnerAnim, _menus != null ? _menus.PartnerName : _partnerName, DigimonStatsCatalog.Get(_disc, PartnerType),
+                          enemy.T, enemy.Anim, enemy.Name, DigimonStatsCatalog.Get(_disc, enemy.Data.Type));
+            Debug.Log("[battle] " + _battle.Partner.Name + " vs " + enemy.Name + " (" + (_battle.Enemy.Info != null ? _battle.Enemy.Info.LevelName : "?") + ", HP " + _battle.Enemy.MaxHp + ", Off " + _battle.Enemy.Off + ")");
+        }
+
+        void EndBattle()
+        {
+            if (_partnerAnim != null) _partnerAnim.SetSlot(IdleSlot);
+            _battleCooldown = 5f;
+            _trail.Clear();
+            if (_battle.Won && _battleNpc != null)
+            {
+                if (_battleNpc.T != null) Destroy(_battleNpc.T.gameObject);
+                _npcs.Remove(_battleNpc);
+            }
+            else if (_state.Stats[6] == 0)   // the partner fell: back to File City with a little health
+            {
+                _state.Stats[6] = (ushort)Mathf.Max(1, _state.Stats[4] / 5);
+                _state.Stats[7] = (ushort)(_state.Stats[5] / 5);
+                DoChangeMap(new ScriptAction { Map = FileCityMap, Exit = FileCityExit, Arrive = 255 });
+            }
+            else if (_battleNpc != null && _battleNpc.Anim != null) _battleNpc.Anim.SetSlot(IdleSlot);
+            if (_partner != null && _player != null) PlacePartner(_player.position, _player.forward);
+            _battleNpc = null;
+        }
+
         // ------------------------------------------------------------------ partner
 
         void BuildPartner()
@@ -572,9 +641,43 @@ namespace DW1Remake.Game
         }
 
         // the partner walks along the path you took, keeping some distance behind you
+        float _viewUntil; int _viewSlot;
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        static bool RecruitKey()
+        {
+#if ENABLE_INPUT_SYSTEM
+            var k = Keyboard.current; return k != null && k.f7Key.wasPressedThisFrame;
+#elif ENABLE_LEGACY_INPUT_MANAGER
+            return Input.GetKeyDown(KeyCode.F7);
+#else
+            return false;
+#endif
+        }
+#endif
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        // dev tool: [ and ] play the partner's animation slots one by one (to find which slot is an attack, a hit, ...)
+        void SlotViewer()
+        {
+            if (_partnerAnim == null || _partnerAnim.SlotCount == 0) return;
+            int d = 0;
+#if ENABLE_INPUT_SYSTEM
+            var k = Keyboard.current; if (k == null) return;
+            if (k.leftBracketKey.wasPressedThisFrame) d = -1; else if (k.rightBracketKey.wasPressedThisFrame) d = 1;
+#elif ENABLE_LEGACY_INPUT_MANAGER
+            if (Input.GetKeyDown(KeyCode.LeftBracket)) d = -1; else if (Input.GetKeyDown(KeyCode.RightBracket)) d = 1;
+#endif
+            if (d == 0) return;
+            int n = _partnerAnim.SlotCount;
+            do { _viewSlot = (_viewSlot + d + n) % n; } while (!_partnerAnim.HasSlot(_viewSlot) && n > 1);
+            _viewUntil = Time.time + 8f;
+            _partnerAnim.SetSlot(_viewSlot, true);
+            Say("Partner animation slot " + _viewSlot + " of " + (n - 1) + "  ( [ and ] change it )");
+        }
+#endif
+
         void UpdatePartner(Vector3 facing)
         {
-            if (_partner == null) return;
+            if (_partner == null || Time.time < _viewUntil) return;
             Vector3 p = _player.position;
             if ((p - _lastTrail).magnitude > 0.15f) { _trail.Add(p); _lastTrail = p; if (_trail.Count > 400) _trail.RemoveAt(0); }
 
@@ -1092,7 +1195,19 @@ namespace DW1Remake.Game
             if (_menus != null)
             {
                 _menus.Species = _partnerName; _menus.Day = _dayCount + 1;
-                if (_menus.Active) { _menus.Tick(MenuStep(), GameMenus.SideStep(), ActionPressed(), GameMenus.CancelKey()); return; }
+                if (_menus.Active)
+                {
+                    _menus.Tick(MenuStep(), GameMenus.SideStep(), ActionPressed(), GameMenus.CancelKey());
+                    if (!_menus.Active && _shopWait) { _shopWait = false; AdvanceScript(); }   // the shop closed: the script goes on
+                    return;
+                }
+                if (_battle != null && _battle.Active)
+                {
+                    _battle.ReadBack();
+                    _battle.Tick(MenuStep(), ActionPressed(), GameMenus.CancelKey());
+                    if (!_battle.Active) EndBattle();
+                    return;
+                }
                 if (_runner == null)
                 {
                     if (GameMenus.TriangleKey()) { _menus.OpenMain(); return; }
@@ -1120,6 +1235,12 @@ namespace DW1Remake.Game
                 else if (ActionPressed()) AdvanceScript();
                 return;
             }
+            if (_battleCooldown > 0f) _battleCooldown -= Time.deltaTime;
+            else if (!_changing) { TryStartBattle(); if (_battle != null && _battle.Active) return; }
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+            SlotViewer();
+            if (RecruitKey()) { _state.SetFlag(0xF9, true); BuildNpcs(); Say("Test: Coelamon recruited (flag 0xF9 on)"); }
+#endif
             if (ActionPressed()) TryTalk();
             if (_runner != null) return;
             Vector2 input = ReadMove();
@@ -1412,6 +1533,8 @@ namespace DW1Remake.Game
         {
             if (_player == null || _map == null) return;
             Vector3 focus = (_camOn ? _camPos : _player.position) + Vector3.up * 1f;
+            if (_battle != null && _battle.Active && _battle.Enemy != null && _battle.Enemy.T != null && _partner != null)
+                focus = (_battle.Enemy.T.position + _partner.position) * 0.5f + Vector3.up * 1f;
 
             if (!_calibrated)
             {
@@ -1457,13 +1580,14 @@ namespace DW1Remake.Game
                 string pn = _curPalette == 0 ? "day" : _curPalette == 1 ? "evening" : "night";
                 GUI.Label(new Rect(10, 10, 1400, 24), "Map " + name + "   " + ((int)_clock).ToString("00") + ":" + ((int)((_clock % 1f) * 60f)).ToString("00") + " " + pn + " (T = +1 hour)   |   Arrow keys/WASD walk, Space = action, F1 = walking grid, F2 = foreground on/off, F3 = names, Tab = menu, F4 = stats, I = bag"
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-                    + ", F5 = shop (test), F6 = +1000 Bits and items (test)"
+                    + ", F5 = shop (test), F6 = +1000 Bits and items (test), [ ] = partner animation slots, F7 = recruit Coelamon (test)"
 #endif
                     + "   |   grid value here: " + _map.CollisionAt(_player.position.x / Unit, _player.position.z / Unit));
             }
             if (_showStats) DrawStats();
             if (_setup != null && _setup.Active) { _setup.OnGUI(); return; }
             if (_menus != null) _menus.OnGUI();
+            if (_battle != null) _battle.OnGUI(_cam);
             if (ShowNames && _player != null && _map != null && !_changing)
             {
                 DrawName(_player, _playerName, new Color(1f, 0.95f, 0.5f));

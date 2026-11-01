@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Text;
 using DW1Remake.Formats;
@@ -42,7 +43,9 @@ namespace DW1Remake.Game
 
         public void OpenMain() { _mode = Mode.Main; _back = Mode.None; _sel = 0; }
         public void OpenBag() { _mode = Mode.Bag; _back = Mode.None; _sel = 0; _msg = ""; }
-        public void OpenShop() { _mode = Mode.Buy; _back = Mode.None; _sel = 0; _msg = ""; }
+        Func<int, bool> _stock;   // which items this shop sells (null = the development test shop: everything priced)
+        /// <summary>stock(i) says whether item i is for sale. The real shops have no list: the shopkeeper's script switches on flag 0x180 + item number for each item it sells.</summary>
+        public void OpenShop(Func<int, bool> stock = null) { _stock = stock; _mode = Mode.Buy; _back = Mode.None; _sel = 0; _msg = ""; }
 
         /// <summary>Test helper (F6): a few Bits and some items so the menus have something in them.</summary>
         public void DebugGive()
@@ -58,7 +61,7 @@ namespace DW1Remake.Game
             var l = new List<int>();
             for (int i = 0; i < _items.Count; i++)
             {
-                if (_mode == Mode.Buy) { if (_items[i].Price > 0 && _items[i].Category <= 2) l.Add(i); }   // test stock until the real shop command is decoded
+                if (_mode == Mode.Buy) { if (_stock != null ? _stock(i) : (_items[i].Price > 0 && _items[i].Category <= 2)) l.Add(i); }
                 else if (_s.Bag[i] > 0) l.Add(i);
             }
             return l;
