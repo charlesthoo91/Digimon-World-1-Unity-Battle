@@ -30,6 +30,8 @@ namespace DW1Remake.Game
             public List<Tech> Techs = new List<Tech>(); public Tech Finisher;
             public float Gauge;                 // finishing-move gauge, 0-6 (one letter of FINISH per unit)
             public float NextAct, AnimReset, WanderWait;
+            public float ShownHp;               // the HP shown on screen: it drains smoothly after a hit (393, 379, 365 ...)
+            public Vector3 PushVel;             // the knock-back when hit
             public Vector3 Slot, Wander;
             public bool Guarding;
         }
@@ -37,6 +39,8 @@ namespace DW1Remake.Game
         sealed class Swing { public Fighter From, To; public float T; public bool Done; public Tech Tech; public Vector3 Start; public float Boost = 1f; }
         sealed class Shot { public Fighter From, To; public Tech Tech; public Vector3 Pos, Dir; public float Travelled; public GameObject Go; public float Boost = 1f; }
         sealed class Pop { public string Text; public Vector3 Pos; public float T; public Color Col; }
+        sealed class Fx { public GameObject Go; public Material Mat; public Vector3 Vel; public float T, Life, S0, S1; public Color Col; }
+        readonly List<Fx> _fx = new List<Fx>();
         sealed class Throw { public int Item; public float T; public int Heal, Mana; }
 
         enum Phase { Notice, Banner, Fight, Win, Lose, Fled }
@@ -137,6 +141,7 @@ namespace DW1Remake.Game
             Enemy.Hp = Enemy.MaxHp;
             SetupTechs(Enemy, enemyInfo, false);
 
+            Partner.ShownHp = Partner.Hp; Enemy.ShownHp = Enemy.Hp;
             _orders.Clear(); _orders.Add(CallOrder); _orders.Add(RunOrder);
             for (int i = 0; i < Learned.Length && i < Partner.Brain / 100; i++) _orders.Add(Learned[i]);
             _order = CallOrder; _menuOpen = false; _sel = 0;
@@ -176,6 +181,12 @@ namespace DW1Remake.Game
             float dt = Time.deltaTime; _time += dt;
             Animate(Partner); Animate(Enemy);
             for (int i = _pops.Count - 1; i >= 0; i--) { _pops[i].T += dt; if (_pops[i].T > 1.2f) _pops.RemoveAt(i); }
+            foreach (var f in new[] { Partner, Enemy })
+            {
+                f.ShownHp = Mathf.MoveTowards(f.ShownHp, f.Hp, Mathf.Max(60f, Mathf.Abs(f.Hp - f.ShownHp) * 2f) * dt);
+                if (f.PushVel.sqrMagnitude > 0.0001f) { f.T.position += f.PushVel * dt; f.PushVel = Vector3.MoveTowards(f.PushVel, Vector3.zero, 14f * dt); }
+            }
+            TickFx(dt);
             for (int i = _throws.Count - 1; i >= 0; i--)
             {
                 _throws[i].T += dt;
@@ -335,7 +346,7 @@ namespace DW1Remake.Game
         void StartSwing(Fighter me, Fighter foe, Tech tech, float boost)
         {
             _swings.Add(new Swing { From = me, To = foe, Tech = tech, Start = me.T.position, Boost = boost });
-            Play(me, tech != null && !tech.Melee ? TechSlot : AttackSlot, 0.9f);
+            Play(me, tech != null && !tech.Melee ? TechSlot : AttackSlot, 1.2f);
             Sync();
         }
 
@@ -381,7 +392,8 @@ namespace DW1Remake.Game
                     float go = Mathf.Clamp01(sw.T / 0.35f), back = Mathf.Clamp01((sw.T - 0.5f) / 0.35f);
                     sw.From.T.position = sw.Start + d * Mathf.Max(0f, dist - 1.3f) * (go - back);
                 }
-                if (!sw.Done && sw.T >= 0.35f)
+                float release = ranged ? 0.6f : 0.35f;
+                if (!sw.Done && sw.T >= release)
                 {
                     sw.Done = true;
                     if (ranged && sw.Tech.Wide) Apply(sw.From, sw.To, sw.Tech, sw.Boost);   // a wide technique covers the whole area: it cannot be dodged
@@ -394,7 +406,7 @@ namespace DW1Remake.Game
                         else Miss(sw.To);
                     }
                 }
-                if (sw.T >= 0.9f) { if (!ranged) sw.From.T.position = sw.Start; _swings.RemoveAt(i); }
+                if (sw.T >= release + 0.55f) { if (!ranged) sw.From.T.position = sw.Start; _swings.RemoveAt(i); }
             }
         }
 
@@ -407,7 +419,7 @@ namespace DW1Remake.Game
             Vector3 dir = (to - from).normalized;
             var go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
             var col = go.GetComponent<Collider>(); if (col != null) UnityEngine.Object.Destroy(col);
-            float size = sw.Tech.Finisher ? 0.8f : 0.4f;
+            float size = sw.Tech.Finisher ? 0.8f : 0.3f;
             go.transform.localScale = Vector3.one * size;
             if (_shotMat == null) _shotMat = new Material(Shader.Find("Sprites/Default"));
             var mr = go.GetComponent<MeshRenderer>(); mr.sharedMaterial = new Material(_shotMat) { color = sw.Tech.Col };
@@ -435,7 +447,51 @@ namespace DW1Remake.Game
             }
         }
 
-        void ClearShots() { foreach (var s in _shots) if (s.Go != null) UnityEngine.Object.Destroy(s.Go); _shots.Clear(); }
+        void ClearShots()
+        {
+            foreach (var s in _shots) if (s.Go != null) UnityEngine.Object.Destroy(s.Go);
+            _shots.Clear();
+            foreach (var f in _fx) { if (f.Go != null) UnityEngine.Object.Destroy(f.Go); }
+            _fx.Clear();
+        }
+
+        // a ball of light or a spark (used for hit effects)
+        void NewFx(Vector3 pos, Color col, float s0, float s1, float life, Vector3 vel)
+        {
+            var go = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            var c = go.GetComponent<Collider>(); if (c != null) UnityEngine.Object.Destroy(c);
+            if (_shotMat == null) _shotMat = new Material(Shader.Find("Sprites/Default"));
+            var mat = new Material(_shotMat) { color = col };
+            go.GetComponent<MeshRenderer>().sharedMaterial = mat;
+            go.transform.position = pos; go.transform.localScale = Vector3.one * s0;
+            _fx.Add(new Fx { Go = go, Mat = mat, Vel = vel, Life = life, S0 = s0, S1 = s1, Col = col });
+        }
+
+        // the hit in the recording: a white-yellow flash, then yellow sparks flying out for half a second
+        void Burst(Vector3 pos, Color tint, float size, bool big)
+        {
+            NewFx(pos, new Color(1f, 0.97f, 0.8f, 1f), 0.4f * size, 1.4f * size, 0.28f, Vector3.zero);
+            int n = big ? 14 : 7;
+            for (int i = 0; i < n; i++)
+            {
+                Vector3 v = UnityEngine.Random.onUnitSphere; v.y = Mathf.Abs(v.y) * 0.8f + 0.2f;
+                NewFx(pos, Color.Lerp(new Color(1f, 0.9f, 0.35f), tint, 0.35f), 0.14f * size, 0.04f, 0.45f, v * UnityEngine.Random.Range(2f, 4f));
+            }
+        }
+
+        void TickFx(float dt)
+        {
+            for (int i = _fx.Count - 1; i >= 0; i--)
+            {
+                var f = _fx[i]; f.T += dt;
+                float k = f.T / f.Life;
+                if (k >= 1f) { if (f.Go != null) UnityEngine.Object.Destroy(f.Go); _fx.RemoveAt(i); continue; }
+                f.Vel.y -= 4f * dt;
+                f.Go.transform.position += f.Vel * dt;
+                f.Go.transform.localScale = Vector3.one * Mathf.Lerp(f.S0, f.S1, k);
+                var c = f.Col; c.a = 1f - k * k; f.Mat.color = c;
+            }
+        }
 
         void Miss(Fighter target) { _pops.Add(new Pop { Text = "MISS", Pos = target.T.position + Vector3.up * 1.2f, Col = new Color(0.8f, 0.85f, 1f) }); }
 
@@ -451,6 +507,9 @@ namespace DW1Remake.Game
             _pops.Add(new Pop { Text = dmg.ToString(), Pos = d.T.position + Vector3.up * 0.9f, T = 0f, Col = Color.white });
             if (d.Hp > 0) Play(d, HitSlot, 0.6f);
             else Play(d, DownSlot, 3f);
+            Vector3 away = Flat(d.T.position - a.T.position); if (away.sqrMagnitude < 0.01f) away = Vector3.left;
+            d.PushVel = away.normalized * (tech != null && tech.Finisher ? 4.5f : 2.6f);
+            Burst(d.T.position + Vector3.up * 0.8f, tech != null ? tech.Col : Color.white, tech != null && tech.Finisher ? 1.6f : 1f, tech != null);
             if (tech != null && tech.Stun && d.Hp > 0) { d.NextAct = Mathf.Max(d.NextAct, _time + 2.5f); _pops.Add(new Pop { Text = "stun", Pos = d.T.position + Vector3.up * 1.6f, Col = new Color(1f, 0.95f, 0.4f) }); }
             Sync();
         }
@@ -630,9 +689,9 @@ namespace DW1Remake.Game
         void Hud()
         {
             // partner HP / MP, top right
-            DrawBar(new Rect(900, 40, 330, 34), Partner.MaxHp > 0 ? Partner.Hp / (float)Partner.MaxHp : 0f, new Color(0.95f, 0.3f, 0.4f), true);
+            DrawBar(new Rect(900, 40, 330, 34), Partner.MaxHp > 0 ? Partner.ShownHp / Partner.MaxHp : 0f, new Color(0.95f, 0.3f, 0.4f), true);
             DrawBar(new Rect(900, 82, 330, 34), Partner.MaxMp > 0 ? Partner.Mp / (float)Partner.MaxMp : 0f, new Color(0.3f, 0.7f, 1f), false);
-            Outlined(new Rect(1235, 34, 150, 46), Partner.Hp.ToString(), 40, Color.white, TextAnchor.MiddleRight);
+            Outlined(new Rect(1235, 34, 150, 46), Mathf.RoundToInt(Partner.ShownHp).ToString(), 40, Color.white, TextAnchor.MiddleRight);
             Outlined(new Rect(1235, 76, 150, 46), Partner.Mp.ToString(), 40, Color.white, TextAnchor.MiddleRight);
             // the orders the partner has learned, top left (the current one is lit)
             for (int i = 0; i < _orders.Count; i++)
@@ -665,8 +724,8 @@ namespace DW1Remake.Game
             var r = new Rect(sp.x - w / 2, Screen.height - sp.y, w, h);
             UiKit.Fill(new Rect(r.x - 2, r.y - 2, r.width + 4, r.height + 4), new Color(0.1f, 0.5f, 0.15f));
             UiKit.Fill(r, new Color(0.9f, 0.92f, 0.85f));
-            UiKit.Fill(new Rect(r.x, r.y, r.width * Mathf.Clamp01(Enemy.Hp / (float)Enemy.MaxHp), r.height), new Color(0.95f, 0.3f, 0.3f));
-            Outlined(new Rect(r.xMax - 80, r.y - h * 3.2f, 90, 30), Enemy.Hp.ToString(), 24, Color.white, TextAnchor.MiddleRight);
+            UiKit.Fill(new Rect(r.x, r.y, r.width * Mathf.Clamp01(Enemy.ShownHp / Enemy.MaxHp), r.height), new Color(0.95f, 0.3f, 0.3f));
+            Outlined(new Rect(r.xMax - 80, r.y - h * 3.2f, 90, 30), Mathf.RoundToInt(Enemy.ShownHp).ToString(), 24, Color.white, TextAnchor.MiddleRight);
         }
 
         void Menu()
