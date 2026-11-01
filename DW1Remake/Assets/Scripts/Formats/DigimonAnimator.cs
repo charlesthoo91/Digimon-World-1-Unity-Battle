@@ -44,6 +44,18 @@ namespace DW1Remake.Formats
 
         public bool HasSlot(int slot) { return _anims != null && slot >= 0 && slot < _anims.Length && _anims[slot] != null; }
 
+        /// <summary>Length of a slot in seconds (0 if it has no animation).</summary>
+        public float SecondsOf(int slot) { return HasSlot(slot) ? _anims[slot].Frames / TicksPerSecond : 0f; }
+
+        /// <summary>When a technique's animation lets go, in seconds: its last sound event (Spit Fire frame 11, the mouth opens). -1 if it has none.</summary>
+        public float ReleaseOf(int slot)
+        {
+            if (!HasSlot(slot)) return -1f;
+            int f = -1;
+            foreach (var x in _anims[slot].Ins) if (x.Kind == InsKind.Snd) f = x.Frame;
+            return f < 0 ? -1f : f / TicksPerSecond;
+        }
+
         /// <param name="once">play the animation once and keep its last pose instead of repeating</param>
         public void SetSlot(int slot, bool once = false)
         {

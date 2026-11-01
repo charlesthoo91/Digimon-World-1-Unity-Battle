@@ -371,14 +371,14 @@ namespace DW1Remake.Game
         }
 
         // ---- the Tech page (layout of the PS1 game): Techset on top, 7 rows of 8 techniques below
-        static readonly int[] RowStarts = { 0, 40, 8, 32, 16, 24, 44 };
-        static readonly int[] RowCounts = { 8, 4, 8, 8, 8, 8, 8 };
+        static readonly int[] RowStarts = { 0, 40, 8, 32, 16, 24, 49 };     // technique numbers; 48 and 57 are repeats of 44 and 55
+        static readonly int[] RowCounts = { 8, 8, 8, 8, 8, 8, 8 };
         static readonly string[] RowNames = { "FIRE", "BATTLE", "AIR", "EARTH", "ICE", "MECH", "FILTH" };
         static readonly int[] RowIcon = { BattleIcons.Fire, BattleIcons.Retreat, BattleIcons.Thunder, BattleIcons.Plant, BattleIcons.Water, BattleIcons.Gear, BattleIcons.Poop };
 
         int TechAt(int r, int c) { return c < RowCounts[r] ? RowStarts[r] + c : -1; }
         bool Usable(int id) { return PartnerInfo != null && PartnerInfo.Learnable.Contains(id); }
-        static string Range(Battle.Tech t) { return t.Wide ? "W" : t.Melee ? "S" : "L"; }
+        static string Range(Battle.Tech t) { return t.Self ? "Self" : t.Wide ? "W" : t.Melee ? "S" : "L"; }
 
         void TickTech(int step, int side, bool action)
         {
@@ -403,12 +403,12 @@ namespace DW1Remake.Game
                 float y = 215 + r * 75;
                 if (r < _s.TechSet.Count)
                 {
-                    int id = _s.TechSet[r]; var t = Battle.MakeTech(id, DigimonStatsCatalog.NameOf(id), false);
+                    int id = _s.TechSet[r]; var t = Battle.MakeTech(id, false);
                     UiKit.Text(new Rect(190, y, 650, 70), t.Name, 54, Color.white);
                     UiKit.Text(new Rect(cx[0] - 10, y, 150, 70), t.Power.ToString(), 54, Color.white);
                     UiKit.Text(new Rect(cx[1] - 10, y, 150, 70), t.Mp.ToString(), 54, Color.white);
                     UiKit.Text(new Rect(cx[2] - 10, y, 80, 70), Range(t), 54, Color.white);
-                    UiKit.Text(new Rect(cx[3] - 10, y, 120, 70), t.Stun ? "stun" : "", 40, Color.white);
+                    UiKit.Text(new Rect(cx[3] - 10, y, 120, 70), t.Spec, 40, Color.white);
                 }
                 else UiKit.Text(new Rect(cx[0] + 90, y + 30, 500, 40), ".          .          .", 30, UiKit.Grey);
             }
@@ -444,14 +444,14 @@ namespace DW1Remake.Game
             int cur = TechAt(_tr, _tc);
             if (cur >= 0 && Usable(cur))
             {
-                var t = Battle.MakeTech(cur, DigimonStatsCatalog.NameOf(cur), false);
+                var t = Battle.MakeTech(cur, false);
                 float px = _tc < 4 ? 860 : 110;
                 var box = new Rect(px, 540, 430, 440);
                 UiKit.Box(box, new Color(0.18f, 0.16f, 0.5f, 0.97f));
                 UiKit.Tag(new Rect(box.x + 10, box.y - 25, 200, 36), "TECH. DATA");
                 UiKit.Text(new Rect(box.x + 25, box.y + 20, box.width - 40, 70), t.Name, 48, Color.white);
                 string[] lab = { "POWER", "MP", "RANG", "SPEC" };
-                string[] val = { t.Power.ToString(), t.Mp.ToString(), Range(t), t.Stun ? "stun" : "-" };
+                string[] val = { t.Power.ToString(), t.Mp.ToString(), Range(t), t.Spec.Length > 0 ? t.Spec : "-" };
                 for (int i = 0; i < 4; i++)
                 {
                     UiKit.Text(new Rect(box.x + 25, box.y + 110 + i * 80, 160, 60), lab[i], 30, UiKit.Grey);

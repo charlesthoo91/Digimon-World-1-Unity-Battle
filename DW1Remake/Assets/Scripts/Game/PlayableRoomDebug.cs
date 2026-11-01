@@ -120,7 +120,7 @@ namespace DW1Remake.Game
             if (GUILayout.Button("Offense/Defense/Speed 300")) { _state.Stats[0] = 300; _state.Stats[1] = 300; _state.Stats[2] = 300; }
             if (GUILayout.Button("+10000 Bits")) _state.Money += 10000;
             if (GUILayout.Button("5 of every item (bag slots 128)")) { for (int i = 0; i < _state.Bag.Length; i++) _state.Bag[i] = 5; _state.ItemSlots = 128; }
-            if (GUILayout.Button("Learn every technique")) { for (int i = 0; i < 52; i++) _state.Techs[i] = true; }
+            if (GUILayout.Button("Learn every technique")) { for (int i = 0; i < 58; i++) _state.Techs[i] = true; }
             if (GUILayout.Button("Collect every card")) { for (int i = 0; i < Portraits.Count; i++) _state.Cards[i] = true; }
 
             GUILayout.Label("Time");

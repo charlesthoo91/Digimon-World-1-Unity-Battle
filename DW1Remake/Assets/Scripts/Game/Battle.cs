@@ -7,20 +7,18 @@ namespace DW1Remake.Game
 {
     /// <summary>
     /// A fight between the partner and a wild Digimon, played on the map in real time, laid out like the PS1 game (from a recording).
-    /// Techniques: each Digimon's usable techniques and its own finishing move come from the disc. Special techniques are projectiles that fly
+    /// Techniques: each Digimon's techniques, their numbers and their animations come from the disc. Special techniques are projectiles that fly
     /// at where the target was when they were fired, so a target that moves can be missed. Every Digimon has a finishing-move gauge (F-I-N-I-S-H)
     /// that fills with time and with damage taken; when full its next action is its own finishing move (Agumon: Pepper Breath).
-    /// Our own formulas (not decoded yet): enemy stats, damage, technique power and MP cost, rewards.
+    /// Our own formulas (not decoded yet): enemy stats, damage, rewards, the look of each technique's effect.
     /// </summary>
     public sealed class Battle
     {
         public sealed class Tech
         {
-            public int Id; public string Name; public int Mp, Power; public float Mult; public bool Melee, Finisher, Wide, Stun; public Color Col;
+            public int Id; public string Name; public int Mp, Power, Accuracy, Status, StatusChance; public float Mult; public bool Melee, Finisher, Wide, Self; public Color Col;
+            public string Spec { get { string[] n = { "", "poison", "confuse", "stun", "flat" }; return Status >= 0 && Status < n.Length ? n[Status] : ""; } }
         }
-
-        /// <summary>The Tech page groups the techniques in rows of 8: Fire, Battle (4), Air, Earth, Ice, Mech, Filth. This is where the row of technique n starts.</summary>
-        public static int RowStart(int id) { return id < 8 ? 0 : id < 16 ? 8 : id < 24 ? 16 : id < 32 ? 24 : id < 40 ? 32 : id < 44 ? 40 : 44; }
 
         public sealed class Fighter
         {
@@ -36,7 +34,7 @@ namespace DW1Remake.Game
             public bool Guarding;
         }
 
-        sealed class Swing { public Fighter From, To; public float T; public bool Done; public Tech Tech; public Vector3 Start; public float Boost = 1f; }
+        sealed class Swing { public Fighter From, To; public float T; public bool Done; public Tech Tech; public Vector3 Start; public float Boost = 1f, Release, Length; }
         sealed class Shot { public Fighter From, To; public Tech Tech; public Vector3 Pos, Dir; public float Travelled; public GameObject Go; public float Boost = 1f; }
         sealed class Pop { public string Text; public Vector3 Pos; public float T; public Color Col; }
         sealed class Fx { public GameObject Go; public Material Mat; public Vector3 Vel; public float T, Life, S0, S1; public Color Col; }
@@ -45,8 +43,9 @@ namespace DW1Remake.Game
 
         enum Phase { Notice, Banner, Fight, Win, Lose, Fled }
 
-        // animation slots (guessed from the opening's usage; the dev slot viewer, [ and ] in the editor, shows what each slot looks like)
-        public static int AttackSlot = 4, TechSlot = 5, HitSlot = 8, DownSlot = 10, CheerSlot = 15;
+        // animation slots, from the battle code: stance 33, walk 35, hit from the front 40 and from behind 41, win 42, a technique = 46 + its place in the move list.
+        // DownSlot and AttackSlot are the likeliest readings, not proven (the game has no plain attack that we could find; the dev viewer, [ and ], shows the slots).
+        public static int IdleSlot = 33, WalkSlot = 35, HitFrontSlot = 40, HitBackSlot = 41, CheerSlot = 42, DownSlot = 37, AttackSlot = 43;
 
         // orders the partner learns as its Brains grow: the first two are always there, then one more per 100 Brains (order of unlocking is a guess)
         static readonly string[] Learned = { "Give it all you got!", "Take it easy!", "Get back!", "Change target!", "Hang in there!" };
@@ -86,20 +85,19 @@ namespace DW1Remake.Game
         public static int StartHp(int level) { int[] v = { 80, 80, 200, 400, 900, 2000, 4000, 6500 }; return v[Mathf.Clamp(level, 0, 7)]; }
         public static int StartOff(int level) { int[] v = { 15, 15, 30, 55, 100, 170, 260, 330 }; return v[Mathf.Clamp(level, 0, 7)]; }
 
-        public static Tech MakeTech(int id, string name, bool finisher)
+        // the shot's colour by element: fire, battle, air, earth, ice, mech, filth
+        static readonly Color[] ElementCol = { new Color(1f, 0.55f, 0.1f), new Color(1f, 0.8f, 0.5f), new Color(1f, 0.95f, 0.2f), new Color(0.5f, 0.9f, 0.3f), new Color(0.6f, 0.95f, 1f), new Color(0.85f, 0.9f, 1f), new Color(0.65f, 0.45f, 0.2f) };
+
+        /// <summary>Technique n from the game's table. Finishing moves cost no MP (they come from the gauge). Damage scale: Spit Fire = 1.5 x Offense (our formula).</summary>
+        public static Tech MakeTech(int id, bool finisher)
         {
-            string n = name.ToLowerInvariant();
-            string[] melee = { "kick", "punch", "claw", "jab", "charge", "dive", "slap", "whack", "crane", "sprinter", "scissor", "sword", "drill", "wing", "strike", "fist", "attack" };
-            bool m = false; foreach (var k in melee) if (n.Contains(k)) m = true;
-            Color c = id <= 7 ? new Color(1f, 0.55f, 0.1f) : id <= 12 ? new Color(1f, 0.95f, 0.2f) : id <= 15 ? new Color(0.7f, 1f, 0.7f)
-                : id <= 19 ? new Color(0.6f, 0.95f, 1f) : id <= 23 ? new Color(0.3f, 0.5f, 1f) : id <= 31 ? new Color(0.85f, 0.9f, 1f) : id <= 38 ? new Color(0.5f, 0.9f, 0.3f) : new Color(1f, 0.8f, 0.5f);
-            // Real values seen on the PS1 Tech page: Spit Fire power 66 / MP 30 / range L; Odor Spray 88 / 75 / L / stun; Ult Poop Hell 333 / 333 / W / flat.
-            // The table itself is not found, so the others follow a formula fitted to Spit Fire (power 50 + 8 x slot in its row, MP 10 + 10 x slot).
-            int slot = id - RowStart(id);
-            int power = 50 + 8 * slot, mp = 10 + 10 * slot;
-            bool wide = n.Contains("hell") || n.Contains("plague") || n.Contains("storm") || n.Contains("blizzard") || n.Contains("inferno") || n.Contains("cloud");
-            bool stun = n.Contains("spray") || n.Contains("powder") || n.Contains("perfume") || n.Contains("static") || n.Contains("shock");
-            return new Tech { Id = id, Name = name, Power = finisher ? 200 : power, Mp = finisher ? 0 : mp, Mult = (finisher ? 200 : power) / 66f * 1.5f, Melee = m && !finisher, Finisher = finisher, Wide = wide, Stun = stun, Col = c };
+            var d = DigimonStatsCatalog.TechOf(id);
+            if (d == null) return new Tech { Id = id, Name = "?", Accuracy = 100, Col = Color.white };
+            return new Tech
+            {
+                Id = id, Name = d.Name, Power = d.Power, Mp = finisher ? 0 : d.Mp, Mult = d.Power / 66f * 1.5f, Accuracy = d.Accuracy, Status = d.Status, StatusChance = d.StatusChance,
+                Melee = d.Range == 1, Wide = d.Range == 3, Self = d.Range == 4, Finisher = finisher, Col = ElementCol[Mathf.Clamp(d.Element, 0, ElementCol.Length - 1)]
+            };
         }
 
         /// <summary>The techniques a Digimon can use: the learned ones (all of them for wild Digimon, the first two), and its own finishing move.</summary>
@@ -109,11 +107,11 @@ namespace DW1Remake.Game
             if (isPartner)
             {
                 for (int i = 0; i < info.Learnable.Count; i++)
-                    if (_s.Techs[info.Learnable[i]] && (_s.TechSet.Count == 0 || _s.TechSet.Contains(info.Learnable[i]))) f.Techs.Add(MakeTech(info.Learnable[i], info.LearnableNames[i], false));
-                if (f.Techs.Count == 0 && info.Learnable.Count > 0) f.Techs.Add(MakeTech(info.Learnable[0], info.LearnableNames[0], false));   // Agumon starts with Spit Fire
+                    if (_s.Techs[info.Learnable[i]] && (_s.TechSet.Count == 0 || _s.TechSet.Contains(info.Learnable[i]))) f.Techs.Add(MakeTech(info.Learnable[i], false));
+                if (f.Techs.Count == 0 && info.Learnable.Count > 0) f.Techs.Add(MakeTech(info.Learnable[0], false));   // Agumon starts with Spit Fire
             }
-            else for (int i = 0; i < info.Learnable.Count && i < 2; i++) f.Techs.Add(MakeTech(info.Learnable[i], info.LearnableNames[i], false));
-            if (info.SignatureId >= 0) f.Finisher = MakeTech(info.SignatureId, info.SignatureTech, true);
+            else for (int i = 0; i < info.Learnable.Count && i < 2; i++) f.Techs.Add(MakeTech(info.Learnable[i], false));
+            if (info.SignatureId >= 0) f.Finisher = MakeTech(info.SignatureId, true);
         }
 
         /// <summary>right = the screen's right direction on the ground.</summary>
@@ -155,8 +153,8 @@ namespace DW1Remake.Game
             _swings.Clear(); _pops.Clear(); _throws.Clear(); ClearShots(); _log = "";
             Partner.NextAct = Enemy.NextAct = 0f;
             enemy.rotation = _face(partner.position - enemy.position);
-            if (Partner.A != null) Partner.A.SetSlot(0);
-            if (Enemy.A != null) Enemy.A.SetSlot(0);
+            Stand(Partner);
+            Stand(Enemy);
         }
 
         float Interval(Fighter f) { return Mathf.Clamp(4.0f - f.Spd / 60f, 1.3f, 3.8f); }
@@ -282,7 +280,11 @@ namespace DW1Remake.Game
             else Log("Couldn't get away!");
         }
 
-        void Animate(Fighter f) { if (f != null && f.A != null && f.AnimReset > 0f && _time >= f.AnimReset) { f.AnimReset = 0f; if (f.Hp > 0) f.A.SetSlot(0); } }
+        void Animate(Fighter f) { if (f != null && f.A != null && f.AnimReset > 0f && _time >= f.AnimReset) { f.AnimReset = 0f; if (f.Hp > 0) Stand(f); } }
+
+        // the battle stance (models without one use the normal idle)
+        void Stand(Fighter f) { if (f.A != null) f.A.SetSlot(f.A.HasSlot(IdleSlot) ? IdleSlot : 0); }
+        bool Standing(Fighter f) { return f.A.Slot == IdleSlot || f.A.Slot == 0; }
 
         void Play(Fighter f, int slot, float seconds)
         {
@@ -299,7 +301,7 @@ namespace DW1Remake.Game
             if (!allowed || me.Hp <= 0) return;
             foreach (var sw in _swings) if (sw.From == me) return;
             if (me.AnimReset > 0f) return;
-            if (me.WanderWait > 0f) { me.WanderWait -= dt; if (me.A != null && me.A.Slot != 0) me.A.SetSlot(0); return; }
+            if (me.WanderWait > 0f) { me.WanderWait -= dt; if (me.A != null && !Standing(me)) Stand(me); return; }
             Vector3 to = me.Wander - me.T.position; to.y = 0;
             if (to.magnitude < 0.1f)
             {
@@ -310,7 +312,8 @@ namespace DW1Remake.Game
             }
             me.T.position += to.normalized * Mathf.Min(to.magnitude, 1.8f * dt);
             me.T.rotation = Quaternion.RotateTowards(me.T.rotation, _face(foe.T.position - me.T.position), 400f * dt);
-            if (me.A != null && me.A.Slot != 2) me.A.SetSlot(2);
+            int walk = me.A != null && me.A.HasSlot(WalkSlot) ? WalkSlot : 2;
+            if (me.A != null && me.A.Slot != walk) me.A.SetSlot(walk);
         }
 
         void TickFighter(Fighter me, Fighter foe, float dt)
@@ -345,8 +348,15 @@ namespace DW1Remake.Game
 
         void StartSwing(Fighter me, Fighter foe, Tech tech, float boost)
         {
-            _swings.Add(new Swing { From = me, To = foe, Tech = tech, Start = me.T.position, Boost = boost });
-            Play(me, tech != null && !tech.Melee ? TechSlot : AttackSlot, 1.2f);
+            // the technique's own animation: slot 46 + its place in this Digimon's move list; it lets go at the animation's last sound event
+            int slot = tech != null && me.Info != null ? me.Info.MoveSlot(tech.Id) : -1;
+            if (me.A == null || !me.A.HasSlot(slot)) slot = AttackSlot;
+            bool ranged = tech != null && !tech.Melee;
+            float release = me.A != null ? me.A.ReleaseOf(slot) : -1f, length = me.A != null ? me.A.SecondsOf(slot) : 0f;
+            if (release < 0f) release = ranged ? 0.6f : 0.35f;
+            length = Mathf.Max(length, release + 0.3f);
+            _swings.Add(new Swing { From = me, To = foe, Tech = tech, Start = me.T.position, Boost = boost, Release = release, Length = length });
+            Play(me, slot, length);
             Sync();
         }
 
@@ -389,14 +399,14 @@ namespace DW1Remake.Game
                 float dist = dir.magnitude; Vector3 d = dist > 0.01f ? dir / dist : Vector3.forward;
                 if (!ranged)   // lunge in, hit, and back
                 {
-                    float go = Mathf.Clamp01(sw.T / 0.35f), back = Mathf.Clamp01((sw.T - 0.5f) / 0.35f);
+                    float go = Mathf.Clamp01(sw.T / sw.Release), back = Mathf.Clamp01((sw.T - sw.Release - 0.15f) / 0.35f);
                     sw.From.T.position = sw.Start + d * Mathf.Max(0f, dist - 1.3f) * (go - back);
                 }
-                float release = ranged ? 0.6f : 0.35f;
-                if (!sw.Done && sw.T >= release)
+                if (!sw.Done && sw.T >= sw.Release)
                 {
                     sw.Done = true;
-                    if (ranged && sw.Tech.Wide) Apply(sw.From, sw.To, sw.Tech, sw.Boost);   // a wide technique covers the whole area: it cannot be dodged
+                    if (ranged && sw.Tech.Self) _pops.Add(new Pop { Text = sw.Tech.Name, Pos = sw.From.T.position + Vector3.up * 1.6f, Col = sw.Tech.Col });   // what these do is not decoded yet
+                    else if (ranged && sw.Tech.Wide) Apply(sw.From, sw.To, sw.Tech, sw.Boost);   // a wide technique covers the whole area: it cannot be dodged
                     else if (ranged) Fire(sw);
                     else
                     {
@@ -406,7 +416,7 @@ namespace DW1Remake.Game
                         else Miss(sw.To);
                     }
                 }
-                if (sw.T >= release + 0.55f) { if (!ranged) sw.From.T.position = sw.Start; _swings.RemoveAt(i); }
+                if (sw.T >= Mathf.Max(sw.Length, sw.Release + 0.5f)) { if (!ranged) sw.From.T.position = sw.Start; _swings.RemoveAt(i); }
             }
         }
 
@@ -495,9 +505,17 @@ namespace DW1Remake.Game
 
         void Miss(Fighter target) { _pops.Add(new Pop { Text = "MISS", Pos = target.T.position + Vector3.up * 1.2f, Col = new Color(0.8f, 0.85f, 1f) }); }
 
+        // the game's chance to hit, in percent: Accuracy - (Accuracy / 2) x (target Speed - attacker Speed / 10) / 999, kept between 0 and 100 (exe table byte +11)
+        float HitChance(Fighter a, Fighter d, Tech tech)
+        {
+            int acc = tech.Accuracy;
+            return Mathf.Clamp(acc - (acc / 2) * (d.Spd - a.Spd / 10) / 999, 0, 100);
+        }
+
         void Apply(Fighter a, Fighter d, Tech tech, float boost = 1f)
         {
             if (d.Hp <= 0) return;
+            if (tech != null && _rng.NextDouble() * 100.0 >= HitChance(a, d, tech)) { Miss(d); return; }
             float mult = (tech != null ? tech.Mult : 0.45f) * boost;
             float v = a.Off * mult * (0.85f + (float)_rng.NextDouble() * 0.3f) * 100f / (100f + d.Def * 0.8f);
             if (d.Guarding) v *= 0.5f;
@@ -505,12 +523,23 @@ namespace DW1Remake.Game
             d.Hp = Mathf.Max(0, d.Hp - dmg);
             d.Gauge = Mathf.Min(6f, d.Gauge + dmg / (float)d.MaxHp * 6f);          // taking damage fills the finishing-move gauge
             _pops.Add(new Pop { Text = dmg.ToString(), Pos = d.T.position + Vector3.up * 0.9f, T = 0f, Col = Color.white });
-            if (d.Hp > 0) Play(d, HitSlot, 0.6f);
-            else Play(d, DownSlot, 3f);
             Vector3 away = Flat(d.T.position - a.T.position); if (away.sqrMagnitude < 0.01f) away = Vector3.left;
+            if (d.Hp > 0)
+            {
+                // the game picks the reaction by which side was hit; the fighter can do nothing until it ends. The model's front is -Z.
+                int slot = Vector3.Dot(d.T.forward, away) >= 0f ? HitFrontSlot : HitBackSlot;
+                float length = d.A != null ? d.A.SecondsOf(slot) : 0f;
+                Play(d, slot, length);
+                d.NextAct = Mathf.Max(d.NextAct, _time + length);
+            }
+            else Play(d, DownSlot, 3f);
             d.PushVel = away.normalized * (tech != null && tech.Finisher ? 4.5f : 2.6f);
             Burst(d.T.position + Vector3.up * 0.8f, tech != null ? tech.Col : Color.white, tech != null && tech.Finisher ? 1.6f : 1f, tech != null);
-            if (tech != null && tech.Stun && d.Hp > 0) { d.NextAct = Mathf.Max(d.NextAct, _time + 2.5f); _pops.Add(new Pop { Text = "stun", Pos = d.T.position + Vector3.up * 1.6f, Col = new Color(1f, 0.95f, 0.4f) }); }
+            if (tech != null && tech.Status > 0 && d.Hp > 0 && _rng.Next(100) < tech.StatusChance)
+            {
+                if (tech.Status != 1) d.NextAct = Mathf.Max(d.NextAct, _time + 2.5f);     // our simple stand-in: confuse, stun and flat just lose time; poison only shows
+                _pops.Add(new Pop { Text = tech.Spec, Pos = d.T.position + Vector3.up * 1.6f, Col = new Color(1f, 0.95f, 0.4f) });
+            }
             Sync();
         }
 
