@@ -33,6 +33,9 @@ namespace DW1Remake.Game
         public BattleIcons BIcons;
         public Portraits Faces;
         public DigimonStats PartnerInfo;   // the partner's techniques (the Tech page greys out the ones it cannot use)
+        public MenuArt Art;
+        public DW1Remake.Disc.DiscImage Disc;
+        public Texture BoyPicture; public System.Action NeedBoyPicture;
         int _tr, _tc;                      // cursor on the Tech page: row, column
         public int LastUsedItem = -1;   // set when a bag item was used (the battle shows it being thrown to the partner)
         public System.Action OnSleep, OnNameDone;
@@ -89,8 +92,10 @@ namespace DW1Remake.Game
                 case Mode.Player:
                 {
                     int n = _mode == Mode.Digimon ? 2 : 4;
+                    if (cancel && _treeType >= 0) { _treeType = -1; return; }
                     if (cancel) { _mode = Mode.Main; return; }
                     if (_mode == Mode.Digimon && _tab == 1) { TickTech(step, side, action); return; }
+                    if (_mode == Mode.Player && _tab == 1 && TickChart(step, side, action)) return;
                     if (side != 0) _tab = (_tab + side + n) % n;
                     return;
                 }
@@ -105,7 +110,12 @@ namespace DW1Remake.Game
             if ((_mode == Mode.Buy || _mode == Mode.Sell) && side != 0) { _mode = _mode == Mode.Buy ? Mode.Sell : Mode.Buy; _sel = 0; _msg = ""; }
             var list = Entries();
             if (list.Count == 0) { _sel = 0; return; }
-            if (step != 0) _sel = (_sel + step + list.Count) % list.Count;
+            if (_mode == Mode.Bag)      // two columns
+            {
+                if (step != 0) _sel = (_sel + step * 2 + list.Count * 2) % list.Count;
+                if (side != 0) _sel = (_sel + side + list.Count) % list.Count;
+            }
+            else if (step != 0) _sel = (_sel + step + list.Count) % list.Count;
             _sel = Mathf.Clamp(_sel, 0, list.Count - 1);
             if (!action) return;
             int id = list[_sel];
@@ -169,7 +179,8 @@ namespace DW1Remake.Game
             switch (_mode)
             {
                 case Mode.Main: DrawMain(); break;
-                case Mode.Bag: case Mode.Buy: case Mode.Sell: DrawList(); break;
+                case Mode.Bag: DrawBag(); break;
+                case Mode.Buy: case Mode.Sell: DrawList(); break;
                 case Mode.Digimon: DrawDigimon(); break;
                 case Mode.Player: DrawPlayer(); break;
                 case Mode.Msg: DrawMsg(); break;
@@ -193,7 +204,6 @@ namespace DW1Remake.Game
             UiKit.Fill(new Rect(box.x + 7, box.y + 100, box.width - 14, 5), UiKit.Frame);
             UiKit.Text(new Rect(box.x + 30, box.y + 14, box.width - 60, 80), "Year 1     Day " + Day, 58, UiKit.Yellow, TextAnchor.MiddleLeft);
             string[] names = { "ITEM", "DIGIMON", "PLAYER", "PRAISE", "SCOLD", "SLEEP" };
-            Color[] cols = { new Color(0.85f, 0.2f, 0.15f), new Color(0.9f, 0.9f, 0.85f), new Color(0.9f, 0.65f, 0.4f), new Color(0.25f, 0.25f, 0.25f), new Color(0.25f, 0.25f, 0.25f), new Color(0.2f, 0.45f, 0.3f) };
             for (int i = 0; i < 6; i++)
             {
                 float cx = box.x + 130 + (i % 3) * 160f, cy = box.y + 190 + (i / 3) * 185f;
@@ -203,64 +213,12 @@ namespace DW1Remake.Game
                     UiKit.Fill(new Rect(tile.x - 6, tile.y - 6, tile.width + 12, tile.height + 12), new Color(1f, 0.75f, 0.1f));
                     UiKit.Fill(new Rect(tile.x - 1, tile.y - 1, tile.width + 2, tile.height + 2), new Color(0.12f, 0.18f, 0.22f));
                 }
-                DrawIcon(i, cx, cy);
+                if (Art != null)
+                {
+                    var size = Art.Size(i) * 4.4f;
+                    GUI.DrawTextureWithTexCoords(new Rect(cx - size.x / 2, cy - size.y / 2, size.x, size.y), Art.Sheet(i), Art.Uv(i, i == _sel ? (int)(Time.time * 3f) % 2 : 0));
+                }
                 UiKit.Text(new Rect(cx - 80, cy + 62, 160, 50), names[i], 34, Color.white, TextAnchor.MiddleCenter);
-            }
-        }
-
-        // ---- icons (our own simple art)
-        static void Rot(float deg, float x, float y, Color c, Rect r)
-        {
-            var old = GUI.matrix;
-            GUIUtility.RotateAroundPivot(deg, new Vector2(x, y));
-            UiKit.Fill(r, c);
-            GUI.matrix = old;
-        }
-
-        static void DrawIcon(int i, float cx, float cy)
-        {
-            switch (i)
-            {
-                case 0:   // bag
-                    UiKit.Fill(new Rect(cx - 36, cy - 30, 72, 70), new Color(0.80f, 0.15f, 0.12f));
-                    UiKit.Fill(new Rect(cx - 40, cy - 42, 80, 26), new Color(0.55f, 0.08f, 0.08f));
-                    UiKit.Fill(new Rect(cx - 20, cy + 2, 40, 28), new Color(0.95f, 0.45f, 0.35f));
-                    UiKit.Fill(new Rect(cx - 8, cy - 52, 16, 14), new Color(0.9f, 0.8f, 0.2f));
-                    break;
-                case 1:   // a friendly creature face (original)
-                    UiKit.Fill(new Rect(cx - 40, cy - 30, 80, 70), new Color(0.95f, 0.85f, 0.25f));
-                    UiKit.Fill(new Rect(cx - 30, cy - 46, 22, 20), new Color(0.95f, 0.85f, 0.25f));
-                    UiKit.Fill(new Rect(cx + 8, cy - 46, 22, 20), new Color(0.95f, 0.85f, 0.25f));
-                    UiKit.Fill(new Rect(cx - 24, cy - 12, 14, 14), new Color(0.1f, 0.3f, 0.1f));
-                    UiKit.Fill(new Rect(cx + 10, cy - 12, 14, 14), new Color(0.1f, 0.3f, 0.1f));
-                    UiKit.Fill(new Rect(cx - 18, cy + 16, 36, 8), new Color(0.5f, 0.2f, 0.1f));
-                    break;
-                case 2:   // the player: face and cap
-                    UiKit.Fill(new Rect(cx - 30, cy - 18, 60, 62), new Color(0.88f, 0.66f, 0.5f));
-                    UiKit.Fill(new Rect(cx - 36, cy - 44, 72, 32), new Color(0.4f, 0.4f, 0.44f));
-                    UiKit.Fill(new Rect(cx - 36, cy - 18, 72, 8), new Color(0.3f, 0.3f, 0.34f));
-                    UiKit.Fill(new Rect(cx - 18, cy + 2, 10, 10), new Color(0.15f, 0.1f, 0.1f));
-                    UiKit.Fill(new Rect(cx + 8, cy + 2, 10, 10), new Color(0.15f, 0.1f, 0.1f));
-                    break;
-                case 3:   // praise: a heart
-                    Rot(45, cx, cy, new Color(0.95f, 0.25f, 0.4f), new Rect(cx - 28, cy - 22, 56, 56));
-                    UiKit.Fill(new Rect(cx - 38, cy - 40, 38, 38), new Color(0.95f, 0.25f, 0.4f));
-                    UiKit.Fill(new Rect(cx, cy - 40, 38, 38), new Color(0.95f, 0.25f, 0.4f));
-                    break;
-                case 4:   // scold: an angry face
-                    UiKit.Fill(new Rect(cx - 42, cy - 40, 84, 84), new Color(0.2f, 0.2f, 0.22f));
-                    Rot(20, cx - 22, cy - 14, new Color(0.9f, 0.2f, 0.15f), new Rect(cx - 38, cy - 20, 32, 8));
-                    Rot(-20, cx + 22, cy - 14, new Color(0.9f, 0.2f, 0.15f), new Rect(cx + 6, cy - 20, 32, 8));
-                    UiKit.Fill(new Rect(cx - 26, cy - 4, 14, 14), Color.white);
-                    UiKit.Fill(new Rect(cx + 12, cy - 4, 14, 14), Color.white);
-                    UiKit.Fill(new Rect(cx - 20, cy + 22, 40, 8), new Color(0.9f, 0.2f, 0.15f));
-                    break;
-                default:  // sleep: a bed with Zz
-                    UiKit.Fill(new Rect(cx - 44, cy - 10, 88, 46), new Color(0.2f, 0.4f, 0.3f));
-                    UiKit.Fill(new Rect(cx - 44, cy - 24, 88, 18), new Color(0.85f, 0.85f, 0.9f));
-                    UiKit.Text(new Rect(cx + 12, cy - 56, 60, 40), "Z", 40, Color.white, TextAnchor.MiddleCenter);
-                    UiKit.Text(new Rect(cx + 32, cy - 72, 50, 34), "z", 30, Color.white, TextAnchor.MiddleCenter);
-                    break;
             }
         }
 
@@ -289,12 +247,43 @@ namespace DW1Remake.Game
             }
         }
 
+        static void ClearBox(Rect r, Color fill)      // see-through inside, the frame all round
+        {
+            UiKit.Fill(r, fill);
+            UiKit.Fill(new Rect(r.x, r.y, r.width, 5), UiKit.Frame); UiKit.Fill(new Rect(r.x, r.yMax - 5, r.width, 5), UiKit.Frame);
+            UiKit.Fill(new Rect(r.x, r.y, 5, r.height), UiKit.Frame); UiKit.Fill(new Rect(r.xMax - 5, r.y, 5, r.height), UiKit.Frame);
+        }
+
+        // the item page of the PS1 game: a see-through window on top with two columns, the description in a window at the bottom
+        void DrawBag()
+        {
+            var list = Entries();
+            var clear = new Color(0.05f, 0.1f, 0.08f, 0.6f);
+            var box = new Rect(70, 38, 1270, 490);
+            ClearBox(box, clear);
+            int firstRow = Mathf.Max(0, _sel / 2 - 4);
+            for (int i = firstRow * 2; i < list.Count && i < firstRow * 2 + 10; i++)
+            {
+                var it = _items[list[i]];
+                float x = box.x + 25 + (i % 2) * 620, y = box.y + 28 + (i / 2 - firstRow) * 88;
+                if (i == _sel) { UiKit.Fill(new Rect(x - 3, y - 3, 586, 84), Color.white * 0.75f); UiKit.Fill(new Rect(x, y, 580, 78), new Color(0.3f, 0.32f, 0.3f, 0.95f)); }
+                if (Icons != null) GUI.DrawTextureWithTexCoords(new Rect(x + 6, y + 3, 72, 72), Icons.Sheet, Icons.Uv(it.Id));
+                Color c = it.TextColour == 2 ? new Color(0.25f, 1f, 0.45f) : it.TextColour == 1 ? new Color(1f, 0.25f, 0.5f) : it.TextColour == 0 ? new Color(0.25f, 0.9f, 0.9f) : Color.white;
+                UiKit.Text(new Rect(x + 90, y, 400, 78), it.Name, 50, c, TextAnchor.MiddleLeft);
+                UiKit.Text(new Rect(x + 490, y, 80, 78), _s.Bag[it.Id].ToString(), 50, Color.white, TextAnchor.MiddleRight);
+            }
+            var help = new Rect(70, 855, 1270, 115);
+            ClearBox(help, clear);
+            string h = _msg.Length > 0 ? _msg : list.Count > 0 ? _items[list[Mathf.Clamp(_sel, 0, list.Count - 1)]].Description : "";
+            UiKit.Text(new Rect(help.x + 100, help.y + 10, help.width - 120, 95), h, 50, Color.white, TextAnchor.MiddleLeft, true);
+        }
+
         void DrawList()
         {
             var list = Entries();
             var box = new Rect(150, 120, 1115, 820);
             UiKit.Box(box, UiKit.PanelFill);
-            string title = _mode == Mode.Bag ? "ITEM" : _mode == Mode.Buy ? "SHOP: BUY    (left/right = sell)" : "SHOP: SELL    (left/right = buy)";
+            string title = _mode == Mode.Buy ? "SHOP: BUY    (left/right = sell)" : "SHOP: SELL    (left/right = buy)";
             UiKit.Text(new Rect(box.x + 30, box.y + 14, 800, 70), title, 52, UiKit.Yellow, TextAnchor.MiddleLeft);
             UiKit.Text(new Rect(box.x + 700, box.y + 14, 380, 70), "Bits " + _s.Money, 46, Color.white, TextAnchor.MiddleRight);
             UiKit.Text(new Rect(box.x + 30, box.y + 78, 800, 50), "Slots " + _s.BagKinds() + " / " + _s.ItemSlots, 34, UiKit.Cyan, TextAnchor.MiddleLeft);
@@ -396,7 +385,7 @@ namespace DW1Remake.Game
         {
             UiKit.Text(new Rect(95, 118, 400, 60), "Techset", 54, UiKit.Yellow);
             string[] cols = { "POWER", "MP", "RANG", "SPEC" };
-            float[] cx = { 850, 1040, 1190, 1275 };
+            float[] cx = { 830, 1010, 1130, 1250 };
             for (int i = 0; i < 4; i++) UiKit.Text(new Rect(cx[i] - 10, 168, 150, 40), cols[i], 28, UiKit.Grey);
             for (int r = 0; r < 3; r++)
             {
@@ -428,9 +417,10 @@ namespace DW1Remake.Game
                     bool usable = id >= 0 && Usable(id), mastered = usable && _s.Techs[id], current = id >= 0 && _s.TechSet.Contains(id);
                     UiKit.Fill(cell, id < 0 ? Color.black : new Color(0.05f, 0.08f, 0.1f));
                     UiKit.Fill(new Rect(cell.x + 3, cell.y + 3, cell.width - 6, cell.height - 6), current ? new Color(0.8f, 0.3f, 0.4f) : id < 0 ? Color.black : usable && !mastered ? new Color(0.3f, 0.42f, 0.48f) : new Color(0.25f, 0.27f, 0.28f));
-                    if (id >= 0 && BIcons != null && (mastered || !usable))
+                    if (id >= 0 && BIcons != null)
                     {
-                        var o = GUI.color; GUI.color = usable ? Color.white : new Color(1, 1, 1, 0.3f);
+                        // lit when learned; grey when this Digimon can still learn it; dark when it cannot
+                        var o = GUI.color; GUI.color = mastered ? Color.white : usable ? new Color(0.62f, 0.62f, 0.62f) : new Color(0.22f, 0.22f, 0.22f);
                         GUI.DrawTextureWithTexCoords(new Rect(cell.x + 8, cell.y + 7, 48, 48), BIcons.Sheet, BIcons.Uv(RowIcon[r], 1, 0));
                         GUI.color = o;
                     }
@@ -482,11 +472,8 @@ namespace DW1Remake.Game
             UiKit.Fill(new Rect(510, 740, 850, 4), UiKit.Frame);
             UiKit.Text(new Rect(150, 140, 180, 80), "Name", 56, UiKit.Yellow, TextAnchor.MiddleLeft);
             UiKit.Value(new Rect(327, 145, 335, 68), PlayerName);
-            // a plain stand-in figure (own art, not the game's)
-            UiKit.Fill(new Rect(190, 300, 160, 150), new Color(0.85f, 0.65f, 0.5f));
-            UiKit.Fill(new Rect(175, 270, 190, 70), new Color(0.35f, 0.35f, 0.38f));
-            UiKit.Fill(new Rect(145, 450, 250, 250), new Color(0.9f, 0.75f, 0.15f));
-            UiKit.Fill(new Rect(165, 700, 210, 220), new Color(0.3f, 0.3f, 0.5f));
+            if (BoyPicture == null && NeedBoyPicture != null) NeedBoyPicture();
+            if (BoyPicture != null) GUI.DrawTexture(new Rect(60, 235, 440, 690), BoyPicture, ScaleMode.ScaleToFit, true);
             UiKit.Text(new Rect(545, 270, 300, 70), "Level", 56, UiKit.Yellow);
             UiKit.Value(new Rect(900, 265, 120, 68), "0", 44, TextAnchor.MiddleCenter);
             UiKit.Value(new Rect(875, 350, 440, 68), "Amateur");
@@ -503,19 +490,99 @@ namespace DW1Remake.Game
             UiKit.Value(new Rect(900, 885, 120, 68), "0", 44, TextAnchor.MiddleCenter);
         }
 
+        // ---- the Digimon chart. Cells by stage in the order of the PS1 page (screenshot); the Champion order is also the order of the game's evolution items.
+        static readonly int[][] ChartTypes =
+        {
+            new[] { 1, 29, 15, 43 }, new[] { 2, 30, 16, 44 }, new[] { 3, 17, 31, 18, 45, 32, 46, 4, 57 },
+            new[] { 5, 47, 34, 7, 51, 24, 23, 53 }, new[] { 9, 38, 48, 50, 25, 35, 52 }, new[] { 21, 8, 20, 33, 58, 49, 11 }, new[] { 36, 6, 37, 19, 10, 22, 39 },
+            new[] { 12, 26, 41, 60, 27, 61, 28, 42 }, new[] { 40, 54, 59, 55, 13, 14, 56 }
+        };
+        // the picture in ETCDAT/SBOY.TIM and its colour set, by Digimon type (DW1-SydPatches DigimonData.cpp; the pictures agree with the PS1 chart screenshot)
+        static readonly int[] FaceOfType = { 0, 74, 75, 66, 67, 26, 27, 28, 29, 30, 31, 61, 6, 7, 8, 76, 77, 68, 69, 32, 33, 34, 35, 36, 37, 62, 9, 10, 11, 78, 79, 70, 71, 38, 39, 40, 41, 42, 43, 63, 12, 13, 14, 80, 81, 72, 73, 44, 45, 46, 47, 48, 49, 64, 15, 16, 17, 51, 50, 1, 2, 3 };
+        static readonly int[] ColourOfType = { 0, 0, 0, 0, 1, 1, 3, 1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 0, 1, 2, 0, 0, 0, 0, 3, 0, 0, 0, 1, 2, 2, 3, 3, 3, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 4, 3 };
+        static readonly float[] ChartX = { 155, 310, 465, 625, 725, 825, 925, 1085, 1185 };
+        int _cc = 2, _cr, _treeType = -1;
+
+        static float ChartY(int col, int row) { return col < 2 ? 155 + row * 172 : 155 + row * 86; }
+
+        void Face(int type, Rect cell)
+        {
+            UiKit.Square(cell);
+            if (Faces != null && type < FaceOfType.Length)
+                GUI.DrawTextureWithTexCoords(new Rect(cell.x + 2, cell.y + 2, cell.width - 4, cell.height - 4), Faces.SheetFor(ColourOfType[type]), Faces.Uv(FaceOfType[type], (int)(Time.time * 2f) % 2));
+        }
+
+        // returns false when the input should go to the tabs (left of the first column, right of the last)
+        bool TickChart(int step, int side, bool action)
+        {
+            if (_treeType >= 0) return true;
+            if (side < 0 && _cc == 0) return false;
+            if (side > 0 && _cc == ChartTypes.Length - 1) return false;
+            if (side != 0) { _cc += side; }
+            if (step != 0) _cr += step;
+            _cr = Mathf.Clamp(_cr, 0, ChartTypes[_cc].Length - 1);
+            if (action && _s.Raised[ChartTypes[_cc][_cr]]) _treeType = ChartTypes[_cc][_cr];
+            return true;
+        }
+
+        static void Line(Vector2 a, Vector2 b, Color c)
+        {
+            float len = (b - a).magnitude, deg = Mathf.Atan2(b.y - a.y, b.x - a.x) * Mathf.Rad2Deg;
+            var old = GUI.matrix;
+            GUIUtility.RotateAroundPivot(deg, a);
+            UiKit.Fill(new Rect(a.x, a.y - 5, len, 10), c);
+            GUI.matrix = old;
+        }
+
         void DrawChart()
         {
-            // the Digimon chart: one square per Digimon you can raise, grouped by stage (columns). Only the partner's square is filled in so far.
+            if (_treeType >= 0) { DrawTree(); return; }
             Color[] c = { new Color(0.62f, 0.35f, 0.45f), new Color(0.40f, 0.17f, 0.34f), new Color(0.05f, 0.30f, 0.5f), new Color(0f, 0.5f, 0.25f), new Color(0.65f, 0.35f, 0.12f) };
-            float[] x = { 95, 258, 420, 585, 1065 }, w = { 152, 155, 155, 470, 250 };
-            for (int i = 0; i < 5; i++) UiKit.Fill(new Rect(x[i], 148, w[i], 755), c[i]);
-            for (int r = 0; r < 4; r++) { UiKit.Square(new Rect(130, 163 + r * 180, 83, 88)); UiKit.Square(new Rect(293, 163 + r * 180, 83, 88)); }
-            for (int r = 0; r < 9; r++) UiKit.Square(new Rect(455, 163 + r * 90, 83, 88));
-            UiKit.Fill(new Rect(462, 168, 70, 75), new Color(0.95f, 0.8f, 0.1f));   // the partner's rookie square (marker)
-            for (int col = 0; col < 4; col++) for (int r = 0; r < 8; r++) if (!(r == 8)) UiKit.Square(new Rect(620 + col * 106, 163 + r * 90, 83, 88));
-            for (int col = 0; col < 2; col++) for (int r = 0; r < 9; r++) UiKit.Square(new Rect(1100 + col * 106, 163 + r * 90, 83, 88));
-            UiKit.Text(new Rect(590, 915, 400, 70), "X  Select", 50, Color.white);
-            UiKit.Text(new Rect(940, 915, 400, 70), "^  Cancel", 50, Color.white);
+            float[] x = { 122, 278, 434, 592, 1050 }, w = { 148, 148, 148, 450, 240 };
+            for (int i = 0; i < 5; i++) UiKit.Fill(new Rect(x[i], 142, w[i], 720), c[i]);
+            for (int col = 0; col < ChartTypes.Length; col++)
+                for (int r = 0; r < ChartTypes[col].Length; r++)
+                {
+                    var cell = new Rect(ChartX[col], ChartY(col, r), 80, 82);
+                    if (_s.Raised[ChartTypes[col][r]]) Face(ChartTypes[col][r], cell); else UiKit.Square(cell);
+                }
+            var cur = new Rect(ChartX[_cc], ChartY(_cc, _cr), 80, 82);
+            var gold = new Color(1f, 0.95f, 0.3f);
+            UiKit.Fill(new Rect(cur.x - 6, cur.y - 6, 92, 6), gold); UiKit.Fill(new Rect(cur.x - 6, cur.yMax, 92, 6), gold);
+            UiKit.Fill(new Rect(cur.x - 6, cur.y, 6, 82), gold); UiKit.Fill(new Rect(cur.xMax, cur.y, 6, 82), gold);
+            UiKit.Text(new Rect(600, 890, 330, 70), "X  Select", 50, Color.white);
+            UiKit.Text(new Rect(950, 890, 330, 70), "^  Cancel", 50, Color.white);
+        }
+
+        // the evolution line of a Digimon: only the ones you have raised show
+        void DrawTree()
+        {
+            var info = Disc != null ? DigimonStatsCatalog.Get(Disc, _treeType) : null;
+            if (info == null) return;
+            UiKit.Text(new Rect(575, 120, 260, 80), "Tree", 58, UiKit.Yellow, TextAnchor.MiddleCenter);
+            var inner = new Color(0.2f, 0.3f, 0.36f);
+            UiKit.Fill(new Rect(152, 160, 330, 590), inner); UiKit.Fill(new Rect(607, 350, 205, 205), inner); UiKit.Fill(new Rect(935, 155, 330, 585), inner);
+            var me = new Vector2(708, 452);
+            var fromList = info.EvolvesFrom.FindAll(v => _s.Raised[v]);
+            for (int i = 0; i < fromList.Count; i++)
+            {
+                float y = 452 + (i - (fromList.Count - 1) / 2f) * 100f;
+                Line(new Vector2(280, y), new Vector2(670, 452), new Color(0.95f, 0.5f, 0.05f));
+                Face(fromList[i], new Rect(198, y - 41, 80, 82));
+            }
+            Color[] line = { new Color(1f, 0.75f, 0f), new Color(0f, 0.6f, 0f), new Color(0f, 0.6f, 0.7f), new Color(0f, 0.2f, 0.75f), new Color(0.7f, 0f, 0.65f), new Color(0.7f, 0.05f, 0.1f) };
+            Vector2[] spot = { new Vector2(1020, 175), new Vector2(1095, 285), new Vector2(1170, 395), new Vector2(1170, 505), new Vector2(1095, 615), new Vector2(1020, 720) };
+            for (int i = 0; i < info.EvolvesTo.Count && i < 6; i++)
+            {
+                if (!_s.Raised[info.EvolvesTo[i]]) continue;
+                Vector2 bend = new Vector2(spot[i].x - 130f, 452 + (i - 2.5f) * 12f);
+                Line(me + new Vector2(40, 0), bend, line[i]);
+                Line(bend, spot[i] - new Vector2(40, 0), line[i]);
+                Face(info.EvolvesTo[i], new Rect(spot[i].x - 40, spot[i].y - 41, 80, 82));
+            }
+            Face(_treeType, new Rect(me.x - 40, me.y - 41, 80, 82));
+            UiKit.Text(new Rect(200, 755, 460, 70), info.LevelName, 52, Color.white, TextAnchor.MiddleCenter);
+            UiKit.Text(new Rect(150, 840, 560, 70), info.Name, 52, Color.white, TextAnchor.MiddleCenter);
         }
 
         void DrawMedals()
@@ -565,6 +632,30 @@ namespace DW1Remake.Game
             return false;
 #endif
         }
+        /// <summary>R1 held (E): the boy walks instead of running.</summary>
+        public static bool WalkHeld()
+        {
+#if ENABLE_INPUT_SYSTEM
+            var k = Keyboard.current; return k != null && k.eKey.isPressed;
+#elif ENABLE_LEGACY_INPUT_MANAGER
+            return Input.GetKey(KeyCode.E);
+#else
+            return false;
+#endif
+        }
+
+        /// <summary>Select (Backspace).</summary>
+        public static bool SelectKey()
+        {
+#if ENABLE_INPUT_SYSTEM
+            var k = Keyboard.current; return k != null && k.backspaceKey.wasPressedThisFrame;
+#elif ENABLE_LEGACY_INPUT_MANAGER
+            return Input.GetKeyDown(KeyCode.Backspace);
+#else
+            return false;
+#endif
+        }
+
         public static bool BagKey()
         {
 #if ENABLE_INPUT_SYSTEM

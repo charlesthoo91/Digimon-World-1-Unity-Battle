@@ -18,7 +18,7 @@ namespace DW1Remake.Game
         public string PlayerName, PartnerName;
         public byte[] Vars, Flags, Bag;
         public int[] Stats;
-        public bool[] Techs, Cards;
+        public bool[] Techs, Cards, Raised;
         public List<int> TechSet;
         public int Money, ItemSlots, Happiness, Discipline, Age, Weight, Life;
         public float PlayMinutes;
@@ -28,7 +28,7 @@ namespace DW1Remake.Game
             var d = new SaveGameData
             {
                 Vars = (byte[])s.Vars.Clone(), Flags = (byte[])s.Flags.Clone(), Bag = (byte[])s.Bag.Clone(),
-                Techs = (bool[])s.Techs.Clone(), Cards = (bool[])s.Cards.Clone(), TechSet = new List<int>(s.TechSet),
+                Techs = (bool[])s.Techs.Clone(), Cards = (bool[])s.Cards.Clone(), Raised = (bool[])s.Raised.Clone(), TechSet = new List<int>(s.TechSet),
                 Money = s.Money, ItemSlots = s.ItemSlots, Happiness = s.Happiness, Discipline = s.Discipline, Age = s.Age, Weight = s.Weight, Life = s.Life,
                 PlayMinutes = s.PlayMinutes, PlayerName = s.PlayerName, PartnerName = s.PartnerName
             };
@@ -44,6 +44,7 @@ namespace DW1Remake.Game
             Array.Copy(Bag, s.Bag, Math.Min(Bag.Length, s.Bag.Length));
             Array.Copy(Techs, s.Techs, Math.Min(Techs.Length, s.Techs.Length));
             Array.Copy(Cards, s.Cards, Math.Min(Cards.Length, s.Cards.Length));
+            if (Raised != null) Array.Copy(Raised, s.Raised, Math.Min(Raised.Length, s.Raised.Length));
             for (int i = 0; i < Stats.Length && i < s.Stats.Length; i++) s.Stats[i] = (ushort)Math.Max(0, Math.Min(9999, Stats[i]));
             s.TechSet = new List<int>(TechSet ?? new List<int>());
             s.Money = Money; s.ItemSlots = ItemSlots; s.Happiness = Happiness; s.Discipline = Discipline; s.Age = Age; s.Weight = Weight; s.Life = Life;

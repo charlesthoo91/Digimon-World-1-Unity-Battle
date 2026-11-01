@@ -19,6 +19,8 @@ namespace DW1Remake.Formats
     public sealed class MapDigimon
     {
         public int Type, FollowMode, RotY, Script;
+        public int Hp, Mp, Off, Def, Spd, Brain, Bits;      // the fight numbers of this Digimon on this map (record +22 ...)
+        public int[] MoveSlots = new int[4], MoveChance = new int[4];   // its techniques as animation slots (255 = none) and how often each is picked
         public Vector3 Pos;                                   // game units
         public System.Collections.Generic.List<Vector3> Waypoints = new System.Collections.Generic.List<Vector3>();
     }
@@ -51,6 +53,19 @@ namespace DW1Remake.Formats
             int tz = 50 - (int)(gameZ / 100f); if (gameZ > 0) tz--;
             if (tx < 0 || tx >= 100 || tz < 0 || tz >= 100) return 0x80;
             return Collision[tx + tz * 100];
+        }
+
+        /// <summary>The walking-grid tile under a game position.</summary>
+        public static void TileAt(float gameX, float gameZ, out int tx, out int tz)
+        {
+            tx = Mathf.FloorToInt(gameX / 100f) + 50;
+            tz = 49 - Mathf.FloorToInt(gameZ / 100f);
+        }
+
+        public bool TileBlocked(int tx, int tz)
+        {
+            if (tx < 0 || tx >= 100 || tz < 0 || tz >= 100) return true;
+            return (Collision[tx + tz * 100] & 0x80) != 0;
         }
 
         public int PixelWidth { get { return TilesX * 128; } }
@@ -109,8 +124,10 @@ namespace DW1Remake.Formats
                         {
                             Type = S16(map, q), FollowMode = S16(map, q + 2),
                             Pos = new Vector3(S16(map, q + 4), S16(map, q + 6), S16(map, q + 8)),
-                            RotY = S16(map, q + 12), Script = S16(map, q + 20)
+                            RotY = S16(map, q + 12), Script = S16(map, q + 20),
+                            Hp = S16(map, q + 22), Mp = S16(map, q + 24), Off = S16(map, q + 30), Def = S16(map, q + 32), Spd = S16(map, q + 34), Brain = S16(map, q + 36), Bits = S16(map, q + 38)
                         };
+                        for (int k = 0; k < 4; k++) { d.MoveSlots[k] = S16(map, q + 44 + k * 2); d.MoveChance[k] = S16(map, q + 52 + k * 2); }
                         for (int w = 0; w < wc && w < 32 && q + 84 + 6 * w + 6 <= map.Length; w++)
                             d.Waypoints.Add(new Vector3(S16(map, q + 84 + 6 * w), S16(map, q + 86 + 6 * w), S16(map, q + 88 + 6 * w)));
                         m.Npcs.Add(d);

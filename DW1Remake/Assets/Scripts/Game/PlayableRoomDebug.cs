@@ -72,6 +72,22 @@ namespace DW1Remake.Game
             _state.ItemSlots = 10;
             _state.Vars[103] = (byte)PartnerType;
             _state.SetFlag(54, true); _state.SetFlag(55, false);
+            _state.Raised[PartnerType] = true;
+        }
+
+        // leaves the setup screens or the opening script wherever they are and starts in File City, as Quick Start does
+        void SkipOpening()
+        {
+            if (_changing) return;
+            _setup = null; DestroySetupStage(); _intro = false; _fade = 0f;
+            QuickStartState();
+            if (_partner == null) { HasPartner = true; BuildPartner(); }
+            int ti = _mapNames.IndexOf("TWNA01");
+            if (ti < 0) { Say("TWNA01 not found."); return; }
+            try { LoadMap(MapCatalog.PathFor(_mapNames, ti), 2); }
+            catch (System.Exception e) { _error = e.Message; Debug.LogException(e); return; }
+            if (_partner != null) { _partner.gameObject.SetActive(true); PlacePartner(_player.position, Vector3.back); }
+            Say("Opening skipped.");
         }
 
         // ------------------------------------------------------------------ keys and debug menu
@@ -101,11 +117,12 @@ namespace DW1Remake.Game
         {
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
             if (!_debugOpen || _state == null) return;
-            GUILayout.BeginArea(new Rect(20, 60, 460, Screen.height - 100), GUI.skin.box);
+            float top = _hintBottom + 30f;
+            GUILayout.BeginArea(new Rect(20, top, Mathf.Min(600f, Screen.width - 40f), Screen.height - top - 20f), GUI.skin.box);
             GUILayout.Label("DEBUG MENU (F10 closes)   F11 = save, F12 = load");
             _debugScroll = GUILayout.BeginScrollView(_debugScroll);
             GUILayout.Label("Progress");
-            if (GUILayout.Button("Skip-the-opening state (boy + Agumon numbers, 10 slots)")) { QuickStartState(); if (_partner != null) { _partner.gameObject.SetActive(true); PlacePartner(_player.position, Vector3.back); } Say("Opening skipped (state set)."); }
+            if (GUILayout.Button("Skip the opening (go to File City with Agumon)")) { SkipOpening(); _debugOpen = false; }
             if (GUILayout.Button("Recruit Coelamon (flag 0xF9)")) { _state.SetFlag(0xF9, true); BuildNpcs(); }
             if (GUILayout.Button("Recruit EVERY Digimon (all recruit flags)")) { foreach (var f in RecruitFlags) _state.SetFlag(f, true); BuildNpcs(); Say("All recruit flags on."); }
             GUILayout.BeginHorizontal(); GUILayout.Label("Flag", GUILayout.Width(40)); _flagText = GUILayout.TextField(_flagText, GUILayout.Width(80));
@@ -121,6 +138,7 @@ namespace DW1Remake.Game
             if (GUILayout.Button("+10000 Bits")) _state.Money += 10000;
             if (GUILayout.Button("5 of every item (bag slots 128)")) { for (int i = 0; i < _state.Bag.Length; i++) _state.Bag[i] = 5; _state.ItemSlots = 128; }
             if (GUILayout.Button("Learn every technique")) { for (int i = 0; i < 58; i++) _state.Techs[i] = true; }
+            if (GUILayout.Button("Raise every Digimon (Chart page)")) { for (int i = 0; i < _state.Raised.Length; i++) _state.Raised[i] = true; }
             if (GUILayout.Button("Collect every card")) { for (int i = 0; i < Portraits.Count; i++) _state.Cards[i] = true; }
 
             GUILayout.Label("Time");

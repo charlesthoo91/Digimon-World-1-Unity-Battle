@@ -8,9 +8,10 @@ namespace DW1Remake.Formats
 {
     /// <summary>Plays the game's animations on a Digimon built by MmdModel.Build.</summary>
     [ExecuteAlways]
+    [DefaultExecutionOrder(-100)]
     public sealed class DigimonAnimator : MonoBehaviour
     {
-        public float TicksPerSecond = 30f;
+        public float TicksPerSecond = 20f;     // the game runs at 20 frames a second (VSync(3))
         public bool Playing = true;
 
         Transform[] _nodes;
@@ -42,7 +43,25 @@ namespace DW1Remake.Formats
             for (int i = 0; i < anims.Length; i++) if (anims[i] != null) { SetSlot(i); break; }
         }
 
+        public Transform Node(int i) { return _nodes != null && i < _nodes.Length ? _nodes[i] : null; }
+
         public bool HasSlot(int slot) { return _anims != null && slot >= 0 && slot < _anims.Length && _anims[slot] != null; }
+
+        int _forward;
+
+        /// <summary>
+        /// How far this animation has carried the body forward since the last call, in metres. In the original nothing moves by a set speed: every walk and run moves by
+        /// the forward value keyed in bone 0 of its animation (entityMoveForward), which is why each step lands on its step sound.
+        /// </summary>
+        public float TakeForward() { float m = _forward * 0.01f; _forward = 0; _bodyMove = 0; return m; }
+
+        int _bodyMove;
+
+        /// <summary>In battle every animation moves the fighter for real (hit reactions throw it back and it gets up where it landed): the battle reads this and the model stops doing it visually.</summary>
+        public bool BodyMovesItself;
+
+        /// <summary>As TakeForward, with its sign: plus is towards the model's front.</summary>
+        public float TakeBodyMove() { float m = _bodyMove * 0.01f; _bodyMove = 0; _forward = 0; return m; }
 
         /// <summary>Length of a slot in seconds (0 if it has no animation).</summary>
         public float SecondsOf(int slot) { return HasSlot(slot) ? _anims[slot].Frames / TicksPerSecond : 0f; }
@@ -69,6 +88,7 @@ namespace DW1Remake.Formats
             else _blend = 1f;
             _once = once; _held = false; _pending = -1; _maxLoc = Vector3.zero; _maxRot = Vector3.zero;
             _slot = slot;
+            _forward = 0; _bodyMove = 0;        // steps nobody took so far must not all land at once later
             _sim = new AnimSim(_anims[slot], _nodes.Length);
             Apply();
         }
@@ -85,7 +105,7 @@ namespace DW1Remake.Formats
                 {
                     for (int k = 0; k < 3; k++) { _maxLoc[k] = Mathf.Max(_maxLoc[k], Mathf.Abs(_sim.Loc[0][k])); _maxRot[k] = Mathf.Max(_maxRot[k], Mathf.Abs(_sim.Rot[0][k])); }
                 }
-                if (UseRootMotion && _once) MmdModel.SetLocal(_nodes[0], _sim.Rot[0], _sim.Loc[0]);
+                if (UseRootMotion && _once) MmdModel.SetLocal(_nodes[0], _sim.Rot[0], BodyMovesItself ? new[] { _sim.Loc[0][0], _sim.Loc[0][1], 0 } : _sim.Loc[0]);
                 else { _nodes[0].localRotation = Quaternion.identity; _nodes[0].localPosition = Vector3.zero; }
             }
             if (_blend < 1f && _fromRot != null)
@@ -99,6 +119,22 @@ namespace DW1Remake.Formats
             }
         }
 
+        static int _sharedFrame = -1, _sharedTicks;
+        static double _sharedAcc;
+
+        // the PS1 ticks every model in the same frame: all animators share one clock, so the boy, the partner and the camera never step at different moments
+        static int SharedTicks(double tick)
+        {
+            if (Time.frameCount != _sharedFrame)
+            {
+                _sharedFrame = Time.frameCount;
+                _sharedAcc += System.Math.Min(Time.unscaledDeltaTime, 0.25);
+                _sharedTicks = 0;
+                while (_sharedAcc >= tick) { _sharedAcc -= tick; _sharedTicks++; }
+            }
+            return _sharedTicks;
+        }
+
         void Step()
         {
             double now = Time.realtimeSinceStartupAsDouble;
@@ -106,13 +142,22 @@ namespace DW1Remake.Formats
             if (_sim == null || !Playing) return;
             if (_blend < 1f) { _blend = Mathf.Min(1f, _blend + (float)dt / Mathf.Max(0.01f, BlendSeconds)); Apply(); }
             if (_held) return;
-            _acc += System.Math.Min(dt, 0.25);
             double tick = 1.0 / TicksPerSecond;
-            bool moved = false;
-            while (_acc >= tick)
+            int ticks = 0;
+            if (Application.isPlaying) ticks = SharedTicks(tick);
+            else
             {
-                _acc -= tick;
-                if (!_sim.Tick())
+                _acc += System.Math.Min(dt, 0.25);
+                while (_acc >= tick) { _acc -= tick; ticks++; }
+            }
+            bool moved = false;
+            while (ticks-- > 0)
+            {
+                int zBefore = _sim.Loc[0][2];
+                bool ticking = _sim.Tick();
+                _forward += Mathf.Abs(_sim.Loc[0][2] - zBefore);
+                _bodyMove -= _sim.Loc[0][2] - zBefore;
+                if (!ticking)
                 {
                     if (_once)
                     {

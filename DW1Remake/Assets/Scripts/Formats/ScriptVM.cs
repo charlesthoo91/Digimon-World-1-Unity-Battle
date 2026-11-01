@@ -46,6 +46,7 @@ namespace DW1Remake.Formats
         public int ItemSlots;                     // 0x23: how many items the bag holds (10 at the start, 20/30 with each Dimensional Key Chain)
         public bool[] Cards = new bool[256];      // cards collected (command 0x2F n gives card n)
         public bool[] Techs = new bool[256];      // techniques the partner knows (0x2D teaches one)
+        public bool[] Raised = new bool[180];     // Digimon types you have raised (the Chart page shows only these)
         public List<int> TechSet = new List<int>();   // the (up to 3) techniques picked on the Tech page; the battle uses these
         public void SetStat(int i, int v) { if (i >= 0 && i < Stats.Length) Stats[i] = (ushort)Math.Max(0, Math.Min(9999, v)); }
         public void AddStat(int i, int v)

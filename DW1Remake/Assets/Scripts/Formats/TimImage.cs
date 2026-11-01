@@ -98,8 +98,20 @@ namespace DW1Remake.Formats
             return new Color32(r, g, b, 255);
         }
 
+        int _shift;     // the PS1 can start a colour set part way along a row
+
+        /// <summary>The texture with its colours taken this many entries further along the colour table.</summary>
+        public Texture2D ToTexture(int palette, int shift)
+        {
+            _shift = shift;
+            var t = ToTexture(palette);
+            _shift = 0;
+            return t;
+        }
+
         Color32 PaletteColor(int palette, int index)
         {
+            index += _shift;
             if (!HasPalette) { byte g = (byte)(index * 255 / (BitsPerPixel == 4 ? 15 : 255)); return new Color32(g, g, g, 255); }
             int o = _clutOffset + (palette * _clutWidth + index) * 2;
             if (o + 2 > _src.Length) return new Color32(255, 0, 255, 255);

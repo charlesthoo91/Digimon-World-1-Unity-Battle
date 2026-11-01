@@ -12,6 +12,7 @@ namespace DW1Remake.Formats
         public int Price;
         public int Category;        // from the record: 0 recovery, 1 cure, 2 food, 3 training disk, 4 chip/part, 5 tool/key (guessed from the names)
         public string Description;
+        public int TextColour;      // record +28: 0 cyan, 1 pink, 2 green (seen on the PS1 item page)
     }
 
     /// <summary>The game's 128 items, read from the program file at run time (name, price, category, description). Item number = position in the list.</summary>
@@ -40,7 +41,8 @@ namespace DW1Remake.Formats
                     Id = i,
                     Name = Encoding.ASCII.GetString(exe, p, n),
                     Price = BitConverter.ToUInt16(exe, p + 20),
-                    Category = exe[p + 26]
+                    Category = exe[p + 26],
+                    TextColour = exe[p + 28]
                 };
                 int len = 0;
                 while (dp + len < exe.Length && exe[dp + len] != 0) len++;

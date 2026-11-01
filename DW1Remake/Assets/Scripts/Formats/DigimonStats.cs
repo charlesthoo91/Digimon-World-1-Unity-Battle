@@ -14,6 +14,10 @@ namespace DW1Remake.Formats
         public int Level;            // record byte +29: 1 Baby I, 2 Baby II, 3 Rookie, 4 Champion, 5 Ultimate, 6 Mega
         public int Attribute;        // record byte +28: 1 Data, 2 Vaccine, 3 Virus (matches "is a Data Type Digimon" in the scripts)
         public string SignatureTech; // the Digimon's own finishing move (Agumon: Pepper Breath); null for babies
+        public int Radius, Height;            // record +24, +26: its size in game units
+        public int DropItem, DropChance;      // record +33, +34: what it can leave after a fight, percent
+        public int[] Specials = new int[3];   // record +30: its element types (same numbers as a technique's element, 255 = none): Agumon fire and battle
+        public List<int> EvolvesFrom = new List<int>(), EvolvesTo = new List<int>();   // exe 0x8012B661, 11 bytes per Digimon: from[5], to[6], 255 = none
         public List<int> Moves = new List<int>();             // the record's whole move list; the finishing move is the last one
         public List<int> Learnable = new List<int>();         // technique numbers it can use: Agumon 2, 0, 4, 5, 3, 43, 41 = Spit Fire, Fire Tower, Magma Bomb, ...
         public int SignatureId = -1; // the finishing move's technique number
@@ -45,6 +49,7 @@ namespace DW1Remake.Formats
     public static class DigimonStatsCatalog
     {
         const uint DataAddr = 0x8012ceb4, TechNamePointers = 0x80126054, TechTable = 0x8012623c;
+        const uint Effectiveness = 0x80125f70, LearnChances = 0x80125fa4, EvolutionTable = 0x8012b661;
         const int Stride = 52, TechListStart = 35, TechStride = 16, TechCount = 121;
 
         static byte[] _exe; static uint _load;
@@ -71,6 +76,12 @@ namespace DW1Remake.Formats
             }
         }
 
+        /// <summary>Damage scale (10 = normal) of a technique's element against one element type of the target. Table of 7 x 7 bytes.</summary>
+        public static int Effect(int element, int special) { return _exe == null || special > 6 || element > 6 ? 10 : _exe[(int)(Effectiveness - _load + 0x800) + element * 7 + special]; }
+
+        /// <summary>Chance in percent to learn technique n, by which of the Digimon's three element types matches it. Table of 3 bytes per technique.</summary>
+        public static int LearnChance(int n, int specialIndex) { return _exe == null ? 0 : _exe[(int)(LearnChances - _load + 0x800) + n * 3 + specialIndex]; }
+
         /// <summary>Row n of the technique table once the catalog has been read (call Get first); null if there is none.</summary>
         public static TechData TechOf(int n) { return _techs != null && n >= 0 && n < _techs.Length ? _techs[n] : null; }
 
@@ -83,6 +94,13 @@ namespace DW1Remake.Formats
             int d = (int)(DataAddr - _load + 0x800) + type * Stride;
             if (type < 0 || d + Stride > _exe.Length) return null;
             var s = new DigimonStats { Type = type, Level = _exe[d + 29], Attribute = _exe[d + 28] };
+            s.Radius = BitConverter.ToUInt16(_exe, d + 24);
+            s.Height = BitConverter.ToUInt16(_exe, d + 26);
+            s.DropItem = _exe[d + 33]; s.DropChance = _exe[d + 34];
+            int ev = (int)(EvolutionTable - _load + 0x800) + type * 11;
+            for (int i = 0; i < 5; i++) if (_exe[ev + i] != 0xFF) s.EvolvesFrom.Add(_exe[ev + i]);
+            for (int i = 5; i < 11; i++) if (_exe[ev + i] != 0xFF) s.EvolvesTo.Add(_exe[ev + i]);
+            for (int i = 0; i < 3; i++) s.Specials[i] = _exe[d + 30 + i];
             int n = 0; while (n < 20 && _exe[d + n] >= 32 && _exe[d + n] < 127) n++;
             s.Name = Encoding.ASCII.GetString(_exe, d, n);
             // the record lists the usable techniques, then the finishing move, all as numbers in the technique table

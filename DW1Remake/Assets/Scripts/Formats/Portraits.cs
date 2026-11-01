@@ -11,13 +11,22 @@ namespace DW1Remake.Formats
     {
         public const int PerRow = 8, Count = 72;
         public Texture2D Sheet;
+        TimImage _tim; readonly Texture2D[] _byColour = new Texture2D[8];
+
+        /// <summary>The sheet in colour set n: each Digimon has its own (see GameMenus.FaceColour).</summary>
+        public Texture2D SheetFor(int n)
+        {
+            if (n == 0) return Sheet;
+            if (_byColour[n] == null) _byColour[n] = _tim.ToTexture(n);
+            return _byColour[n];
+        }
 
         public static Portraits Load(DiscImage disc)
         {
             if (!disc.Exists("/ETCDAT/SBOY.TIM")) return null;
             TimImage tim;
             if (!TimImage.TryParse(disc.ReadFile("/ETCDAT/SBOY.TIM"), 0, out tim)) return null;
-            return new Portraits { Sheet = tim.ToTexture(0) };
+            return new Portraits { Sheet = tim.ToTexture(0), _tim = tim };
         }
 
         public Rect Uv(int n, int frame = 0)

@@ -5,12 +5,11 @@ namespace DW1Remake.Formats
 {
     /// <summary>
     /// The order and mood icons of ETCDAT/BTLCOMND.TIM (16 x 16 each, two animation frames side by side), built at run time.
-    /// Row 0: Run away (cyan runner), red biting face, Your Call (smiley; the next frame is the surprised "Your Call!" face), blue face, green shouting face, grey sleepy face, eyes.
+    /// Row 0, in the order of the game's order names: Run, Attack, Your Call, Moderate, Distance, Defensive, Change.
     /// Row 1: fire, dark runner, lightning, plant, water drop, gear, poop.
     /// </summary>
     public sealed class BattleIcons
     {
-        public const int RunAway = 0, Aggressive = 2, YourCall = 4, Calm = 6, Shout = 8, Sleepy = 10, Eyes = 12;   // row 0, first frame
         public const int Fire = 0, Retreat = 2, Thunder = 4, Plant = 6, Water = 8, Gear = 10, Poop = 12;           // row 1, first frame
 
         public Texture2D Sheet;

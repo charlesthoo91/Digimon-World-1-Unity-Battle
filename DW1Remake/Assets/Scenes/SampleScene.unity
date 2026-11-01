@@ -413,16 +413,19 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::DW1Remake.Game.PlayableRoom
   DiscPath: D:/Digimon World 1/game.bin
-  MapPath: /MAP/MAP1/MAYO10.MAP
+  MapPath: /MAP/MAP14/TWNA01.MAP
   DigimonType: 3
   Palette: 0
   HasPartner: 1
+  RootMotion: 1
+  ShadowPieceOpacity: 0.5
   PartnerType: 3
+  PartnerPlaceZOffset: -3.5
   PartnerDistance: 3
   ShowOverlays: 1
   AutoClock: 1
   StartHour: 8
-  GameMinutesPerSecond: 1.5
+  ClockMinutesPerSecond: 1
   WalkSpeed: 10
   TurnSpeed: 720
   FacingOffset: 0
@@ -446,6 +449,14 @@ MonoBehaviour:
   Saturation: 10
   Contrast: 8
   ShadowOpacity: 0.6
+  ShowNames: 1
+  InitialFlags: 36000000i
+  NewGame: 1
+  ChaseSpeed: 7
+  PlayerNameText: A
+  PartnerNameText: B
+  QuickStart: 1
+  LoadSaveOnStart: 0
 --- !u!4 &559601211
 Transform:
   m_ObjectHideFlags: 0
