@@ -41,15 +41,17 @@ namespace DW1Remake.Game
         {
             d.ApplyTo(_state);
             _dayCount = d.Day;
+            _care.PartnerType = d.PartnerType;
             _care.SetClock((int)d.Clock, (int)((d.Clock % 1f) * 60f));
             _clock = _care.ClockHours;
-            if (d.Version < 2) _care.InitPartner(PartnerType);   // a save from before the care numbers
+            if (d.Version < 3) _care.InitPartner(PartnerType);   // a save from before the care numbers
             _intro = false;
         }
 
         void PlaceFromSave(SaveGameData d)
         {
             _player.position = new Vector3(d.X, d.Y, d.Z);
+            if (_partner != null && d.PartnerType != PartnerType) SwapPartner(d.PartnerType);
             if (_partner != null) { _partner.gameObject.SetActive(true); PlacePartner(_player.position, Vector3.back); }
         }
 
@@ -153,6 +155,20 @@ namespace DW1Remake.Game
             if (GUILayout.Button("Night (22:00)")) _care.AdvanceToTime(22, 0);
             GUILayout.EndHorizontal();
             GUILayout.Label("Care");
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Hungry")) _state.Para.FoodLevel = 1;
+            if (GUILayout.Button("Needs toilet")) _state.Para.PoopLevel = 1;
+            if (GUILayout.Button("Accident soon")) _state.Para.PoopingTimer = 20;
+            if (GUILayout.Button("Sick")) { _state.Para.Condition |= PartnerCare.Sick; _state.Para.SicknessTimer = 1; }
+            if (GUILayout.Button("Injured")) _state.Para.Condition |= PartnerCare.Injured;
+            if (GUILayout.Button("Tired")) _state.Para.Tiredness = 85;
+            GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("Evolve now")) _state.Para.EvoTimer = 200;
+            if (GUILayout.Button("Virus full")) _state.Para.Virus = 16;
+            if (GUILayout.Button("Lifespan 1 h")) _state.Para.Lifetime = 1;
+            if (GUILayout.Button("Lose a life")) { _state.Life = Mathf.Max(0, _state.Life - 1); _care.WantLifeLost = true; }
+            GUILayout.EndHorizontal();
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("Happiness -20")) _state.Happiness -= 20;
             if (GUILayout.Button("Happiness +20")) _state.Happiness += 20;

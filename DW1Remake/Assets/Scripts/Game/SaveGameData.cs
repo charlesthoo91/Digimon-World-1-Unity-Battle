@@ -11,7 +11,7 @@ namespace DW1Remake.Game
     [Serializable]
     public sealed class SaveGameData
     {
-        public int Version = 2;                     // 2 = holds the care numbers (Para)
+        public int Version = 3;                     // 3 = holds the care numbers (Para) with piles and evolution
         public string Map;
         public float X, Y, Z, Clock;
         public int Day, PartnerType;
@@ -50,7 +50,7 @@ namespace DW1Remake.Game
             s.TechSet = new List<int>(TechSet ?? new List<int>());
             s.Money = Money; s.ItemSlots = ItemSlots; s.Happiness = Happiness; s.Discipline = Discipline; s.Age = Age; s.Weight = Weight; s.Life = Life;
             s.TamerLevel = TamerLevel;
-            if (Version >= 2 && Para != null) s.Para = Para;
+            if (Version >= 3 && Para != null) s.Para = Para;
             s.PlayMinutes = PlayMinutes; s.PlayerName = PlayerName ?? "A"; s.PartnerName = PartnerName ?? "B";
         }
     }

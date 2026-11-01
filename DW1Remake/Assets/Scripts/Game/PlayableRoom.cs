@@ -164,6 +164,15 @@ namespace DW1Remake.Game
             _state.Raised[PartnerType] = true;
             _care = new PartnerCare(_state, t => DigimonStatsCatalog.RaiseOf(_disc, t), c => DigimonStatsCatalog.SleepOf(_disc, c), t => DigimonStatsCatalog.Get(_disc, t).Level);
             _care.OnNewDay = () => _dayCount++;
+            _care.EvoItemTarget = i => DigimonStatsCatalog.EvoItemTarget(_disc, i);
+            _care.ReqOf = t => DigimonStatsCatalog.ReqOf(_disc, t);
+            _care.GainOf = t => DigimonStatsCatalog.GainOf(_disc, t);
+            _care.InfoOf = t => DigimonStatsCatalog.Get(_disc, t);
+            _care.TechOf = DigimonStatsCatalog.TechOf;
+            _menus.OnCommand = CareCommand;
+            _menus.OnFeed = FeedItem;
+            _menus.InBattle = () => _battle != null && _battle.Active;
+            _menus.CanSleep = () => (_state.Para.Condition & PartnerCare.Sleepy) != 0;
             _care.SetClock((int)StartHour, 0);
             _clock = _care.ClockHours;
             _care.InitPartner(PartnerType);
@@ -171,7 +180,6 @@ namespace DW1Remake.Game
             _menus.Disc = _disc;
             _menus.NeedBoyPicture = BuildBoyPicture;
             _battle.Items = _menus.Icons;
-            _menus.OnSleep = () => _care.AdvanceToTime((_care.Hour + 8) % 24, _care.Minute);
             _menus.PlayerName = PlayerNameText; _menus.PartnerName = PartnerNameText;
             _state.SpeciesNameOf = t =>
             {
@@ -297,7 +305,7 @@ namespace DW1Remake.Game
 
         bool ActorsBusy()
         {
-            return _movers.Count > 0 || (_camOn && (_camPos - _camGoal).sqrMagnitude > 0.0004f);
+            return !_syncBit || _movers.Count > 0 || (_camOn && !_pBusy && (_camPos - _camGoal).sqrMagnitude > 0.0004f);
         }
 
         // runs one cutscene command; true = the script must wait here
@@ -306,12 +314,14 @@ namespace DW1Remake.Game
             Transform t, t2; DigimonAnimator an, an2;
             switch (a.Cmd)
             {
+                case 0x49: DigimonRoutine(a.Frames); break;
                 case 0x64:
                     // 0x64 n = run built-in function n (variable 254 = its parameter, usually an actor)
                     if (a.Frames == 0x37)   // ends the endless lying loop of the actor (the boy waking up)
                     {
                         if (ActorOf(a.Actor, out t, out an) && an != null) { Debug.Log("[anim] 0x64 releases the loop of actor 0x" + a.Actor.ToString("X")); an.ReleaseLoop(); }
                     }
+                    else if (a.Frames == 0x1D) { _eggOpen = true; _eggSlot = 0; return true; }   // "Which egg do you want?" (script 212)
                     else if (a.Frames == 8 && _menus != null)   // the shop screen; the script switched on flag 0x180 + item for each item it sells
                     {
                         _menus.OpenShop(i => _state.GetFlag(0x180 + i));
@@ -677,7 +687,6 @@ namespace DW1Remake.Game
             _tamerPrev = tile;
         }
         bool _shopWait, _battleWait;
-        const int FileCityMap = 204, FileCityExit = 2;   // TWNA01: where a defeated partner is carried
 
         // walking into a wild Digimon (follow mode 12) starts a fight
         void TryStartBattle()
@@ -772,12 +781,7 @@ namespace DW1Remake.Game
                 if (_battleNpc.T != null) Destroy(_battleNpc.T.gameObject);
                 _npcs.Remove(_battleNpc);
             }
-            else if (_state.Stats[6] == 0)   // the partner fell: back to File City with a little health
-            {
-                _state.Stats[6] = (ushort)Mathf.Max(1, _state.Stats[4] / 5);
-                _state.Stats[7] = (ushort)(_state.Stats[5] / 5);
-                DoChangeMap(new ScriptAction { Map = FileCityMap, Exit = FileCityExit, Arrive = 255 });
-            }
+            else if (!_battle.Won && !_battle.Fled) LoseFight();      // section 0x4DE, as at the end of the fight command
             else if (_battleNpc != null && _battleNpc.Anim != null) _battleNpc.Anim.SetSlot(IdleSlot);
             if (_partner != null && _player != null) PlacePartner(_player.position, _player.forward);
             _battleNpc = null;
@@ -961,12 +965,14 @@ namespace DW1Remake.Game
             float radius = (_menus != null && _menus.PartnerInfo != null ? _menus.PartnerInfo.Radius : 120) * 0.01f;
             float away = Vector3.Distance(new Vector3(p.x, 0, p.z), new Vector3(_partner.position.x, 0, _partner.position.z));
             int cur = _partnerAnim != null ? _partnerAnim.Slot : WalkSlot, next = cur;
+            int walk = PartnerSlow && _partnerAnim != null && _partnerAnim.HasSlot(3) ? 3 : WalkSlot;
+            bool unhappy = (_state.Para.Condition & PartnerCare.Unhappy) != 0;
             bool stepDone = Time.time >= _partnerStepEnd;     // a walk finishes its step, and a stand its loop, before it changes
             if (stepDone && _partnerAnim != null) _partnerStepEnd = Time.time + _partnerAnim.SecondsOf(cur);
-            if (away > radius * 3.5f) { if (cur != WalkSlot || stepDone) next = RunSlot; }
-            else if (away >= radius * 2.5f) { if (cur == RunSlot || stepDone) next = WalkSlot; }
-            else if (stepDone) next = IdleSlot;
-            if (next == RunSlot && _partnerAnim != null && !_partnerAnim.HasSlot(RunSlot)) next = WalkSlot;
+            if (away > radius * 3.5f) { if (unhappy) next = WalkSlot; else if ((cur != WalkSlot && cur != 3) || stepDone) next = RunSlot; }   // an unhappy Digimon will not run
+            else if (away >= radius * 2.5f) { if (cur == RunSlot || stepDone) next = walk; }
+            else if (stepDone) next = NextStand();
+            if (next == RunSlot && _partnerAnim != null && !_partnerAnim.HasSlot(RunSlot)) next = walk;
             if (_partnerAnim != null && next != cur)
             {
                 _partnerAnim.SetSlot(next);
@@ -974,7 +980,7 @@ namespace DW1Remake.Game
             }
 
             float step = _partnerAnim != null ? _partnerAnim.TakeForward() : WalkSpeed * Time.deltaTime;
-            if (next != IdleSlot && step > 0f)
+            if ((next == WalkSlot || next == 3 || next == RunSlot) && step > 0f)
             {
                 Vector3 pos = _partner.position, by = heading * step;
                 if (Free(pos + by)) pos += by;
@@ -1059,6 +1065,7 @@ namespace DW1Remake.Game
             if (_anim != null) _anim.SetSlot(IdleSlot);
             PlacePartner(_player.position, face);
             BuildNpcs();
+            CareOnMap(mapBytes);
             if (_gridOverlay != null) { Destroy(_gridOverlay); _gridOverlay = null; }
             if (_showGrid) BuildGridOverlay();
             _calibrated = false;
@@ -1417,7 +1424,7 @@ namespace DW1Remake.Game
         {
             get
             {
-                if (!AutoClock || _care == null || _changing || _intro || _runner != null || _partner == null) return false;
+                if (!AutoClock || _care == null || _changing || _intro || _runner != null || _partner == null || _pFrozen) return false;
                 if (_setup != null && _setup.Active) return false;
                 return (_menus == null || !_menus.Active) && (_battle == null || !_battle.Active);
             }
@@ -1429,7 +1436,7 @@ namespace DW1Remake.Game
             if (GameTimeRuns)
             {
                 _clockFrames += ClockMinutesPerSecond * 20f * Time.deltaTime;
-                while (_clockFrames >= 1f) { _clockFrames -= 1f; _care.Tick(); }
+                while (_clockFrames >= 1f) { _clockFrames -= 1f; _care.Tick(!_pBusy); }
             }
 #if ENABLE_INPUT_SYSTEM
             var k = Keyboard.current;
@@ -1500,8 +1507,16 @@ namespace DW1Remake.Game
             }
             UpdateNpcs();
             TickActors();
-            if (_runner != null && _partnerAnim != null && _partner != null && !_movers.ContainsKey(_partner) && !_partnerAnim.Busy
+            if (_runner != null && !_pBusy && _partnerAnim != null && _partner != null && !_movers.ContainsKey(_partner) && !_partnerAnim.Busy
                 && (_partnerAnim.Slot == WalkSlot || _partnerAnim.Slot == RunSlot)) _partnerAnim.SetSlot(IdleSlot);    // no running on the spot during a talk
+            if (_pBusy && _runner == null) return;
+            if (_eggOpen)
+            {
+                int es = GameMenus.SideStep();
+                if (es != 0) _eggSlot = (_eggSlot + es + 4) % 4;
+                if (ActionPressed()) { _eggOpen = false; AdvanceScript(); }
+                return;
+            }
             if (_runner != null)
             {
                 if (_wait > 0f || _waitAll)
@@ -1519,6 +1534,8 @@ namespace DW1Remake.Game
                 else if (ActionPressed()) AdvanceScript();
                 return;
             }
+            CheckCareRequests();
+            if (_pBusy || _runner != null) return;
             if (_battleCooldown > 0f) _battleCooldown -= Time.deltaTime;
             if (!_changing) { TryStartBattle(); if (_battle != null && _battle.Active) return; if (_runner != null) return; }
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
@@ -1553,7 +1570,8 @@ namespace DW1Remake.Game
 
             // exits: grid values 110..119, doors and triggers: 50..109
             int cell = _map.CollisionAt(_player.position.x / Unit, _player.position.z / Unit);
-            if (cell >= 110 && cell < 120)
+            if (cell == 120 && (_state.Para.Condition & PartnerCare.Poopy) != 0) { if (_armed) { _armed = false; StartDgSection(ToiletSection); } }
+            else if (cell >= 110 && cell < 120)
             {
                 if (_armed) TryExit(cell - 110);
             }
@@ -1864,6 +1882,7 @@ namespace DW1Remake.Game
         void OnGUI()
         {
             DrawScreen();
+            DrawCareOverlay();
             DrawDebugMenu();        // last, so nothing covers it
         }
 

@@ -4,6 +4,10 @@ using System.Text;
 
 namespace DW1Remake.Formats
 {
+    /// <summary>A pile on a map; Size 0 = none.</summary>
+    [Serializable]
+    public sealed class PoopPile { public int Map, X, Y, Size; }
+
     /// <summary>The game's PartnerPara: the care numbers kept for the partner (decompilation: include/dw/params.h). Happiness, Discipline, Age, Weight and lives live in ScriptState.</summary>
     [Serializable]
     public sealed class PartnerPara
@@ -18,6 +22,11 @@ namespace DW1Remake.Formats
         public int Lifetime;                                      // hours left to live
         public int TrainBoostFlag, TrainBoostValue, TrainBoostTimer;
         public int CareMistakes, Battles, EvoTimer;               // EvoTimer = hours since the last evolution
+        public int SukaHp, SukaMp, SukaOff, SukaDef, SukaSpeed, SukaBrain;   // the stats before turning into Sukamon
+        public int ItemScoldFlag, EvolutionTarget = -1, ImmortalHour = -1, RaisedCount = 1, CurrentPoop;
+        public bool NanimonTrigger, HasImmortalHour, IsNaturalDeath;
+        public PoopPile[] Piles = NewPiles();                     // WORLD_POOP
+        static PoopPile[] NewPiles() { var a = new PoopPile[100]; for (int i = 0; i < a.Length; i++) a[i] = new PoopPile(); return a; }
     }
 
     /// <summary>Story progress: the game's script variables (bytes) and flags (bits). A new game starts with everything 0.</summary>
@@ -343,6 +352,7 @@ namespace DW1Remake.Formats
                     case 0x1F: st.Vars[d[p + 2]] = (byte)Math.Min(255, st.Vars[d[p + 2]] + d[p + 3]); p += 4; continue;
                     case 0x20: st.Vars[d[p + 2]] = (byte)Math.Max(0, st.Vars[d[p + 2]] - d[p + 3]); p += 4; continue;
                     case 0x47: Spawns.Add(new int[] { d[p + 1], d[p + 2], d[p + 3] }); p += 4; continue;
+                    case 0x49: { var a = new ScriptAction { Cmd = op, Frames = d[p + 1] }; p += 2; return a; }   // callDigimonRoutine
                     case 0x64: { var a = new ScriptAction { Cmd = op, Actor = st.Vars[0xFE], Frames = d[p + 1] }; p += 2; return a; }   // var 254 = the actor (set just before)
                     // 0x27 closes the text window (it just follows the lines), 0x66 starts the fight: variables 250 (0xFA) = 1 for a scripted fight (no running away),
                     // 251-253 (0xFB-0xFD) = the enemies' actor numbers (0xFF = none; unset = the Digimon being talked to)

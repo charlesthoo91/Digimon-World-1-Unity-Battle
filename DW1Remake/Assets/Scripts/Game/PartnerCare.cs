@@ -8,7 +8,7 @@ namespace DW1Remake.Game
     /// One Tick is one game frame, 20 a second: 20 frames = 1 game minute, 1200 frames = 1 game hour.
     /// Hunger, toilet, sleep, sickness, moods and evolution are built on this in the following steps.
     /// </summary>
-    public sealed class PartnerCare
+    public sealed partial class PartnerCare
     {
         public const int Sleepy = 1, Tired = 2, Hungry = 4, Poopy = 8, Unhappy = 16, Injured = 32, Sick = 64;   // PartnerPara.Condition bits
         public const int Lost = -1, FledBattle = 0, WonBattle = 1;                                              // result of a fight
@@ -59,6 +59,8 @@ namespace DW1Remake.Game
             p.CareMistakes = 0; p.Battles = 0; p.EvoTimer = 0;
             p.TimesBeingSick = 0; p.AreaEffectTimer = 0; p.SicknessTimer = 0; p.InjuryTimer = 0;
             _s.Life = 3;
+            P.EvolutionTarget = -1;
+            P.RaisedCount = 1;
         }
 
         // setSleepTimes: Baby I and II sleep by the hours they have been awake, the others by the clock
@@ -124,8 +126,8 @@ namespace DW1Remake.Game
             }
         }
 
-        /// <summary>One game frame while game time runs: tickGameClock, then the parts of tickConditions built so far.</summary>
-        public void Tick()
+        /// <summary>One game frame while game time runs: tickGameClock, then tickConditions when the partner is in its normal state.</summary>
+        public void Tick(bool normal)
         {
             var p = P;
             Frame++;
@@ -145,16 +147,7 @@ namespace DW1Remake.Game
                 }
             }
 
-            Boundaries();
-            p.AreaEffectTimer++;
-            if (p.AreaEffectTimer > 28800) p.AreaEffectTimer = 0;
-            p.TrainBoostTimer--;
-            if (p.TrainBoostTimer <= 0) { p.TrainBoostFlag = 0; p.TrainBoostTimer = 0; }
-            if (Frame % 4800 == 0 && _s.Happiness < 80)   // every 4 hours an unhappy Digimon loses extra life
-            {
-                p.Lifetime -= (_s.Happiness - 80) / -50 + 1;
-                if (p.Lifetime < 0) p.Lifetime = 0;
-            }
+            if (normal) Conditions();
         }
 
         // tickConditionBoundaries
@@ -226,7 +219,7 @@ namespace DW1Remake.Game
         {
             if (result == Lost) { _s.Happiness -= 30; _s.Discipline -= 20; }
             else if (result == FledBattle) { _s.Happiness -= 10; _s.Discipline -= 6; P.Tiredness += 2; PostBattleTiredness(); }
-            else { _s.Happiness += 2; PostBattleTiredness(); P.Battles++; }
+            else { _s.Happiness += 2; PostBattleTiredness(); P.Battles++; BattleInjury(); }
             Boundaries();
             AdvanceBattleTime();
         }

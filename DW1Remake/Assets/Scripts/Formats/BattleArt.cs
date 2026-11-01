@@ -14,7 +14,8 @@ namespace DW1Remake.Formats
         const float Scale = 1415f / 320f, MiddleX = 1415f / 2f, MiddleY = 530f;
 
         readonly Texture2D[] _hud = new Texture2D[16], _cmd = new Texture2D[16];
-        TimImage _hudTim, _cmdTim;
+        TimImage _hudTim, _cmdTim, _condTim;
+        readonly Texture2D[] _cond = new Texture2D[16];
         Texture2D _cursor, _lifeFill;
         Color32[] _lifeGrey;
         int _lifeWidth = -1;
@@ -28,7 +29,7 @@ namespace DW1Remake.Formats
             if (!disc.Exists("/ETCDAT/ETCTIM.BIN") || !disc.Exists("/BTL_REL.BIN")) return null;
             var a = new BattleArt();
             byte[] etc = disc.ReadFile("/ETCDAT/ETCTIM.BIN");
-            if (!TimImage.TryParse(etc, 0, out a._hudTim) || !TimImage.TryParse(etc, 8736, out a._cmdTim)) return null;
+            if (!TimImage.TryParse(etc, 0, out a._hudTim) || !TimImage.TryParse(etc, 8736, out a._cmdTim) || !TimImage.TryParse(etc, 23808, out a._condTim)) return null;
             byte[] b = disc.ReadFile("/BTL_REL.BIN");
             System.Func<uint, int> at = v => (int)(v - OverlayBase);
             a.WordX = new short[BattleWordPieces]; a.WordY = new short[BattleWordPieces];
@@ -60,6 +61,13 @@ namespace DW1Remake.Formats
         {
             if (_hud[row] == null) _hud[row] = _hudTim.ToTexture(row);
             Draw(_hud[row], u, v, w, h, x, y, dw < 0f ? w : dw, dh < 0f ? h : dh);
+        }
+
+        /// <summary>From the sheet of the condition bubbles (ETCTIM.BIN at 23808, VRAM 960,384); row = colour y - 480, v as the game has it, 128 up.</summary>
+        public void Condition(int row, float u, float v, float w, float h, float x, float y, float dw, float dh)
+        {
+            if (_cond[row] == null) _cond[row] = _condTim.ToTexture(row);
+            Draw(_cond[row], u, v - 128f, w, h, x, y, dw, dh);
         }
 
         /// <summary>From the orders sheet; row = colour y - 496.</summary>

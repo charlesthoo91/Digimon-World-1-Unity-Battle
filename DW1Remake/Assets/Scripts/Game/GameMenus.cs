@@ -38,7 +38,9 @@ namespace DW1Remake.Game
         public Texture BoyPicture; public System.Action NeedBoyPicture;
         int _tr, _tc;                      // cursor on the Tech page: row, column
         public int LastUsedItem = -1;   // set when a bag item was used (the battle shows it being thrown to the partner)
-        public System.Action OnSleep, OnNameDone;
+        public System.Action OnNameDone;
+        public System.Action<int> OnCommand, OnFeed;     // 15 praise, 4 scold, 3 sleep; an item handed to the partner
+        public System.Func<bool> InBattle, CanSleep;
         int _nameStage;
         string _input = "";
 
@@ -120,7 +122,12 @@ namespace DW1Remake.Game
             if (!action) return;
             int id = list[_sel];
             var it = _items[id];
-            if (_mode == Mode.Bag) _msg = Use(it);
+            if (_mode == Mode.Bag)
+            {
+                if (InBattle()) _msg = Use(it);
+                else { _mode = Mode.None; OnFeed(id); }      // startFeedingItem: the boy hands it to the partner
+                return;
+            }
             else if (_mode == Mode.Buy)
             {
                 if (_s.Money < it.Price) _msg = "Not enough Bits.";
@@ -142,17 +149,9 @@ namespace DW1Remake.Game
                 case 0: _mode = Mode.Bag; _back = Mode.Main; _sel = 0; _msg = ""; break;
                 case 1: _mode = Mode.Digimon; _tab = 0; break;
                 case 2: _mode = Mode.Player; _tab = 0; break;
-                case 3:   // praise (effects are placeholders until the real rules are found)
-                    _s.Happiness = Mathf.Min(100, _s.Happiness + 8);
-                    _msg = "You praised " + PartnerName + ". Happiness went up."; _mode = Mode.Msg; break;
-                case 4:   // scold
-                    _s.Discipline = Mathf.Min(100, _s.Discipline + 8);
-                    _s.Happiness = Mathf.Max(0, _s.Happiness - 4);
-                    _msg = "You scolded " + PartnerName + ". Discipline went up."; _mode = Mode.Msg; break;
-                case 5:   // sleep
-                    _s.Stats[6] = _s.Stats[4]; _s.Stats[7] = _s.Stats[5];
-                    if (OnSleep != null) OnSleep();
-                    _msg = PartnerName + " had a good sleep. HP and MP are full."; _mode = Mode.Msg; break;
+                case 3: _mode = Mode.None; OnCommand(15); break;
+                case 4: _mode = Mode.None; OnCommand(4); break;
+                case 5: if (CanSleep()) { _mode = Mode.None; OnCommand(3); } break;     // the option is off unless it is sleepy
             }
         }
 

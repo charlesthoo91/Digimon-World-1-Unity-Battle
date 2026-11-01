@@ -63,8 +63,10 @@ namespace DW1Remake.Formats
         }
 
         /// <summary>The raw bytes of one script (0 = MAPHEAD). Section offsets inside are relative to the start of these bytes.</summary>
+        public const int DgZero = -1;   // the id for DG.SCN entry 0, which the game calls script 0 in callScriptSection (life lost, toilet)
         public byte[] GetScriptBytes(int id)
         {
+            if (id == DgZero) return GetDgEntry(0);
             byte[] d; int s, e;
             if (!Available || !GetScript(id, out d, out s, out e)) return null;
             var r = new byte[e - s];

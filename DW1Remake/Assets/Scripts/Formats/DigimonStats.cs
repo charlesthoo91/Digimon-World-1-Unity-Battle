@@ -18,6 +18,7 @@ namespace DW1Remake.Formats
         public int DropItem, DropChance;      // record +33, +34: what it can leave after a fight, percent
         public int[] Specials = new int[3];   // record +30: its element types (same numbers as a technique's element, 255 = none): Agumon fire and battle
         public List<int> EvolvesFrom = new List<int>(), EvolvesTo = new List<int>();   // exe 0x8012B661, 11 bytes per Digimon: from[5], to[6], 255 = none
+        public int[] RawMoves = new int[16];                  // record +35: all 16 entries, 0xFF = none
         public List<int> Moves = new List<int>();             // the record's whole move list; the finishing move is the last one
         public List<int> Learnable = new List<int>();         // technique numbers it can use: Agumon 2, 0, 4, 5, 3, 43, 41 = Spit Fire, Fire Tower, Magma Bomb, ...
         public int SignatureId = -1; // the finishing move's technique number
@@ -54,6 +55,12 @@ namespace DW1Remake.Formats
         public int SleepCycle, FavoredRegion, TrainingType;      // +18, +19, +20
         public int DefaultWeight;                                // +21
     }
+
+    /// <summary>EVOLUTION_REQS row, exe 0x8012ABEC, 28 bytes each, by Digimon; -1 = not asked.</summary>
+    public sealed class EvoRequirement { public int Digimon, Hp, Mp, Off, Def, Speed, Brain, Care, Weight, Discipline, Happiness, Battles, Techs, Flags; }
+
+    /// <summary>EVOLUTION_STATS_GAINS row, exe 0x8012B2D0, 14 bytes each: what each stat moves towards; Brain is the percentage /10 when the stats are scaled.</summary>
+    public sealed class EvoGain { public int Hp, Mp, Off, Def, Speed, Brain, Target; }
 
     /// <summary>A sleep pattern (SLEEP_PATTERN, exe 0x80122CF4, 6 bytes each, 8 patterns; 6 and 7 are the babies').</summary>
     public sealed class SleepPattern { public int SleepyHour, SleepyMinute, WakeupHour, WakeupMinute, AwakeHours, SleepyHours; }
@@ -118,6 +125,44 @@ namespace DW1Remake.Formats
             return d;
         }
 
+        public static EvoRequirement ReqOf(DiscImage disc, int type)
+        {
+            Init(disc);
+            int r = (int)(0x8012abec - _load + 0x800) + type * 28;
+            System.Func<int, int> w = i => BitConverter.ToInt16(_exe, r + i * 2);
+            return new EvoRequirement { Digimon = w(0), Hp = w(1), Mp = w(2), Off = w(3), Def = w(4), Speed = w(5), Brain = w(6), Care = w(7), Weight = w(8), Discipline = w(9), Happiness = w(10), Battles = w(11), Techs = w(12), Flags = _exe[r + 26] };
+        }
+
+        public static EvoGain GainOf(DiscImage disc, int type)
+        {
+            Init(disc);
+            int r = (int)(0x8012b2d0 - _load + 0x800) + type * 14;
+            System.Func<int, int> w = i => BitConverter.ToInt16(_exe, r + i * 2);
+            return new EvoGain { Hp = w(0), Mp = w(1), Off = w(2), Def = w(3), Speed = w(4), Brain = w(5), Target = w(6) };
+        }
+
+        /// <summary>The Digimon an evolution item makes (exe 0x80127C5C, item - 0x47).</summary>
+        public static int EvoItemTarget(DiscImage disc, int item) { Init(disc); return _exe[(int)(0x80127c5c - _load + 0x800) + item - 0x47]; }
+
+        /// <summary>toilet n of a map (TOILET_DATA, exe 0x80122E10, 8 bytes each): the door spot, then the spot inside, in game units. n from 1.</summary>
+        public static int[] ToiletOf(DiscImage disc, int n)
+        {
+            Init(disc);
+            int r = (int)(0x80122e10 - _load + 0x800) + (n - 1) * 8;
+            return new int[] { BitConverter.ToInt16(_exe, r), BitConverter.ToInt16(_exe, r + 2), BitConverter.ToInt16(_exe, r + 4), BitConverter.ToInt16(_exe, r + 6) };
+        }
+
+        /// <summary>The toilet number of a map (MAP_ENTRIES +14), 0 = none.</summary>
+        public static int ToiletIdOf(DiscImage disc, int map) { Init(disc); return _exe[(int)(0x801292d4 - _load + 0x800) + map * 16 + 14]; }
+
+        /// <summary>A zero-ended string in the program.</summary>
+        public static string ExeText(DiscImage disc, uint addr)
+        {
+            Init(disc);
+            int p = (int)(addr - _load + 0x800), j = p; while (_exe[j] != 0) j++;
+            return Encoding.ASCII.GetString(_exe, p, j - p);
+        }
+
         public static SleepPattern SleepOf(DiscImage disc, int cycle)
         {
             Init(disc);
@@ -141,6 +186,7 @@ namespace DW1Remake.Formats
             int n = 0; while (n < 20 && _exe[d + n] >= 32 && _exe[d + n] < 127) n++;
             s.Name = Encoding.ASCII.GetString(_exe, d, n);
             // the record lists the usable techniques, then the finishing move, all as numbers in the technique table
+            for (int i = 0; i < 16; i++) s.RawMoves[i] = _exe[d + TechListStart + i];
             for (int i = TechListStart; i < Stride - 1; i++) { if (_exe[d + i] == 0xFF) break; s.Moves.Add(_exe[d + i]); }
             if (s.Moves.Count > 0)
             {
