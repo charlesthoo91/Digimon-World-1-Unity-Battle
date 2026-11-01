@@ -1,0 +1,58 @@
+# Unity generated folders (project lives in DW1Remake/)
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Uu]ser[Ss]ettings/
+[Mm]emoryCaptures/
+[Rr]ecordings/
+
+# IDE / generated project files
+.vs/
+.idea/
+.vscode/
+*.csproj
+*.sln
+*.slnx
+*.suo
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+
+# Unity crash / log / misc
+*.pidb.meta
+*.pdb.meta
+*.mdb.meta
+sysinfo.txt
+crashlytics-build.properties
+*.apk
+*.aab
+*.unitypackage
+*.app
+
+# Asset import artifacts
+[Aa]ssets/Plugins/Editor/JetBrains*
+InitTestScene*.unity*
+
+# Never commit anything derived from the game disc
+*.bin
+*.cue
+*.iso
+*.img
+dump/
+
+# OS
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Claude local settings
+.claude/settings.local.json
