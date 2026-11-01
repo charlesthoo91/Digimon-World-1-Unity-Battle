@@ -38,7 +38,7 @@ namespace DW1Remake.Game
             public Vector3 Slot;
         }
 
-        sealed class Swing { public Fighter From, To; public float T; public bool Done; public Tech Tech; public Vector3 Start; public float Boost = 1f, Release, Length; }
+        sealed class Swing { public Fighter From, To; public float T; public bool Done; public Tech Tech; public Vector3 Start; public float Boost = 1f, Release, Length; public bool Effect, Landed; }
         sealed class Shot { public Fighter From, To; public Tech Tech; public Vector3 Pos, Dir; public float Travelled; public GameObject Go; public float Boost = 1f; }
         sealed class Pop { public string Text; public Vector3 Pos; public float T; public Color Col; }
         sealed class Fx { public GameObject Go; public Material Mat; public Vector3 Vel; public float T, Life, S0, S1; public Color Col; }
@@ -85,6 +85,7 @@ namespace DW1Remake.Game
         readonly int[] _before = new int[6], _gain = new int[6], _shown = new int[6], _left = new int[6];
         int _bitsLeft, _statWait; float _countAcc; bool _fanfare;
         public System.Action<int> Sfx;           // playSound(0, n)
+        public EffectPlayer Effects; bool _quietHit;
         public System.Action OnStopMusic;
         void Snd(int n) { if (Sfx != null) Sfx(n); }
         int _bits, _enemyBits, _startHp, _used, _blocks, _bigHits;
@@ -229,6 +230,7 @@ namespace DW1Remake.Game
         {
             if (!Active) return;
             float dt = Time.deltaTime; _time += dt;
+            if (Effects != null) Effects.Tick(dt, Camera.main);
             Animate(Partner); Animate(Enemy);
             for (int i = _pops.Count - 1; i >= 0; i--) { _pops[i].T += dt; if (_pops[i].T > 1.2f) _pops.RemoveAt(i); }
             foreach (var f in new[] { Partner, Enemy })
@@ -658,7 +660,9 @@ namespace DW1Remake.Game
             float release = me.A != null ? me.A.ReleaseOf(slot) : -1f, length = me.A != null ? me.A.SecondsOf(slot) : 0f;
             if (release < 0f) release = ranged ? 0.6f : 0.35f;
             length = Mathf.Max(length, release + 0.3f);
-            _swings.Add(new Swing { From = me, To = foe, Tech = tech, Start = me.T.position, Boost = boost, Release = release, Length = length });
+            var swing = new Swing { From = me, To = foe, Tech = tech, Start = me.T.position, Boost = boost, Release = release, Length = length };
+            _swings.Add(swing);
+            StartEffect(swing);
             Play(me, slot, length);
             Sync();
         }
@@ -743,6 +747,7 @@ namespace DW1Remake.Game
                 {
                     sw.Done = true;
                     if (ranged && sw.Tech.Self) Buff(sw.From, sw.Tech);
+                    else if (sw.Effect) { }      // its program lands the hit
                     else if (ranged && sw.Tech.Wide && !sw.From.Blind) Apply(sw.From, sw.To, sw.Tech, sw.Boost);   // a wide technique covers the whole area: it cannot be dodged
                     else if (ranged) Fire(sw);
                     else
@@ -753,8 +758,9 @@ namespace DW1Remake.Game
                         else Miss(sw.To);
                     }
                 }
-                if (sw.T >= Mathf.Max(sw.Length, sw.Release + 0.5f))
+                if (sw.T >= Mathf.Max(sw.Length, sw.Release + 0.5f) && (!sw.Effect || sw.Landed || sw.T > sw.Release + 4f))
                 {
+                    if (sw.Effect && !sw.Landed) Miss(sw.To);
                     _swings.RemoveAt(i);
                     sw.From.Blind = false;
                     sw.From.Cool = 40;                                           // BTL_tickFighterAction: 40 frames of cooldown, +4% finishing gauge, one attack counted
@@ -765,6 +771,27 @@ namespace DW1Remake.Game
         }
 
         static Vector3 Flat(Vector3 v) { v.y = 0; return v; }
+
+        // BTL_startEFE: the technique's own effect from the disc. Ranged ones then decide the hit themselves; a blow by hand still lands with its animation.
+        void StartEffect(Swing sw)
+        {
+            if (Effects == null || sw.Tech.Self) return;
+            Func<Fighter, EffectActor> actor = f => new EffectActor { T = f.T, A = f.A, Type = f.Info != null ? f.Info.Type : 0, Radius = f.Info != null ? f.Info.Radius : 120, Height = f.Info != null ? f.Info.Height : 200 };
+            bool ok = false;
+            try
+            {
+                ok = Effects.Start(sw.Tech.Id, actor(sw.From), actor(sw.To), at =>
+                {
+                    if (sw.Tech.Melee || sw.Landed) return;
+                    sw.Landed = true;
+                    _quietHit = true;
+                    Apply(sw.From, sw.To, sw.Tech, sw.Boost);
+                    _quietHit = false;
+                });
+            }
+            catch (Exception e) { Debug.LogWarning("Effect of " + sw.Tech.Name + ": " + e.Message); }
+            sw.Effect = ok && !sw.Tech.Melee;
+        }
 
         void Fire(Swing sw)
         {
@@ -805,6 +832,7 @@ namespace DW1Remake.Game
         void ClearShots()
         {
             ShowRing(false);
+            if (Effects != null) Effects.Clear();
             foreach (var s in _shots) if (s.Go != null) UnityEngine.Object.Destroy(s.Go);
             _shots.Clear();
             foreach (var f in _fx) { if (f.Go != null) UnityEngine.Object.Destroy(f.Go); }
@@ -977,7 +1005,7 @@ namespace DW1Remake.Game
                 d.NextAct = Mathf.Max(d.NextAct, _time + length);
             }
             else Play(d, DownSlot, 3f);
-            Burst(d.T.position + Vector3.up * 0.8f, tech.Col, tech.Finisher ? 1.6f : 1f, true);
+            if (!_quietHit) Burst(d.T.position + Vector3.up * 0.8f, tech.Col, tech.Finisher ? 1.6f : 1f, true);
             if (tech.Status > 0 && d.Hp > 0 && _rng.Next(100) < tech.StatusChance)
             {
                 // the game's timers in frames (code 0x8005C4A0): stun 200-240 (no action at all), confuse 200-300. Poison's and flat's effects are not decoded.

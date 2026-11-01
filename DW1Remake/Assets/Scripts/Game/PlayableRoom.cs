@@ -153,6 +153,8 @@ namespace DW1Remake.Game
             _battle.ItemName = i => i >= 0 && i < catalog.Count ? catalog[i].Name : "";
             _battle.OnOpenBag = () => _menus.OpenBag();
             _battle.Icons = BattleIcons.Load(_disc);
+            try { EffectPlayer.FacingOffset = FacingOffset; _battle.Effects = new EffectPlayer(_disc, id => { if (_audio != null) _audio.Play(8, id); }); }
+            catch (Exception e) { Debug.LogWarning("Technique effects not available: " + e.Message); }
             _menus.BIcons = _battle.Icons;
             _menus.Faces = Portraits.Load(_disc);
             _menus.PartnerInfo = DigimonStatsCatalog.Get(_disc, PartnerType);
