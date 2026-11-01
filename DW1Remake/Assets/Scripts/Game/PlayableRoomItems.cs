@@ -13,7 +13,7 @@ namespace DW1Remake.Game
         readonly List<Ground> _ground = new List<Ground>();
         readonly List<Chest> _chests = new List<Chest>();
         readonly List<RectInt> _blocks = new List<RectInt>();     // tiles closed by chests and script command 0x7C
-        string _boxText; int _boxItem = -1;
+        string _boxText; int _boxItem = -1; bool _refused;
 
         void ClearWorldItems()
         {
@@ -71,8 +71,16 @@ namespace DW1Remake.Game
         void CheckPickup()
         {
             var me = TileOf(_player.position);
+            bool near = false;
             foreach (var g in _ground)
-                if (Mathf.Abs(g.Tile.x - me.x) <= 1 && Mathf.Abs(g.Tile.y - me.y) <= 1) { Run(Pickup(g), true); return; }
+                if (Mathf.Abs(g.Tile.x - me.x) <= 1 && Mathf.Abs(g.Tile.y - me.y) <= 1)
+                {
+                    near = true;
+                    if (_refused) return;       // HAS_PICKED_UP_ITEM: a full bag asks once, until the boy has walked away
+                    Run(Pickup(g), true);
+                    return;
+                }
+            if (!near) _refused = false;
         }
 
         IEnumerator WaitAction()
@@ -97,9 +105,7 @@ namespace DW1Remake.Game
             {
                 _boxText = DigimonStatsCatalog.ExeText(_disc, 0x80122D68);    // "I can't hold anymore."
                 yield return WaitAction();
-                _ground.Remove(g);    // the game keeps it only until the boy has left its tile; it is not picked up again at once
-                _ground.Add(g);
-                yield return new WaitForSeconds(0.2f);
+                _refused = true;
             }
             _boxText = null; _boxItem = -1;
             if (_anim != null) _anim.SetSlot(IdleSlot);
