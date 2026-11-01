@@ -283,6 +283,7 @@ namespace DW1Remake.Formats
                     case 0x20: st.Vars[d[p + 2]] = (byte)Math.Max(0, st.Vars[d[p + 2]] - d[p + 3]); p += 4; continue;
                     case 0x47: Spawns.Add(new int[] { d[p + 1], d[p + 2], d[p + 3] }); p += 4; continue;
                     case 0x64: { var a = new ScriptAction { Cmd = op, Actor = st.Vars[0xFE], Frames = d[p + 1] }; p += 2; return a; }   // var 254 = the actor (set just before)
+                    case 0x27: { p += 2; return new ScriptAction { Cmd = 0x27 }; }   // start the fight with the Digimon being talked to (wild Digimon shout a line first)
                     case 0x4A: { p += 2; return new ScriptAction { Cmd = 0x4A }; }
                     case 0x4C: { var a = new ScriptAction { Cmd = op, Actor = d[p + 2], Target = d[p + 3] }; p += 4; return a; }
                     case 0x4D: { var a = new ScriptAction { Cmd = op, Actor = d[p + 1], Angle = U16(d, p + 2) }; p += 4; return a; }

@@ -278,6 +278,14 @@ namespace DW1Remake.Game
                         return true;
                     }
                     break;
+                case 0x27:   // fight the Digimon whose script this is; the script goes on when the fight is over
+                    if (_talkingTo != null && _talkingTo.T != null && _battle != null && !_battle.Active)
+                    {
+                        _line = null; _choiceOpts = null; _battleWait = true;
+                        StartBattle(_talkingTo);
+                        return true;
+                    }
+                    break;
                 case 0x67: _wait = a.Frames / 30f; return _wait > 0f;
                 case 0x4A: _waitAll = ActorsBusy(); return _waitAll;
                 case 0x4C:
@@ -524,7 +532,9 @@ namespace DW1Remake.Game
         {
             foreach (var n in _npcs)
             {
-                if (n.T == null || n.Path.Count == 0 || n == _talkingTo || n == _battleNpc) continue;
+                if (n.T == null || n == _talkingTo || n == _battleNpc) continue;
+                if (Chase(n)) continue;
+                if (n.Path.Count == 0) continue;
                 if (n.Wait > 0) { n.Wait -= Time.deltaTime; if (n.Anim != null && n.Anim.Slot != IdleSlot) n.Anim.SetSlot(IdleSlot); continue; }
                 Vector3 pos = n.T.position, to = n.Path[n.Next] - pos; to.y = 0;
                 if (to.magnitude < 0.1f) { n.Next = (n.Next + 1) % n.Path.Count; n.Wait = 1f + (n.Next % 3); continue; }
@@ -568,7 +578,7 @@ namespace DW1Remake.Game
         // ------------------------------------------------------------------ battles with wild Digimon
 
         Battle _battle; Npc _battleNpc; float _battleCooldown;
-        bool _shopWait;
+        bool _shopWait, _battleWait;
         const int FileCityMap = 204, FileCityExit = 2;   // TWNA01: where a defeated partner is carried
 
         // walking into a wild Digimon (follow mode 12) starts a fight
@@ -577,12 +587,34 @@ namespace DW1Remake.Game
             if (_battle == null || _partner == null || !_partner.gameObject.activeInHierarchy || _intro) return;
             foreach (var n in _npcs)
             {
-                if (n.T == null || n.Data.FollowMode != 12 || !n.T.gameObject.activeInHierarchy) continue;
+                if (!Hostile(n)) continue;
                 Vector3 d = n.T.position - _player.position; d.y = 0;
                 if (d.magnitude > 1.5f) continue;
+                // the Digimon's own script shouts a line and then starts the fight (command 0x27); without one, fight at once
+                if (n.Data.Script > 0 && StartScript(n.Data.Script, n)) { Vector3 look = _player.position - n.T.position; look.y = 0; if (look.sqrMagnitude > 0.01f) n.T.rotation = FaceRot(look); return; }
                 StartBattle(n);
                 return;
             }
+        }
+
+        // wild Digimon: follow mode 12 (wanders, chases when you come close) and 16 (scripted: chases you from anywhere on the map)
+        static bool Hostile(Npc n) { return n.T != null && n.T.gameObject.activeInHierarchy && (n.Data.FollowMode == 12 || n.Data.FollowMode == 16); }
+
+        bool Chase(Npc n)
+        {
+            if (!Hostile(n) || _player == null || _runner != null || _intro || _changing || _battleCooldown > 0f || (_battle != null && _battle.Active)) return false;
+            if (_partner == null || !_partner.gameObject.activeInHierarchy) return false;
+            Vector3 to = _player.position - n.T.position; to.y = 0;
+            float dist = to.magnitude, range = n.Data.FollowMode == 16 ? 60f : 6f;
+            if (dist > range || dist < 1.2f) return false;
+            Vector3 dir = to / dist, pos = n.T.position;
+            float step = WalkSpeed * 0.75f * Time.deltaTime;
+            if (Free(pos + new Vector3(dir.x * step, 0, 0))) pos.x += dir.x * step;
+            if (Free(pos + new Vector3(0, 0, dir.z * step))) pos.z += dir.z * step;
+            n.T.position = pos;
+            n.T.rotation = Quaternion.RotateTowards(n.T.rotation, FaceRot(dir), TurnSpeed * Time.deltaTime);
+            if (n.Anim != null && n.Anim.Slot != WalkSlot) n.Anim.SetSlot(WalkSlot);
+            return true;
         }
 
         void StartBattle(Npc enemy)
@@ -594,7 +626,6 @@ namespace DW1Remake.Game
                 if (_state.ItemSlots == 0) _state.ItemSlots = 10;
             }
             _battleNpc = enemy;
-            _talkingTo = null;
             if (_anim != null) _anim.SetSlot(IdleSlot);
             _battle.Start(_partner, _partnerAnim, _menus != null ? _menus.PartnerName : _partnerName, DigimonStatsCatalog.Get(_disc, PartnerType),
                           enemy.T, enemy.Anim, enemy.Name, DigimonStatsCatalog.Get(_disc, enemy.Data.Type));
@@ -1205,7 +1236,11 @@ namespace DW1Remake.Game
                 {
                     _battle.ReadBack();
                     _battle.Tick(MenuStep(), ActionPressed(), GameMenus.CancelKey());
-                    if (!_battle.Active) EndBattle();
+                    if (!_battle.Active)
+                    {
+                        EndBattle();
+                        if (_battleWait) { _battleWait = false; if (_runner != null) AdvanceScript(); }
+                    }
                     return;
                 }
                 if (_runner == null)
