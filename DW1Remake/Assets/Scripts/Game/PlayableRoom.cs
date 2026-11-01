@@ -382,6 +382,38 @@ namespace DW1Remake.Game
                         if (an != null) an.SetSlot(WalkSlot);
                     }
                     break;
+                case 0x50:
+                    if (ActorOf(a.Actor, out t, out an))
+                    {
+                        if (!_camOn) { _camOn = true; _camPos = _player.position; }
+                        _camGoal = t.position; _camSpeed = (_camGoal - _camPos).magnitude / Mathf.Max(0.1f, a.Frames / 20f);
+                    }
+                    break;
+                case 0x51: case 0x53: case 0x52:
+                    if (ActorOf(a.Actor, out t, out an))
+                    {
+                        Vector3 goal = new Vector3(a.X * Unit, 0, a.Z * Unit);
+                        if (a.Cmd != 0x52) { if (!ActorOf(a.Target, out t2, out an2)) break; goal = t2.position; }
+                        var m = MoverFor(t, an); m.Goal = goal; m.Walking = true; m.Still = 0f;
+                        if (an != null) an.SetSlot(WalkSlot);
+                        if (a.Cmd != 0x51)
+                        {
+                            if (!_camOn) { _camOn = true; _camPos = _player.position; }
+                            _camGoal = goal; _camSpeed = ActorSpeed;
+                        }
+                    }
+                    break;
+                case 0x6D: case 0x6F:
+                    if (ActorOf(a.Actor, out t, out an) && ActorOf(a.Target, out t2, out an2)) { var m = MoverFor(t, an); m.Goal = t2.position; m.Walking = true; m.Still = 0f; }
+                    break;
+                case 0x72:
+                    if (ActorOf(a.Actor, out t, out an))
+                    {
+                        var m = MoverFor(t, an);
+                        m.Goal = a.Frames == 0 ? new Vector3(a.X * Unit, 0, t.position.z) : new Vector3(t.position.x, 0, a.X * Unit);
+                        m.Walking = true; m.Still = 0f;
+                    }
+                    break;
                 case 0x6C:
                     if (ActorOf(a.Actor, out t, out an))
                     {

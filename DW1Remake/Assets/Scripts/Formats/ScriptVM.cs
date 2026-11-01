@@ -338,6 +338,9 @@ namespace DW1Remake.Formats
                         if (text.Length > 0) return new ScriptAction { Text = text, Speaker = speaker };
                         continue;
                     }
+                    case 0x65: st.Para.Condition &= ~d[p + 1]; p += 2; continue;      // remove conditions
+                    case 0x69: st.Stats[6] = (ushort)Math.Max(1, st.Stats[6] - st.Stats[4] * st.Vars[d[p + 1]] / 100); p += 2; continue;   // damage: percent of max HP
+                    case 0x7A: st.Vars[d[p + 3]] = st.Vars[d[p + 2]]; p += 4; continue;   // copy a variable
                     case 0x5A: if (st.OnSound != null) st.OnSound(d[p + 2], d[p + 3]); p += 4; continue;   // play a sound: bank, sound
                     case 0x5D: if (st.OnBgm != null) st.OnBgm(d[p + 1]); p += 2; continue;                 // music
                     case 0x5E: if (st.OnBgm != null) st.OnBgm(0xFF); p += 2; continue;                     // music off
@@ -370,6 +373,13 @@ namespace DW1Remake.Formats
                     case 0x4E: { var a = new ScriptAction { Cmd = op, Actor = d[p + 1], X = S16(d, p + 2), Z = S16(d, p + 4) }; p += 8; return a; }
                     case 0x4F: { var a = new ScriptAction { Cmd = op, Frames = d[p + 1], X = S16(d, p + 2), Z = S16(d, p + 4) }; p += 6; return a; }
                     case 0x6C: { var a = new ScriptAction { Cmd = op, Actor = d[p + 1], X = S16(d, p + 2), Z = S16(d, p + 4) }; p += 8; return a; }
+                    case 0x50: { var a = new ScriptAction { Cmd = op, Actor = d[p + 2], Frames = d[p + 3] }; p += 4; return a; }              // camera to an actor
+                    case 0x51: case 0x53: { var a = new ScriptAction { Cmd = op, Actor = d[p + 1], Target = d[p + 3] }; p += 4; return a; }   // walk to an actor (0x53 with the camera)
+                    case 0x52: { var a = new ScriptAction { Cmd = op, Actor = d[p + 1], X = S16(d, p + 2), Z = S16(d, p + 4) }; p += 8; return a; }   // walk, the camera goes along
+                    case 0x6D: case 0x6F: { var a = new ScriptAction { Cmd = op, Actor = d[p + 1], Target = d[p + 2], Frames = d[p + 3] }; p += 4; return a; }   // glide to an actor
+                    case 0x6E: { var a = new ScriptAction { Cmd = 0x52, Actor = d[p + 1], X = S16(d, p + 2), Z = S16(d, p + 4) }; p += 8; return a; }
+                    case 0x72: case 0x73: { var a = new ScriptAction { Cmd = 0x72, Actor = d[p + 1], X = S16(d, p + 2), Frames = d[p + 4] }; p += 6; return a; }   // move along one axis
+                    case 0x58: { var a = new ScriptAction { Map = st.Vars[d[p + 1]], Exit = st.Vars[d[p + 1] + 1], Arrive = 255 }; p = -1; return a; }             // warp, map and exit in variables
                     case 0x56: { var a = new ScriptAction { Cmd = op, Actor = d[p + 2], Target = d[p + 3] }; p += 4; return a; }
                     case 0x67: { var a = new ScriptAction { Cmd = op, Frames = U16(d, p + 2) }; p += 4; return a; }
                     case 0x4B:
