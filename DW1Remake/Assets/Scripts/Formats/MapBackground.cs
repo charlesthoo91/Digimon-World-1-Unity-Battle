@@ -18,7 +18,7 @@ namespace DW1Remake.Formats
     /// <summary>A Digimon placed in a map: a friendly NPC (follow mode 1) or a wild one that wanders along waypoints.</summary>
     public sealed class MapDigimon
     {
-        public int Type, FollowMode, RotY, Script;
+        public int Type, FollowMode, RotY, Script, Tracking;   // Tracking: record +16, how far it notices the boy, game units
         public int Hp, Mp, Off, Def, Spd, Brain, Bits;      // the fight numbers of this Digimon on this map (record +22 ...)
         public int[] MoveSlots = new int[4], MoveChance = new int[4];   // its techniques as animation slots (255 = none) and how often each is picked
         public Vector3 Pos;                                   // game units
@@ -124,7 +124,7 @@ namespace DW1Remake.Formats
                         {
                             Type = S16(map, q), FollowMode = S16(map, q + 2),
                             Pos = new Vector3(S16(map, q + 4), S16(map, q + 6), S16(map, q + 8)),
-                            RotY = S16(map, q + 12), Script = S16(map, q + 20),
+                            RotY = S16(map, q + 12), Tracking = S16(map, q + 16), Script = S16(map, q + 20),
                             Hp = S16(map, q + 22), Mp = S16(map, q + 24), Off = S16(map, q + 30), Def = S16(map, q + 32), Spd = S16(map, q + 34), Brain = S16(map, q + 36), Bits = S16(map, q + 38)
                         };
                         for (int k = 0; k < 4; k++) { d.MoveSlots[k] = S16(map, q + 44 + k * 2); d.MoveChance[k] = S16(map, q + 52 + k * 2); }

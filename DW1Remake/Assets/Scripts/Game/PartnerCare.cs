@@ -21,6 +21,7 @@ namespace DW1Remake.Game
         public int PartnerType;
         public int Hour = 8, Minute, Frame = 9600;   // the game starts at 08:00, frame 8 x 1200
         public Action OnNewDay;
+        int _daysThisYear;
 
         public PartnerCare(ScriptState state, Func<int, RaiseData> raiseOf, Func<int, SleepPattern> sleepOf, Func<int, int> levelOf)
         {
@@ -141,6 +142,12 @@ namespace DW1Remake.Game
                     if (Hour == 24)
                     {
                         _s.Age++; Hour = 0; Frame = 0;
+                        if (++_daysThisYear >= 30)      // the end of a year: a happy partner may raise the Tamer Level, an unhappy one lower it
+                        {
+                            _daysThisYear = 0;
+                            if (_s.Happiness == 100) AddTamerLevel(5, 1);
+                            else if (_s.Happiness < 0) AddTamerLevel(10, -1);
+                        }
                         if (OnNewDay != null) OnNewDay();
                         if (p.Lifetime < 0) p.Lifetime = 0;
                     }

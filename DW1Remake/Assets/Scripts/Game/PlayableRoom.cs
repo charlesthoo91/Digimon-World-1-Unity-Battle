@@ -264,6 +264,7 @@ namespace DW1Remake.Game
         {
             public MapDigimon Data; public Transform T; public DigimonAnimator Anim; public string Name;
             public List<Vector3> Path = new List<Vector3>(); public int Next; public float Wait;
+            public Vector3 Home; public bool Chasing;
         }
         readonly List<Npc> _npcs = new List<Npc>();
         string _playerName = "", _partnerName = "";
@@ -627,6 +628,7 @@ namespace DW1Remake.Game
                 if (n.Anim != null) n.Anim.DigimonType = d.Type;
                 Vector3 p = ToUnity(d.Pos); p.y = 0;
                 go.transform.position = p;
+                n.Home = p;
                 float a = d.RotY * 2f * Mathf.PI / 4096f;
                 go.transform.rotation = Quaternion.LookRotation(new Vector3(Mathf.Sin(a), 0, Mathf.Cos(a))) * Quaternion.Euler(0, FacingOffset, 0);
                 if (d.FollowMode != 1)
@@ -646,6 +648,7 @@ namespace DW1Remake.Game
             {
                 if (n.T == null || n == _talkingTo || n == _battleNpc) continue;
                 if (ChaseScripted(n)) continue;
+                if (TrackBoy(n)) continue;
                 if (n.Data.FollowMode == 16 && Hostile(n)) { if (n.Anim != null && n.Anim.Slot != IdleSlot) n.Anim.SetSlot(IdleSlot); continue; }   // it only ever runs at you, it never strolls
                 if (n.Path.Count == 0) continue;
                 if (n.Wait > 0) { n.Wait -= Time.deltaTime; if (n.Anim != null && n.Anim.Slot != IdleSlot) n.Anim.SetSlot(IdleSlot); continue; }
@@ -770,6 +773,44 @@ namespace DW1Remake.Game
         }
 
         // the scripted opponent (follow mode 16, the first Agumon) runs after you on its map until you fight it: the story cannot go on without that fight
+        // NPCEntityTickOverworld: what a map Digimon does when the boy comes near, by its follow mode.
+        // 2, 11 look at him; 3-5, 8, 9, 12-14, 17, 18 walk at him inside a square round their home; 6, 15 walk and 7, 16 run inside the game's radius test
+        bool TrackBoy(Npc n)
+        {
+            int m = n.Data.FollowMode;
+            if (m < 2 || m > 18 || m == 10 || _player == null || _runner != null || _pBusy || _changing || _intro) return false;
+            float range = n.Data.Tracking * Unit;
+            Vector3 boy = _player.position, away = boy - n.Home;
+            bool square = Mathf.Abs(away.x) < range && Mathf.Abs(away.z) < range, inRange;
+            if (m == 6 || m == 15 || m == 7 || m == 16)
+            {
+                int r = n.Data.Tracking * 6 / 10;
+                inRange = ((n.T.position.x - boy.x) + (n.T.position.z - boy.z)) / Unit < r * r;     // as the game has it: the sum, not squares
+            }
+            else inRange = square;
+            if (m == 2 || m == 11)
+            {
+                if (!inRange) return false;
+                n.T.rotation = Quaternion.RotateTowards(n.T.rotation, FaceRot(boy - n.T.position), TurnSpeed * Time.deltaTime);
+                if (n.Anim != null && n.Anim.Slot != IdleSlot) n.Anim.SetSlot(IdleSlot);
+                return true;
+            }
+            if (inRange) n.Chasing = true;
+            if (!n.Chasing) return false;
+            Vector3 goal = inRange ? boy : n.Home, to = goal - n.T.position; to.y = 0f;
+            if (!inRange && to.magnitude < 0.3f) { n.Chasing = false; return false; }
+            if (inRange && Touching(n)) return true;
+            int slot = (m == 7 || m == 16) && n.Anim != null && n.Anim.HasSlot(RunSlot) ? RunSlot : WalkSlot;
+            float step = n.Anim != null ? n.Anim.TakeForward() : ChaseSpeed * Time.deltaTime;
+            Vector3 dir = to.normalized, pos = n.T.position;
+            if (Free(pos + new Vector3(dir.x * step, 0, 0))) pos.x += dir.x * step;
+            if (Free(pos + new Vector3(0, 0, dir.z * step))) pos.z += dir.z * step;
+            n.T.position = pos;
+            n.T.rotation = Quaternion.RotateTowards(n.T.rotation, FaceRot(dir), TurnSpeed * Time.deltaTime);
+            if (n.Anim != null && n.Anim.Slot != slot) n.Anim.SetSlot(slot);
+            return true;
+        }
+
         bool ChaseScripted(Npc n)
         {
             if (!Hostile(n) || n.Data.FollowMode != 16 || _player == null || _runner != null || _intro || _changing || (_battle != null && _battle.Active)) return false;
