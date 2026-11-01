@@ -40,6 +40,8 @@ namespace DW1Remake.Formats
         public PartnerPara Para = new PartnerPara();
         public int TamerLevel;
         public Action AfterStatChange;            // set by PartnerCare
+        public Action<int, int> OnSound;          // set by the room
+        public Action<int> OnBgm;
         public int Money;                         // bits; 0x2A adds, 0x2B takes away (the opening takes 50000 from 0, so the game starts at 0)
         public byte[] Bag = new byte[128];        // how many of each item the player carries (item number = position in the game's item list)
         public int BagKinds() { int n = 0; foreach (var b in Bag) if (b > 0) n++; return n; }
@@ -335,6 +337,9 @@ namespace DW1Remake.Formats
                         if (text.Length > 0) return new ScriptAction { Text = text, Speaker = speaker };
                         continue;
                     }
+                    case 0x5A: if (st.OnSound != null) st.OnSound(d[p + 2], d[p + 3]); p += 4; continue;   // play a sound: bank, sound
+                    case 0x5D: if (st.OnBgm != null) st.OnBgm(d[p + 1]); p += 2; continue;                 // music
+                    case 0x5E: if (st.OnBgm != null) st.OnBgm(0xFF); p += 2; continue;                     // music off
                     case 0x1C: st.SetFlag(U16(d, p + 2), true); p += 4; continue;
                     case 0x1D: st.SetFlag(U16(d, p + 2), false); p += 4; continue;
                     case 0x1E: st.Vars[d[p + 2]] = d[p + 3]; p += 4; continue;

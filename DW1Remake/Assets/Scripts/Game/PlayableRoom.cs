@@ -93,6 +93,7 @@ namespace DW1Remake.Game
         float _clock = -1f;                    // hours, 0..24; a copy of the game clock in _care
         float _clockFrames;                    // time towards the next game frame (20 a second)
         PartnerCare _care;
+        GameAudio _audio;
         int _curPalette;
         float _lightFactor = 1f;
         readonly List<Light> _lightList = new List<Light>();
@@ -169,6 +170,19 @@ namespace DW1Remake.Game
             _care.GainOf = t => DigimonStatsCatalog.GainOf(_disc, t);
             _care.InfoOf = t => DigimonStatsCatalog.Get(_disc, t);
             _care.TechOf = DigimonStatsCatalog.TechOf;
+            try { _audio = new GameAudio(_disc, _state, gameObject); _audio.SetPartner(PartnerType); }
+            catch (Exception e) { Debug.LogWarning("Sound not available: " + e.Message); }
+            if (_audio != null)
+            {
+                _state.OnSound = _audio.Play;
+                _state.OnBgm = id => _audio.SetBgm(id, _care.Hour);
+                _menus.Sfx = n => _audio.Play(0, n);
+                DigimonAnimator.SoundSink = (a, bank, val) =>
+                {
+                    Vector3 v = _cam != null ? _cam.WorldToViewportPoint(a.transform.position) : Vector3.zero;
+                    if (v.x >= 0f && v.x <= 1f && v.y >= 0f && v.y <= 1f) _audio.PlayAnim(a.DigimonType < 0 ? 0 : a.DigimonType, bank, val);   // only what is on screen is heard
+                };
+            }
             _menus.OnCommand = CareCommand;
             _menus.OnFeed = FeedItem;
             _menus.InBattle = () => _battle != null && _battle.Active;
@@ -575,6 +589,7 @@ namespace DW1Remake.Game
                 finally { MmdModel.UseLit = false; MmdModel.Brightness = 1f; }
                 go.transform.SetParent(transform, false);
                 var n = new Npc { Data = d, T = go.transform, Anim = go.GetComponent<DigimonAnimator>(), Name = entry.Name };
+                if (n.Anim != null) n.Anim.DigimonType = d.Type;
                 Vector3 p = ToUnity(d.Pos); p.y = 0;
                 go.transform.position = p;
                 float a = d.RotY * 2f * Mathf.PI / 4096f;
@@ -762,6 +777,7 @@ namespace DW1Remake.Game
             var boyInfo = DigimonStatsCatalog.Get(_disc, 0);
             _tamerActive = 0;
             _battle.Walkable = Free;
+            if (_audio != null) _audio.BattleMusic(noFlee, enemy.Data.Type);
             _battle.Start(_player, _anim, _partner, _partnerAnim, _menus != null ? _menus.PartnerName : _partnerName, DigimonStatsCatalog.Get(_disc, PartnerType),
                           enemy.T, enemy.Anim, enemy.Name, DigimonStatsCatalog.Get(_disc, enemy.Data.Type), enemy.Data, right, noFlee, _tamerWay, _tamerStart, boyInfo != null ? boyInfo.Radius * Unit : 0f);
             Debug.Log("[battle] " + _battle.Partner.Name + " vs " + enemy.Name + " (" + (_battle.Enemy.Info != null ? _battle.Enemy.Info.LevelName : "?") + ", HP " + _battle.Enemy.MaxHp + ", Off " + _battle.Enemy.Off + ")");
@@ -769,6 +785,7 @@ namespace DW1Remake.Game
 
         void EndBattle()
         {
+            if (_audio != null && (_battle.Won || _battle.Fled)) _audio.RestoreBgm();
             _care.AfterBattle(_battle.Won ? PartnerCare.WonBattle : _battle.Fled ? PartnerCare.FledBattle : PartnerCare.Lost);
             if (_battle.Fled && _state.Stats[16] < 9999) _state.Stats[16]++;   // battles fled
             if (_partnerAnim != null) _partnerAnim.SetSlot(IdleSlot);
@@ -840,6 +857,8 @@ namespace DW1Remake.Game
             _partner = go.transform;
             _partnerName = entry.Name;
             _partnerAnim = go.GetComponent<DigimonAnimator>();
+            if (_partnerAnim != null) _partnerAnim.DigimonType = PartnerType;
+            if (_audio != null) _audio.SetPartner(PartnerType);
         }
 
         // the partner walks along the path you took, keeping some distance behind you
@@ -1066,6 +1085,7 @@ namespace DW1Remake.Game
             PlacePartner(_player.position, face);
             BuildNpcs();
             CareOnMap(mapBytes);
+            if (_audio != null && _mapId >= 0 && _mapId < _mapFlags.Count) _audio.SetMapSounds(_mapFlags[_mapId] & 0x1F);
             if (_gridOverlay != null) { Destroy(_gridOverlay); _gridOverlay = null; }
             if (_showGrid) BuildGridOverlay();
             _calibrated = false;
@@ -1445,6 +1465,7 @@ namespace DW1Remake.Game
             if (Input.GetKeyDown(KeyCode.T)) _care.SkipHours(1);
 #endif
             _clock = _care.ClockHours;
+            if (_audio != null) { _audio.Tick(); if (_battle == null || !_battle.Active) _audio.UpdateBgm(_care.Hour); }
             float f;
             int pal = DesiredPalette(out f);
             if (pal != _curPalette || !Mathf.Approximately(f, _lightFactor))

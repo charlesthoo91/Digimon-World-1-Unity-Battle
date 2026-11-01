@@ -41,6 +41,7 @@ namespace DW1Remake.Game
         public System.Action OnNameDone;
         public System.Action<int> OnCommand, OnFeed;     // 15 praise, 4 scold, 3 sleep; an item handed to the partner
         public System.Func<bool> InBattle, CanSleep;
+        public System.Action<int> Sfx;                   // playSound(0, n): 2 cursor, 3 confirm, 4 back
         int _nameStage;
         string _input = "";
 
@@ -82,6 +83,7 @@ namespace DW1Remake.Game
         /// <summary>One frame of input. step = up/down, side = left/right, action = Cross, cancel = Triangle/back.</summary>
         public void Tick(int step, int side, bool action, bool cancel)
         {
+            if (Sfx != null && _mode != Mode.Name) { if (cancel) Sfx(4); else if (action) Sfx(3); else if (step != 0 || side != 0) Sfx(2); }
             switch (_mode)
             {
                 case Mode.Main:

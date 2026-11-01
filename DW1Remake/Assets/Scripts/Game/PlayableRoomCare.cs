@@ -150,12 +150,14 @@ namespace DW1Remake.Game
             {
                 int level = _menus.PartnerInfo != null ? _menus.PartnerInfo.Level : 3;
                 bool small = level < 4 || PartnerType == 0x0D || PartnerType == 0x1B || PartnerType == 0x38;
+                if (_audio != null) _audio.Play(0, 14);
                 if (_partnerAnim != null) _partnerAnim.SetSlot(11, true);
                 yield return Play(_anim, small ? 0x26 : 0x27);
                 _care.Praise();
             }
             else
             {
+                if (_audio != null) _audio.Play(0, 13);
                 if (_partnerAnim != null) _partnerAnim.SetSlot(_state.Para.ItemScoldFlag == 1 ? 25 : 12, true);
                 yield return Play(_anim, 7);
                 _care.Scold();
@@ -173,6 +175,7 @@ namespace DW1Remake.Game
             if (!Close(1.5f + 2f)) yield return ComeToBoy();
             Face(_partner, _player.position);
             Face(_player, _partner.position);
+            if (_audio != null) _audio.Play(0, 12);
             if (_anim != null) _anim.SetSlot(5, true);
             if (_partnerAnim != null) _partnerAnim.SetSlot(IdleSlot);
             yield return new WaitForSeconds(8f / 20f);       // the boy's animation reaches frame 8
@@ -196,6 +199,7 @@ namespace DW1Remake.Game
         IEnumerator SleepScene()
         {
             yield return ComeToBoy();
+            if (_audio != null) _audio.Play(0, 15);
             yield return Play(_anim, 8);
             yield return Play(_partnerAnim, 11);
             yield return Play(_partnerAnim, 9);
@@ -313,6 +317,7 @@ namespace DW1Remake.Game
             _bubbleType = 7; _bubbleStart = Time.time;
             yield return new WaitForSeconds(55f / 20f);
             _bubbleType = -1;
+            if (_audio != null) _audio.StopMusic();
 
             _camOn = true; _camPos = _camGoal = _partner.position;
             var clear = _cam != null ? _cam.clearFlags : CameraClearFlags.Skybox; var back = _cam != null ? _cam.backgroundColor : Color.black;
@@ -351,6 +356,7 @@ namespace DW1Remake.Game
             }
             _sparks.Clear(); _flash = 0f;
             HideWorld(false);
+            if (_audio != null) _audio.RestoreBgm();
             if (_cam != null) { _cam.clearFlags = clear; _cam.backgroundColor = back; }
             Face(_partner, _player.position);
             yield return Play(_partnerAnim, 11);

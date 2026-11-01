@@ -23,6 +23,10 @@ namespace DW1Remake.Formats
         Quaternion[] _fromRot; Vector3[] _fromPos; float _blend = 1f;
         public float BlendSeconds = 0.2f;        // smooth change from the previous pose to the next animation
 
+        public int DigimonType = -1;                                // whose sounds it plays
+        public static System.Action<DigimonAnimator, int, int> SoundSink;     // set by the room: a sound event of an animation
+        void Heard(int bank, int val) { if (SoundSink != null) SoundSink(this, bank, val); }
+
         public int SlotCount { get { return _anims == null ? 0 : _anims.Length; } }
         public int Slot { get { return _slot; } }
         int _pending = -1; bool _pendingOnce;    // next scripted animation, waits until the current play-once animation has finished (like the game's per-actor command queue)
@@ -90,6 +94,7 @@ namespace DW1Remake.Formats
             _slot = slot;
             _forward = 0; _bodyMove = 0;        // steps nobody took so far must not all land at once later
             _sim = new AnimSim(_anims[slot], _nodes.Length);
+            _sim.OnSound = Heard;
             Apply();
         }
 
@@ -166,6 +171,7 @@ namespace DW1Remake.Formats
                         break;
                     }                                   // finished: keep the last pose
                     _sim = new AnimSim(_anims[_slot], _nodes.Length);                    // finished: start over
+                    _sim.OnSound = Heard;
                 }
                 moved = true;
             }

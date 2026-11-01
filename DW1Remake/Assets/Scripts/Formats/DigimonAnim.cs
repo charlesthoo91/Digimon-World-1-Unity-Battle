@@ -18,6 +18,7 @@ namespace DW1Remake.Formats
         public int Frame;   // frame this instruction fires on
         public int Count;   // loop count
         public int Jump;    // loop end: frame to jump back to
+        public int Bank, Val;   // sound event: playSound(bank, val); bank 4 = the Digimon's own sounds
         public List<KeyGroup> Groups;
     }
 
@@ -86,7 +87,7 @@ namespace DW1Remake.Formats
                 int op = w & 0xF000;
                 if (op == 0x1000) { a.Ins.Add(new Ins { Kind = InsKind.Loop, Count = w & 0xFF }); p += 2; }
                 else if (op == 0x2000) { a.Ins.Add(new Ins { Kind = InsKind.End, Frame = w & 0xFFF, Jump = p + 4 <= end ? S16(m, p + 2) : 0 }); p += 4; }
-                else if (op == 0x4000) { a.Ins.Add(new Ins { Kind = InsKind.Snd, Frame = w & 0xFFF }); p += 4; }
+                else if (op == 0x4000) { a.Ins.Add(new Ins { Kind = InsKind.Snd, Frame = w & 0xFFF, Bank = m[p + 3], Val = m[p + 2] }); p += 4; }
                 else if (op == 0x3000) { a.Ins.Add(new Ins { Kind = InsKind.Tex, Frame = w & 0xFFF }); p += 8; }
                 else if (op == 0x0000)
                 {
@@ -128,6 +129,7 @@ namespace DW1Remake.Formats
         bool _running = true;
 
         public int[][] Rot, Loc;
+        public System.Action<int, int> OnSound;
 
         public AnimSim(Anim a, int bones)
         {
@@ -219,7 +221,7 @@ namespace DW1Remake.Formats
                 var x = ins[_ptr];
                 switch (x.Kind)
                 {
-                    case InsKind.Snd:
+                    case InsKind.Snd: if (OnSound != null) OnSound(x.Bank, x.Val); _ptr++; break;
                     case InsKind.Tex: _ptr++; break;
                     case InsKind.End:
                         if (_loopCount != 0xFF) _loopCount = (_loopCount - 1) & 0xFF;
