@@ -221,6 +221,7 @@ namespace DW1Remake.Game
                 };
             }
             _state.OnSpawnItem = SpawnItem;
+            _state.OnDamage = dmg => { if (_battle != null && _partner != null) _battle.AddMapText(_cam, _partner.position + Vector3.up * 0.9f, dmg); };
             _state.OnSpawnChest = (item, x, y, z, rot, trigger) => SpawnChest(item, x, z, rot, trigger);
             _state.OnBlockTiles = (x, y, w, h) => _blocks.Add(new RectInt(x, y, w, h));
             _menus.OnCommand = CareCommand;
@@ -250,7 +251,6 @@ namespace DW1Remake.Game
             var itemList = ItemCatalog.Load(_disc);
             _state.ItemNameOf = id => id >= 0 && id < itemList.Count ? itemList[id].Name : "";
             _state.TechNameOf = n => { DigimonStatsCatalog.Get(_disc, PartnerType); return DigimonStatsCatalog.NameOf(n); };     // MOVE_NAMES (exe 0x80126054)
-            _state.TimeValue = a => a == 0x69 ? 1 : a == 0x6A ? _dayCount + 1 : a == 0x6B ? (int)_clock : (int)((_clock % 1f) * 60f);
             // what the script commands read: YEAR and DAY (30 days a year) from the days played, the map, the partner, DIGIMON_DATA's type byte
             _state.MapIdNow = () => _mapId;
             _state.PartnerTypeNow = () => PartnerType;
@@ -366,6 +366,7 @@ namespace DW1Remake.Game
             public bool HasTurn; public Quaternion TurnTo;
             public bool Looking; public Vector3 LookPos; public float LookAcc; public int LookVy; public bool LookVyKnown;    // tickLookAtEntity: ROTATION_DATA, 0x200 a game frame
             public bool Gliding; public Vector3 GlideStep; public float GlideAcc;    // tickEntityMoveTo: a fixed step each game frame, height kept
+            public int GlideAxis = -1; public bool GlideCam, WalkCam;   // WalkCam: 0x52 / 0x53, tickEntityWalkTo with the camera (moveCameraByDiff)                         // tickEntityMoveToAxis: only that axis (0 x, 1 y, 2 z); 0x73 moves the camera with it
         }
         readonly Dictionary<Transform, Mover> _movers = new Dictionary<Transform, Mover>();
         readonly HashSet<DigimonAnimator> _animated = new HashSet<DigimonAnimator>();   // Digimon the script put into a special animation
@@ -396,6 +397,23 @@ namespace DW1Remake.Game
             dir.y = 0;
             if (dir.sqrMagnitude < 1e-4f) return Quaternion.identity;
             return Quaternion.LookRotation(-dir.normalized) * Quaternion.Euler(0, FacingOffset, 0);
+        }
+
+        int _waitFor = 0xFF;
+
+        // WAIT_FOR_ENTITY's test: 0xFF every movement slot empty (and the sync bit); 0xC9 / 0xD5 the sync bit only; 0xD6 training loaded (ours at once);
+        // 0xC8 slot 10, the camera; 0xCA-0xD4 slots 11-21, doors and moving map objects (ours: all of them together); anyone else that Digimon's
+        // slot; an id that is not on the map is 0xFF (scriptIdToEntityId), so it waits for everything
+        bool BusyFor(int who)
+        {
+            if (who == 0xFF) return ActorsBusy();
+            if (who == 0xC9 || who == 0xD5) return !_syncBit;
+            if (who == 0xD6) return false;
+            if (who == 0xC8) return _camOn && !_pBusy && (_camPos - _camGoal).sqrMagnitude > 0.0004f;
+            if (who >= 0xCA && who <= 0xD4) return ObjectsBusy();
+            Transform t; DigimonAnimator an;
+            if (!ActorOf(who, out t, out an)) return ActorsBusy();
+            return _movers.ContainsKey(t);
         }
 
         bool ActorsBusy()
@@ -443,18 +461,22 @@ namespace DW1Remake.Game
                     else if (a.Frames == 0x0B) { _line = null; _choiceOpts = null; StartCoroutine(ItemKeeper()); return true; }        // tickItemKeeper
                     else if (a.Frames == 0x03 || a.Frames == 0x04 || a.Frames == 0x05 || a.Frames == 0x11) { }                    // the game does nothing for these
                     else if (EventBuiltin(a.Frames, out evWait)) return evWait;                                                      // the story events (PlayableRoomEvents)
-                    else if (a.Frames == 8 && _menus != null)   // the shop screen; the script switched on flag 0x180 + item for each item it sells
+                    else if (a.Frames == 8 && _state.GetFlag(3)) Debug.Log("[script] built-in 0x64 08 with flag 3 = the recycle shop (openRecycleShop): not ported");
+                    else if (a.Frames == 0x0F) { var ib = ItemBox(); if (ib != null) ib.OpenBits(DialogueOrigin(0xFD), ShopBitsText(ShopSection(_state.Vars[0xFE]))); }   // createShopBitsBox(1)
+                    else if (a.Frames == 8)     // openShop: the script switched on flag 0x180 + item for each item it sells; variable 254 = the shopkeeper
                     {
-                        _menus.OpenShop(i => _state.GetFlag(0x180 + i));
-                        _shopWait = true;
+                        _line = null; _choiceOpts = null;
+                        StartCoroutine(Shop(i => _state.GetFlag(0x180 + i), _state.Vars[0xFE]));
                         return true;
                     }
                     else Debug.Log("[script] built-in routine 0x64 " + a.Frames.ToString("X2") + " not ported");
                     break;
-                case 0x66:   // the fight: enemy = actor in script variable 251 (unset = the Digimon being talked to); Frames = variable 250 (1 = no running away)
+                case 0x66:   // the fight: Frames = variable 250 (IS_PREDEFINED_BATTLE); a predefined fight's enemies are variables 251-253, any other is the Digimon talked to
                 {
+                    // SCRIPT_OP_START_BATTLE / handleBattleStart read variables 251-253 only when variable 250 is set: they keep whatever an earlier
+                    // scripted fight left in them (the scripts set 250 back to 0 but not those), so a wild fight must not look at them
                     Npc foe = null;
-                    if (a.Actor != 0 && a.Actor != 0xFF) foreach (var n in _npcs) if (n.Data.Script == a.Actor && n.T != null) { foe = n; break; }
+                    if (a.Frames != 0 && a.Actor != 0 && a.Actor != 0xFF) foreach (var n in _npcs) if (n.Data.Script == a.Actor && n.T != null) { foe = n; break; }
                     if (foe == null) foe = _talkingTo;
                     if (foe != null && foe.T != null && _battle != null && !_battle.Active)
                     {
@@ -472,7 +494,18 @@ namespace DW1Remake.Game
                                 if (n == foe || n.T == null || !n.T.gameObject.activeInHierarchy) continue;
                                 bool named = n.Data.Script == _state.Vars[0xFB] || n.Data.Script == _state.Vars[0xFC] || n.Data.Script == _state.Vars[0xFD];
                                 if (named) continue;
-                                if (Outside(n.T.position, 160f, 120f)) n.T.gameObject.SetActive(false); else RunAway(n);
+                                if (!OnScreen(n)) { n.T.gameObject.SetActive(false); _offAtFight.Add(n.T); } else RunAway(n);
+                            }
+                        // SCRIPT_OP_START_BATTLE: with variable 250 set, each of 251-253 that is not 0xFF becomes its entity number (scriptIdToEntityId:
+                        // 0xFD the boy 0, 0xFC the partner 1, a map Digimon 2 + its slot, else 0xFF) and stays so after the fight
+                        if (a.Frames != 0)
+                            for (int v = 0xFB; v < 0xFE; v++)
+                            {
+                                int id = _state.Vars[v];
+                                if (id == 0xFF) continue;
+                                int e = id == 0xFD ? 0 : id == 0xFC ? 1 : 0xFF;
+                                if (e == 0xFF) foreach (var n in _npcs) if (n.T != null && n.Data.Script == id) { e = 2 + n.Record; break; }
+                                _state.Vars[v] = (byte)e;
                             }
                         return true;
                     }
@@ -499,7 +532,12 @@ namespace DW1Remake.Game
                     foreach (var n in _npcs) if (n.Data.Script == a.Actor && n.T != null) { n.T.gameObject.SetActive(false); break; }
                     break;
                 case 0x67: _wait = a.Frames / 20f; return _wait > 0f;
-                case 0x4A: _waitAll = ActorsBusy(); return _waitAll;
+                case 0x4A: _waitFor = a.Actor; _waitAll = BusyFor(_waitFor); return _waitAll;
+                case 0x27:
+                    // FADEOUT_HUD (closeBox): box 0 is the dialogue box, which goes at once (removeStaticUIBox); the next text grows a new one
+                    if (a.Actor == 0) { _line = null; _choiceOpts = null; if (_dlg != null && _dlg.Showing) _dlg.Shut(); _dlgKey = null; }
+                    else if (a.Actor == 2 && _itemBox != null) _itemBox.Close(_itemBox.Bits);
+                    _wait = 1f / 20f; return true;
                 case 0x4C:
                     if (ActorOf(a.Actor, out t, out an) && ActorOf(a.Target, out t2, out an2))
                     {
@@ -511,22 +549,24 @@ namespace DW1Remake.Game
                 case 0x4D:
                     if (ActorOf(a.Actor, out t, out an))
                     {
-                        float ang = a.Angle * 2f * Mathf.PI / 4096f;
-                        var m = MoverFor(t, an); m.HasTurn = true; m.TurnTo = FaceRot(new Vector3(-Mathf.Sin(ang), 0, -Mathf.Cos(ang)));
+                        // ENTITY_SET_ROTATION: its movement slot becomes tickEntitySetRotation, which sets rotation.vy at once and is done
+                        _movers.Remove(t);
+                        t.rotation = Quaternion.Euler(0, a.Angle * 360f / 4096f, 0) * Quaternion.Euler(0, FacingOffset, 0);
                     }
                     break;
                 case 0x4E:
                     if (ActorOf(a.Actor, out t, out an))
                     {
                         var m = MoverFor(t, an); m.Goal = new Vector3(a.X * Unit, 0, a.Z * Unit); m.Walking = true; m.Still = 0f;
-                        if (an != null) an.SetSlot(WalkSlot);
+                        if (an != null) an.SetSlot(ScriptWalkSlot(a.Actor, a.Anim));
                     }
                     break;
                 case 0x50:
                     if (ActorOf(a.Actor, out t, out an))
                     {
-                        if (!_camOn) { _camOn = true; _camPos = _player.position; }
-                        _camGoal = t.position; _camSpeed = (_camGoal - _camPos).magnitude / Mathf.Max(0.1f, a.Frames / 20f);
+                        // MOVE_CAMERA_TO_ENTITY (tickCameraMoveToEntity -> tickCameraMovement): where it stands when the move starts, held inside the map
+                        FreezeCamera();
+                        _camGoal = ClampCam(t.position); _camSpeed = (_camGoal - _camPos).magnitude / Mathf.Max(0.05f, a.Frames / 20f);
                     }
                     break;
                 case 0x51: case 0x53: case 0x52:
@@ -535,23 +575,31 @@ namespace DW1Remake.Game
                         Vector3 goal = new Vector3(a.X * Unit, 0, a.Z * Unit);
                         if (a.Cmd != 0x52) { if (!ActorOf(a.Target, out t2, out an2)) break; goal = t2.position; }
                         var m = MoverFor(t, an); m.Goal = goal; m.Walking = true; m.Still = 0f;
-                        if (an != null) an.SetSlot(WalkSlot);
-                        if (a.Cmd != 0x51)
-                        {
-                            if (!_camOn) { _camOn = true; _camPos = _player.position; }
-                            _camGoal = goal; _camSpeed = ActorSpeed;
-                        }
+                        if (an != null) an.SetSlot(ScriptWalkSlot(a.Actor, a.Anim));
+                        // 0x52 / 0x53: moveCameraByDiff every frame, the camera moves as far as the walker does
+                        m.WalkCam = a.Cmd != 0x51;
+                        if (m.WalkCam) FreezeCamera();
                     }
                     break;
                 case 0x6D: case 0x6F:
                     if (ActorOf(a.Actor, out t, out an) && ActorOf(a.Target, out t2, out an2)) { var m = MoverFor(t, an); m.Goal = t2.position; m.Walking = true; m.Still = 0f; }
                     break;
-                case 0x72:
+                case 0x72: case 0x73:
                     if (ActorOf(a.Actor, out t, out an))
                     {
+                        // ENTITY_MOVE_TO_AXIS (_WITH_CAMERA), tickEntityMoveToAxis: (value - position on that axis) / speed in whole game units each frame,
+                        // the first frame only works it out; done (and put on the value) once it is past it. Not a walk: the Digimon keeps its animation.
                         var m = MoverFor(t, an);
-                        m.Goal = a.Frames == 0 ? new Vector3(a.X * Unit, 0, t.position.z) : new Vector3(t.position.x, 0, a.X * Unit);
-                        m.Walking = true; m.Still = 0f;
+                        Vector3 pos = t.position;
+                        int axis = a.Target, cur = axis == 0 ? Mathf.RoundToInt(pos.x / Unit) : axis == 1 ? Mathf.RoundToInt(-pos.y / Unit) : Mathf.RoundToInt(pos.z / Unit);
+                        int step = (int)(a.X - cur) / Mathf.Max(1, a.Frames);
+                        Vector3 goal = pos, st = Vector3.zero;
+                        if (axis == 0) { goal.x = a.X * Unit; st.x = step * Unit; }
+                        else if (axis == 1) { goal.y = -a.X * Unit; st.y = -step * Unit; }
+                        else { goal.z = a.X * Unit; st.z = step * Unit; }
+                        if (step == 0) { t.position = goal; break; }      // ours: a step of 0 would never get there
+                        m.Goal = goal; m.GlideStep = st; m.Walking = false; m.Gliding = true; m.GlideAcc = -1f / 20f; m.GlideAxis = axis;
+                        m.GlideCam = a.Cmd == 0x73;
                     }
                     break;
                 case 0x6C:
@@ -566,14 +614,16 @@ namespace DW1Remake.Game
                         // tickEntityMoveTo: (target - position) / speed in whole game units, C division (towards zero)
                         int gx = Mathf.RoundToInt(t.position.x / Unit), gz = Mathf.RoundToInt(t.position.z / Unit), gs = Mathf.Max(1, a.Frames);
                         m.GlideStep = new Vector3((a.X - gx) / gs, 0f, (a.Z + Mathf.RoundToInt(zFix / Unit) - gz) / gs) * Unit;
-                        m.Gliding = true; m.GlideAcc = -1f / 20f;       // the first frame only works out the step
+                        m.Gliding = true; m.GlideAcc = -1f / 20f; m.GlideAxis = -1; m.GlideCam = false;       // the first frame only works out the step
                     }
                     break;
                 case 0x4F:
                 {
-                    if (!_camOn) { _camOn = true; _camPos = _player.position; }
-                    _camGoal = new Vector3(a.X * Unit, _player.position.y, a.Z * Unit);
-                    float secs = Mathf.Max(0.1f, a.Frames / 20f);
+                    // MOVE_CAMERA_TO (tickCameraMoveTo -> tickCameraMovement): the point at the boy's height to the middle of the picture in 'speed'
+                    // frames, a straight move; the goal is held inside the map (cameraIsAtEdge), so it ends at an edge
+                    FreezeCamera();
+                    _camGoal = ClampCam(new Vector3(a.X * Unit, _player.position.y, a.Z * Unit));
+                    float secs = Mathf.Max(0.05f, a.Frames / 20f);
                     _camSpeed = (_camGoal - _camPos).magnitude / secs;
                     break;
                 }
@@ -620,6 +670,8 @@ namespace DW1Remake.Game
                 }
             }
             if (_camOn) _camPos = Vector3.MoveTowards(_camPos, _camGoal, _camSpeed * Time.deltaTime);
+            // cameraIsAtEdge: the camera never leaves the map, whatever moves it
+            if (_camOn && _map != null) { _camPos = ClampCam(_camPos); _camGoal = ClampCam(_camGoal); }
             if (_movers.Count == 0) return;
             var list = new List<Mover>(_movers.Values);
             foreach (var m in list)
@@ -632,6 +684,20 @@ namespace DW1Remake.Game
                     {
                         m.GlideAcc -= 1f / 20f;
                         Vector3 p = m.T.position + m.GlideStep;
+                        if (m.GlideAxis >= 0)
+                        {
+                            // tickEntityMoveToAxis
+                            float v = m.GlideAxis == 0 ? p.x : m.GlideAxis == 1 ? -p.y : p.z, goal = m.GlideAxis == 0 ? m.Goal.x : m.GlideAxis == 1 ? -m.Goal.y : m.Goal.z;
+                            float sv = m.GlideAxis == 0 ? m.GlideStep.x : m.GlideAxis == 1 ? -m.GlideStep.y : m.GlideStep.z;
+                            bool done = sv < 0 ? v <= goal : v >= goal;
+                            if (done) { if (m.GlideAxis == 0) p.x = m.Goal.x; else if (m.GlideAxis == 1) p.y = m.Goal.y; else p.z = m.Goal.z; }
+                            Vector3 moved = p - m.T.position;
+                            m.T.position = p;
+                            // moveCameraByDiff: the camera moves as far as the Digimon did
+                            if (m.GlideCam) { FreezeCamera(); _camPos += moved; _camGoal = _camPos; }
+                            if (done) m.Gliding = false;
+                            continue;
+                        }
                         bool doneX = m.GlideStep.x < 0 ? p.x <= m.Goal.x : p.x >= m.Goal.x;
                         bool doneZ = m.GlideStep.z < 0 ? p.z <= m.Goal.z : p.z >= m.Goal.z;
                         // the snap onto the goal sets only the position; while the boy's script animation still plays, its next tick
@@ -654,7 +720,9 @@ namespace DW1Remake.Game
                     else
                     {
                         m.T.rotation = FaceRot(to);
+                        Vector3 was = m.T.position;
                         m.T.position += to.normalized * Mathf.Min(step, to.magnitude);     // never past the goal, so a long stride cannot circle it and hang the script
+                        if (m.WalkCam) { FreezeCamera(); _camPos += m.T.position - was; _camGoal = _camPos; }
                     }
                 }
                 else if (m.Looking)
@@ -705,6 +773,9 @@ namespace DW1Remake.Game
             return done;
         }
 
+        // scriptSetEntityWalking: the boy's walk / run is animation 2 + n, anyone else's (n + 1) x 2 (n = 0 walk, 1 run)
+        static int ScriptWalkSlot(int actor, int anim) { return actor == 0xFD ? anim + 2 : (anim + 1) << 1; }
+
         // a script ended (or changed map): stop scripted movement and give the camera back to the player
         void EndCutscene()
         {
@@ -719,6 +790,8 @@ namespace DW1Remake.Game
                 if (!npc) an.SetSlot(IdleSlot);
             }
             _animated.Clear();
+            // setCameraFollowPlayer only follows his steps from here (tickCameraFollowPlayer): the camera stays where the script left it
+            if (_camOn && _map != null && _player != null) _camOffsetPx = MapPixel(ClampCam(_camPos) + Vector3.up) - MapPixel(_player.position + Vector3.up);
             _movers.Clear(); _camOn = false; _wait = 0f; _waitAll = false;
         }
 
@@ -801,6 +874,18 @@ namespace DW1Remake.Game
         }
 
         // starts a map script section (NPC talk, door trigger). False if it produced nothing.
+        // an auto tile's section, run as callScriptSection does from checkMapInteraction: the boy only stops if it shows something
+        void AutoTile(int section)
+        {
+            var log = new List<string>();
+            _runner = new ScriptRunner(_scripts, _state, _scripts.ScriptIdForMap(_mapId), section, log);
+            _talkingTo = null; _scriptAny = false; _line = null; _choiceOpts = null;
+            AdvanceScript();
+            if (_runner != null && _anim != null) _anim.SetSlot(IdleSlot);
+            if (_runner != null) FreezeCamera();
+            foreach (var l in log) Debug.Log("[script section " + section + " in " + _mapNames[_mapId] + "] " + l);
+        }
+
         bool StartScript(int section, Npc who)
         {
             if (_scripts == null || !_scripts.Available || _mapId < 0) return false;
@@ -809,6 +894,7 @@ namespace DW1Remake.Game
             _talkingTo = who; _scriptAny = false; _line = null; _choiceOpts = null;
             if (_anim != null) _anim.SetSlot(IdleSlot);
             AdvanceScript();
+            if (_runner != null) FreezeCamera();
             foreach (var l in log) Debug.Log("[script section " + section + " in " + _mapNames[_mapId] + "] " + l);
             return _scriptAny || _runner != null;
         }
@@ -992,6 +1078,10 @@ namespace DW1Remake.Game
             foreach (var n in _npcs)
             {
                 if (n.T == null) continue;
+                // a script walk (0x4E, 0x51-0x53; tickEntityWalkTo) moves it by its walk / run animation's travel (TickActors); in the game a Digimon
+                // moves once a frame, by its own animation, so nothing else may take that travel or change its animation meanwhile
+                Mover sw;
+                if (_movers.TryGetValue(n.T, out sw) && sw.Walking) continue;
                 if (n.Scripted && n.Anim != null && n != _battleNpc)
                 {
                     // entityMoveForward (from entityCheckCollision in NPCEntityTickOverworld, every frame): the animation's forward travel moves the
@@ -1137,7 +1227,7 @@ namespace DW1Remake.Game
             }
             _tamerPrev = tile;
         }
-        bool _shopWait, _battleWait;
+        bool _battleWait;
 
         // walking into a wild Digimon (follow mode 12) starts a fight
         void TryStartBattle()
@@ -1233,6 +1323,8 @@ namespace DW1Remake.Game
 
 
         Vector3 _prePlayerPos;
+        readonly HashSet<Transform> _onScreenAtFight = new HashSet<Transform>();    // map Digimon on screen when the fight began
+        readonly HashSet<Transform> _offAtFight = new HashSet<Transform>();         // off screen then: handleBattleStart takes them off the map until it ends
 
         void StartBattle(Npc enemy, bool noFlee = false)
         {
@@ -1246,7 +1338,7 @@ namespace DW1Remake.Game
             if (_anim != null) _anim.SetSlot(IdleSlot);
             _prePlayerPos = _player.position;
             if (_menus != null) _menus.LastUsedItem = -1;
-            _battleFocus = (_camOn ? _camPos : _player.position) + Vector3.up * 1f;
+            _battleFocus = VisibleCamPos() + Vector3.up * 1f;
             BringPartnerNear();
             Vector3 right = _cam != null ? _cam.transform.right : Vector3.right;
             var boyInfo = DigimonStatsCatalog.Get(_disc, 0);
@@ -1255,6 +1347,9 @@ namespace DW1Remake.Game
             if (_audio != null) { _audio.BattleMusic(noFlee, enemy.Data.Type); _audio.BattleSounds(); }
             _battle.Start(_player, _anim, _partner, _partnerAnim, _menus != null ? _menus.PartnerName : _partnerName, DigimonStatsCatalog.Get(_disc, PartnerType),
                           enemy.T, enemy.Anim, enemy.Name, DigimonStatsCatalog.Get(_disc, enemy.Data.Type), enemy.Data, right, noFlee, _tamerWay, _tamerStart, boyInfo != null ? boyInfo.Radius * Unit : 0f);
+            // isOnScreen (NPCEntityTick, entityIsOffScreen 0x140 x 0xF0) as it was on the last map frame: the fight does not update it (NPCEntityTickBattle)
+            _onScreenAtFight.Clear(); _offAtFight.Clear();
+            foreach (var n in _npcs) if (n.T != null && n.T.gameObject.activeInHierarchy && OnScreen(n)) _onScreenAtFight.Add(n.T);
             GatherOthers(enemy, noFlee);
             _battle.FleeOut = FleeOutPoint();
             Debug.Log("[battle] " + _battle.Partner.Name + " vs " + enemy.Name + " (" + (_battle.Enemy.Info != null ? _battle.Enemy.Info.LevelName : "?") + ", HP " + _battle.Enemy.MaxHp + ", Off " + _battle.Enemy.Off + ")");
@@ -1278,7 +1373,9 @@ namespace DW1Remake.Game
             {
                 if (n == enemy || n.T == null || !n.T.gameObject.activeInHierarchy) continue;
                 if (scripted) continue;     // the 0x66 handler adds the script's enemies, and sends the rest away after it
-                if (Outside(n.T.position, 160f, 120f)) { n.T.gameObject.SetActive(false); continue; }
+                bool seen = OnScreen(n);
+                Debug.Log("[battle] other " + n.Name + " at PS1 " + Ps1Point(n.T.position) + (seen ? " on screen" : " off screen: leaves the map"));
+                if (!seen) { n.T.gameObject.SetActive(false); _offAtFight.Add(n.T); continue; }
                 bool join = false;
                 if (count < 3)
                 {
@@ -1296,6 +1393,7 @@ namespace DW1Remake.Game
                         else join = UnityEngine.Random.Range(0, 100) < 0x46;
                     }
                 }
+                Debug.Log("[battle] other " + n.Name + (join ? " joins" : " runs"));
                 if (join) { count++; _battle.AddEnemy(n.T, n.Anim, n.Name, DigimonStatsCatalog.Get(_disc, n.Data.Type), n.Data); }
                 else RunAway(n);
             }
@@ -1305,7 +1403,7 @@ namespace DW1Remake.Game
         {
             var info = DigimonStatsCatalog.Get(_disc, n.Data.Type);
             Vector3 to = ToUnity(n.Data.Flee); to.y = n.T.position.y;
-            _battle.AddRunner(n.T, n.Anim, to, info != null ? info.Height : 0);
+            _battle.AddRunner(n.T, n.Anim, to, info != null ? info.Height : 0, info != null ? info.Radius : 0);
         }
 
         void EndBattle()
@@ -1316,13 +1414,14 @@ namespace DW1Remake.Game
             if (_battle.Fled && _state.Stats[16] < 9999) _state.Stats[16]++;   // battles fled
             if (_partnerAnim != null) _partnerAnim.SetSlot(IdleSlot);
             _battleCooldown = 5f;
-            _camBack = 0f;      // the camera glides back to the boy: createCameraMovement(tamer, 20), a straight move of 20 frames
+            _camBack = 0f; _camOffsetPx = Vector2.zero;      // the camera glides back to the boy: createCameraMovement(tamer, 20), a straight move of 20 frames
             _way.Clear();
             if (_anim != null) _anim.SetSlot(IdleSlot);
             if (!Free(_player.position)) _player.position = _prePlayerPos;
-            // the end of the fight (battle_main.c): a map Digimon with isOnScreen = 1 leaves the map (isOnMap = 0). The US game sets isOnScreen = 1 for
-            // every map Digimon when the map loads, so after a wild fight all of them are gone until the map is entered again; after a scripted
-            // fight only those that were not in it (the script still needs its opponents)
+            // the end of the fight (battle_main.c): a map Digimon with isOnScreen = 1 leaves the map (isOnMap = 0), any other is put back (isOnMap = 1).
+            // isOnScreen is not updated during the fight, so the ones that were on screen when it began (the enemies and those that ran) are gone,
+            // and the ones that were off screen (taken off the map by handleBattleStart) come back where they were. After a scripted fight its
+            // own fighters are left alone. Ours: a Digimon that was already off the map before the fight (a script's 0x48) stays off.
             var inFight = new HashSet<Transform>();
             if (_battleNpc != null && _battleNpc.T != null) inFight.Add(_battleNpc.T);
             foreach (var x in _battle.Extras) if (x.T != null) inFight.Add(x.T);
@@ -1331,8 +1430,10 @@ namespace DW1Remake.Game
                 var n = _npcs[i];
                 if (n.T == null) { _npcs.RemoveAt(i); continue; }
                 if (_battle.NoFlee && inFight.Contains(n.T)) continue;
-                Destroy(n.T.gameObject); _npcs.RemoveAt(i);
+                if (_onScreenAtFight.Contains(n.T)) { Destroy(n.T.gameObject); _npcs.RemoveAt(i); }
+                else if (_offAtFight.Contains(n.T)) n.T.gameObject.SetActive(true);
             }
+            _onScreenAtFight.Clear(); _offAtFight.Clear();
             if (!_battle.Won && !_battle.Fled) LoseFight();      // section 0x4DE, as at the end of the fight command
             else if (_battleNpc != null && _battleNpc.T != null && _battleNpc.Anim != null) _battleNpc.Anim.SetSlot(IdleSlot);
             _tamerTile = TileOf(_player.position);     // both stay where the fight left them; the partner walks back to the boy by itself
@@ -1475,6 +1576,15 @@ namespace DW1Remake.Game
         }
 
         // PS1 pixels from the middle of the screen
+        // isOnScreen of a map Digimon (NPCEntityTick: entityIsOffScreen(entity, 0x140, 0xF0) ^ 1); type 0x98 in animation 0x1C always counts as on screen
+        bool OnScreen(Npc n)
+        {
+            if (n.T == null) return false;
+            if (n.Data.Type == 0x98 && n.Anim != null && n.Anim.Slot == 0x1C) return true;
+            var info = DigimonStatsCatalog.Get(_disc, n.Data.Type);
+            return !Battle.OffScreen(_cam, n.T.position, info != null ? info.Radius : 0, info != null ? info.Height : 0);
+        }
+
         bool Outside(Vector3 world, float halfW, float halfH)
         {
             if (_cam == null) return false;
@@ -1651,7 +1761,7 @@ namespace DW1Remake.Game
             if (_audio != null && _mapId >= 0 && _mapId < _mapFlags.Count) _audio.SetMapSounds(_mapFlags[_mapId] & 0x1F);
             if (_gridOverlay != null) { Destroy(_gridOverlay); _gridOverlay = null; }
             if (_showGrid) BuildGridOverlay();
-            _calibrated = false;
+            _calibrated = false; _camOffsetPx = Vector2.zero;
             _armed = false;     // exits only work after you have stepped off the arrival spot
         }
 
@@ -2122,7 +2232,6 @@ namespace DW1Remake.Game
                         _battle.ReadBack();
                         _battle.Tick(0, false, false, false);
                     }
-                    if (!_menus.Active && _shopWait) { _shopWait = false; AdvanceScript(); }   // the shop closed: the script goes on
                     return;
                 }
                 if (_battle != null && _battle.Active)
@@ -2140,7 +2249,7 @@ namespace DW1Remake.Game
                 {
                     if (GameMenus.TriangleKey()) { _menus.OpenMain(); return; }
                     if (GameMenus.BagKey()) { _menus.OpenBag(); return; }
-                    if (GameMenus.ShopKey()) { _menus.OpenShop(); return; }
+                    if (GameMenus.ShopKey() && !_routineOn) { StartCoroutine(Shop(i => i < _itemCatalog.Count && _itemCatalog[i].Price > 0 && _itemCatalog[i].Category <= 2, 0xFF)); return; }   // dev: a test shop with every priced item, the 0x4CE texts
                     if (GameMenus.GiveKey()) _menus.DebugGive();
                 }
             }
@@ -2162,7 +2271,7 @@ namespace DW1Remake.Game
                 if (_wait > 0f || _waitAll)
                 {
                     _wait -= Time.deltaTime;
-                    if (_wait <= 0f && (!_waitAll || !ActorsBusy())) { _wait = 0f; _waitAll = false; AdvanceScript(); }
+                    if (_wait <= 0f && (!_waitAll || !BusyFor(_waitFor))) { _wait = 0f; _waitAll = false; _waitFor = 0xFF; AdvanceScript(); }
                     return;
                 }
                 if (_choiceOpts != null)
@@ -2227,10 +2336,17 @@ namespace DW1Remake.Game
             {
                 if (_armed) TryExit(cell - 110);
             }
-            else if (cell > 50 && cell < 110)
+            else if (cell > 50 && cell < 80)
             {
-                // checkMapInteraction: 51..79 run by themselves; 80..109 run on every Cross press while he stands there, so no stepping off is needed
-                if (cell < 80 ? _armed : ActionPressed()) TryDoor(cell);
+                // checkMapInteraction: 51..79 call their section every frame he stands there while no script runs (on arrival too); a door with no section
+                // (ours: the map change found in the script) still waits until he has stepped off
+                if (_scripts != null && _scripts.Available && ScriptRunner.HasSection(_scripts, _scripts.ScriptIdForMap(_mapId), cell)) AutoTile(cell);
+                else if (_armed) TryDoor(cell);
+            }
+            else if (cell >= 80 && cell < 110)
+            {
+                // 80..109 run on every Cross press while he stands there, so no stepping off is needed
+                if (ActionPressed()) TryDoor(cell);
             }
             else _armed = true;
         }
@@ -2483,6 +2599,51 @@ namespace DW1Remake.Game
 
         // ------------------------------------------------------------------ camera scrolling
 
+        // ---- the camera as the game keeps it: a place in pixels over the painted map (MAP_TILE_DATA.cameraX / Y), held inside the map
+        Vector2 _camOffsetPx;      // free walking: how far the camera's middle is from the boy (the game's camera only follows his steps)
+
+        // cameraIsAtEdge's limits as a clamp of a picture point
+        Vector2 ClampPx(Vector2 c)
+        {
+            float winH = WindowHeightPx, winW = winH * (_cam != null ? _cam.aspect : 4f / 3f);
+            float cx = _map.PixelWidth <= winW ? _map.PixelWidth * 0.5f : Mathf.Clamp(c.x, winW * 0.5f, _map.PixelWidth - winW * 0.5f);
+            float cy = _map.PixelHeight <= winH ? _map.PixelHeight * 0.5f : Mathf.Clamp(c.y, winH * 0.5f, _map.PixelHeight - winH * 0.5f);
+            return new Vector2(cx, cy);
+        }
+
+        // the world point at that picture point, at a height (MapPixel backwards)
+        Vector3 WorldAtPixel(Vector2 px, float unityY)
+        {
+            Vector3 dir = _fG + ((px.x - _map.PixelWidth * 0.5f) / _h) * _rG + ((px.y - _map.PixelHeight * 0.5f) / _h) * _dG;
+            float gy = -unityY / Unit;
+            if (Mathf.Abs(dir.y) < 1e-6f) return ToUnity(_vpG);
+            float k = (gy - _vpG.y) / dir.y;
+            return ToUnity(_vpG + dir * k);
+        }
+
+        // a camera place (the point 1 m under the middle of the picture) moved inside the map
+        Vector3 ClampCam(Vector3 pos)
+        {
+            if (_map == null || _h == 0f) return pos;
+            Vector3 f = pos + Vector3.up;
+            return WorldAtPixel(ClampPx(MapPixel(f)), f.y) - Vector3.up;
+        }
+
+        // the camera place shown now
+        Vector3 VisibleCamPos()
+        {
+            if (_map == null || _h == 0f) return _camOn ? _camPos : _player.position;
+            Vector3 f = (_camOn ? _camPos : _player.position) + Vector3.up;
+            return WorldAtPixel(ClampPx(MapPixel(f) + (_camOn ? Vector2.zero : _camOffsetPx)), f.y) - Vector3.up;
+        }
+
+        // a script runs (tamer state 10): tickCameraFollowPlayer stops, the camera stays put until a script command moves it
+        void FreezeCamera()
+        {
+            if (_camOn || _player == null) return;
+            _camPos = _camGoal = VisibleCamPos(); _camOn = true; _camOffsetPx = Vector2.zero;
+        }
+
         Vector2 MapPixel(Vector3 unityPos)
         {
             Vector3 q = ToGame(unityPos) - _vpG;
@@ -2491,13 +2652,13 @@ namespace DW1Remake.Game
                                _map.PixelHeight * 0.5f + _h * Vector3.Dot(q, _dG) / z);
         }
 
-        void ApplyScroll(Vector2 shiftSign, out Vector2 expectedViewport, Vector3 focusPoint)
+        void ApplyScroll(Vector2 shiftSign, out Vector2 expectedViewport, Vector3 focusPoint, Vector2 extraPx = default(Vector2))
         {
             float winH = WindowHeightPx, winW = winH * _cam.aspect;
             _cam.sensorSize = new Vector2(24f * _cam.aspect, 24f);
             _cam.focalLength = _h * 24f / winH;
 
-            Vector2 c = MapPixel(focusPoint);
+            Vector2 c = MapPixel(focusPoint) + extraPx;
             float cx = _map.PixelWidth <= winW ? _map.PixelWidth * 0.5f : Mathf.Clamp(c.x, winW * 0.5f, _map.PixelWidth - winW * 0.5f);
             float cy = _map.PixelHeight <= winH ? _map.PixelHeight * 0.5f : Mathf.Clamp(c.y, winH * 0.5f, _map.PixelHeight - winH * 0.5f);
             float dx = cx - _map.PixelWidth * 0.5f, dy = cy - _map.PixelHeight * 0.5f;
@@ -2514,11 +2675,12 @@ namespace DW1Remake.Game
             Rect pic = UiKit.Picture;      // the PS1 picture is 4:3: the camera draws only there, black bars beside it
             _cam.rect = new Rect(pic.x / Screen.width, pic.y / Screen.height, pic.width / Screen.width, pic.height / Screen.height);
             Vector3 focus = (_camOn ? _camPos : _player.position) + Vector3.up * 1f;
-            if (_battle != null && _battle.Active) focus = _battleFocus;       // unsetCameraFollowPlayer: the camera stays where it was for the whole fight
+            Vector2 extra = _camOn ? Vector2.zero : _camOffsetPx;
+            if (_battle != null && _battle.Active) { focus = _battleFocus; extra = Vector2.zero; }      // unsetCameraFollowPlayer: the camera stays where it was for the whole fight
             else if (_camBack < 1f)
             {
                 _camBack = Mathf.Min(1f, _camBack + Time.deltaTime);
-                focus = Vector3.Lerp(_battleFocus, focus, _camBack);
+                focus = Vector3.Lerp(_battleFocus, focus, _camBack); extra = Vector2.zero;
             }
 
             if (!_calibrated)
@@ -2530,7 +2692,7 @@ namespace DW1Remake.Game
                     {
                         Vector2 exp;
                         var s = new Vector2(sx, sy);
-                        ApplyScroll(s, out exp, focus);
+                        ApplyScroll(s, out exp, focus, extra);
                         Vector3 vp = _cam.WorldToViewportPoint(focus);
                         float err = (new Vector2(vp.x, vp.y) - exp).sqrMagnitude;
                         if (err < best) { best = err; _shiftSign = s; }
@@ -2538,7 +2700,16 @@ namespace DW1Remake.Game
                 _calibrated = true;
             }
             Vector2 e2;
-            ApplyScroll(_shiftSign, out e2, focus);
+            ApplyScroll(_shiftSign, out e2, focus, extra);
+            // updateDrawingOffsets: at a map edge the picture stops while the boy walks on, so an offset the camera was left with shrinks there (never grows)
+            if (!_camOn && extra != Vector2.zero && !(_battle != null && _battle.Active))
+            {
+                Vector2 me = MapPixel(_player.position + Vector3.up), vis = _scrollPx - me;
+                if (Mathf.Sign(vis.x) == Mathf.Sign(_camOffsetPx.x) && Mathf.Abs(vis.x) < Mathf.Abs(_camOffsetPx.x)) _camOffsetPx.x = vis.x;
+                if (Mathf.Sign(vis.y) == Mathf.Sign(_camOffsetPx.y) && Mathf.Abs(vis.y) < Mathf.Abs(_camOffsetPx.y)) _camOffsetPx.y = vis.y;
+                if (Mathf.Sign(vis.x) != Mathf.Sign(_camOffsetPx.x)) _camOffsetPx.x = 0f;
+                if (Mathf.Sign(vis.y) != Mathf.Sign(_camOffsetPx.y)) _camOffsetPx.y = 0f;
+            }
             EventsLate();
             DrawDropShadows();
             DrawGroundItems();
@@ -2559,9 +2730,9 @@ namespace DW1Remake.Game
                 if (_dlg == null) return false;
                 _dlg.Sound = Snd;
             }
-            bool has = _runner != null && (_line != null || _choiceOpts != null);
+            bool has = (_runner != null || _routineOn) && (_line != null || _choiceOpts != null);
             // startBattle: the fight takes the screen over; the box comes back only when the script talks again
-            if (_runner == null || (_battle != null && _battle.Active)) { if (_dlg.Showing) _dlg.Shut(); _dlgKey = null; return true; }
+            if ((_runner == null && !_routineOn) || (_battle != null && _battle.Active)) { if (_dlg.Showing) _dlg.Shut(); _dlgKey = null; return true; }
             if (!has) { if (_dlgKey != null) { _dlg.Clear(); _dlgKey = null; } return true; }
             if (!_dlg.Showing || _dlg.Owner != _speaker) { _dlg.Setup(_speaker, DialogueOrigin(_speaker)); _dlgKey = null; }
             string text = _line ?? "";

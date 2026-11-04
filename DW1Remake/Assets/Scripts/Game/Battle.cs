@@ -44,7 +44,7 @@ namespace DW1Remake.Game
 
         sealed class Swing { public Fighter From, To; public float T; public bool Done; public Tech Tech; public Vector3 Start; public float Boost = 1f, Release, Length; public bool Effect, Landed, Fell; public int DrawnAtStart; public Vector3? HitAt; }
         sealed class Shot { public Fighter From, To; public Tech Tech; public Vector3 Pos, Dir; public float Travelled; public GameObject Go; public float Boost = 1f; }
-        sealed class Pop { public string Text; public Vector3 Pos; public float T; public Color Col; public int Icon; }     // Icon: addEntityText's icon, 1 HP, 2 MP
+        sealed class Pop { public string Text; public Vector3 Pos; public float T; public Color Col; public int Icon; public bool Fixed; public Vector2 At; }     // Icon: addEntityText's icon, 1 HP, 2 MP
         sealed class Fx { public GameObject Go; public Material Mat; public Vector3 Vel; public float T, Life, S0, S1; public Color Col; }
         readonly List<Fx> _fx = new List<Fx>();
         // addThrownItem / tickThrownItem (main.c): the item sits in the boy's hand (bone 9) until his animation 6 reaches frame 7, then flies to the partner in 24 frames:
@@ -481,8 +481,7 @@ namespace DW1Remake.Game
                 Vector3 d = f.FleeTo - f.T.position; d.y = 0f;
                 if (d.sqrMagnitude > 0.0001f) f.T.rotation = _face(d);
                 if (f.A != null) f.T.position -= f.T.forward * f.A.TakeBodyMove();
-                bool off = true;
-                if (cam != null) { Vector3 v = cam.WorldToViewportPoint(f.T.position); off = !(v.z > 0 && v.x > 0f && v.x < 1f && v.y > 0f && v.y < 1f); }
+                bool off = cam == null || OffScreen(cam, f.T.position, f.Info != null ? f.Info.Radius : 0, f.Info != null ? f.Info.Height : 0);
                 if (!off) done = false;
             }
             return done;
@@ -1517,6 +1516,7 @@ namespace DW1Remake.Game
         public void OnGUI(Camera cam)
         {
             _view = cam;
+            if (_mapPops.Count > 0) DrawMapText();
             if (!Active || Partner == null) return;
             UiKit.Begin();
             if (_phase == Phase.Notice && cam != null) AngerIcon(cam);
@@ -1598,7 +1598,7 @@ namespace DW1Remake.Game
             if (!int.TryParse(p.Text, out n) || Art == null || _textRise == null) return;
             int frame = Mathf.Min((int)(p.T * 20f), 30), rise = 0;
             for (int i = 0; i <= Mathf.Min(frame, 20); i++) rise += _textRise[i];
-            Vector2 at = Ps1Of(cam, p.Pos);
+            Vector2 at = p.Fixed ? p.At : Ps1Of(cam, p.Pos);
             var o = GUI.color; GUI.color = p.Col;
             float x0 = Mathf.Round(at.x) - 14, y0 = Mathf.Round(at.y) - 8 + rise;
             Art.Digits(n, 4, x0, y0);
@@ -1613,6 +1613,23 @@ namespace DW1Remake.Game
 
         int[] _iconU;
 
+        // addEntityText outside a fight (GAME_STATE != 4): the number stays where the Digimon was on screen when it was added, and rises as in a fight
+        readonly List<Pop> _mapPops = new List<Pop>();
+        public void AddMapText(Camera cam, Vector3 world, int value)
+        {
+            if (cam == null) return;
+            _mapPops.Add(new Pop { Text = value.ToString(), Fixed = true, At = Ps1Of(cam, world), Col = Color.white });     // colour 0: the plain white of a fight's damage numbers
+        }
+
+        void DrawMapText()
+        {
+            if (Event.current.type == EventType.Repaint)
+                for (int i = _mapPops.Count - 1; i >= 0; i--) { _mapPops[i].T += Time.deltaTime; if (_mapPops[i].T >= 31f / 20f) _mapPops.RemoveAt(i); }
+            UiKit.Begin();
+            foreach (var p in _mapPops) DrawPop(null, p);
+            UiKit.End();
+        }
+
         static void Floating(Camera cam, Vector3 world, string text, int size, Color? col = null)
         {
             Vector3 sp = cam.WorldToScreenPoint(world);
@@ -1625,12 +1642,34 @@ namespace DW1Remake.Game
         // the bubble over the enemy when a fight starts (renderFleeBubble): it pops up from the head, then pulses; its size is 1.44 m at that distance
         // ---- the Digimon of the map that do not fight (handleBattleStart / BTL_tickBattleStart): a scared bubble, then animation 0x24 towards
         // the flee point of their map record until they are off the screen; then they are off the map (isOnMap = 0)
-        sealed class Runner { public Transform T; public DigimonAnimator A; public Vector3 To; public int Height; }
+        sealed class Runner { public Transform T; public DigimonAnimator A; public Vector3 To; public int Height, Radius; }
         readonly List<Runner> _runners = new List<Runner>();
-        public void AddRunner(Transform t, DigimonAnimator a, Vector3 fleeTo, int height)
+        public void AddRunner(Transform t, DigimonAnimator a, Vector3 fleeTo, int height, int radius = 0)
         {
             if (a != null && a.HasSlot(0x24)) a.SetSlot(0x24);
-            _runners.Add(new Runner { T = t, A = a, To = fleeTo, Height = height });
+            _runners.Add(new Runner { T = t, A = a, To = fleeTo, Height = height, Radius = radius });
+        }
+
+        // QUADRANTS (map.c): the four corners round an entity, x then z
+        static readonly int[,] Quadrants = { { -1, 1 }, { 1, 1 }, { -1, -1 }, { 1, -1 } };
+
+        /// <summary>entityIsOffScreen with isOffScreen (map.c): off screen only when none of the 8 corners of its box (DIGIMON_DATA radius round it,
+        /// at its feet and at its height) lands inside a w x h rectangle round the middle of the PS1 picture. Radius and height in game units.
+        /// The camera draws only the 4:3 picture (its rect), so its viewport is the PS1 screen.</summary>
+        public static bool OffScreen(Camera cam, Vector3 pos, int radius, int height, int w = 0x140, int h = 0xF0)
+        {
+            if (cam == null) return false;
+            for (int i = 0; i < 2; i++)
+                for (int j = 0; j < 4; j++)
+                {
+                    var corner = pos + new Vector3(radius * Quadrants[j, 0] * 0.01f, i * height * 0.01f, radius * Quadrants[j, 1] * 0.01f);
+                    Vector3 v = cam.WorldToViewportPoint(corner);
+                    if (v.z <= 0f) continue;
+                    float sx = (v.x - 0.5f) * 320f, sy = (0.5f - v.y) * 240f;
+                    if (sx < -w / 2 || sx > w / 2 || sy < -h / 2 || sy > h / 2) continue;
+                    return false;
+                }
+            return true;
         }
 
         bool TickRunners()
@@ -1643,11 +1682,7 @@ namespace DW1Remake.Game
                 if (d.sqrMagnitude > 0.0001f) r.T.rotation = _face(d);
                 float step = r.A != null ? r.A.TakeForward() : 0f;
                 r.T.position += d.normalized * Mathf.Min(step, d.magnitude);
-                if (cam != null)
-                {
-                    Vector3 v = cam.WorldToViewportPoint(r.T.position);
-                    if (v.z > 0 && v.x > 0f && v.x < 1f && v.y > 0f && v.y < 1f) allOff = false;     // entityIsOffScreen(0x140, 0xF0)
-                }
+                if (cam != null && !OffScreen(cam, r.T.position, r.Radius, r.Height)) allOff = false;     // entityIsOffScreen(0x140, 0xF0)
             }
             return allOff;
         }

@@ -16,7 +16,7 @@ namespace DW1Remake.Game
     /// </summary>
     public sealed class GameMenus
     {
-        enum Mode { None, Main, Bag, Buy, Sell, Digimon, Player, Msg, Name }
+        enum Mode { None, Main, Bag, Digimon, Player, Msg, Name }
 
         readonly ScriptState _s;
         readonly List<ItemEntry> _items;
@@ -63,9 +63,6 @@ namespace DW1Remake.Game
         // script built-in 0 (openDiscardItem, item menu type 5): the bag opens to choose one item; Cross gives its number, back gives -1
         Action<int> _pick;
         public void OpenPick(Action<int> pick) { _mode = Mode.Bag; _back = Mode.None; _sel = 0; _msg = ""; _pick = pick; }
-        Func<int, bool> _stock;   // which items this shop sells (null = the development test shop: everything priced)
-        /// <summary>stock(i) says whether item i is for sale. The real shops have no list: the shopkeeper's script switches on flag 0x180 + item number for each item it sells.</summary>
-        public void OpenShop(Func<int, bool> stock = null) { _stock = stock; _mode = Mode.Buy; _back = Mode.None; _sel = 0; _msg = ""; }
 
         /// <summary>Test helper (F6): a few Bits and some items so the menus have something in them.</summary>
         public void DebugGive()
@@ -81,8 +78,7 @@ namespace DW1Remake.Game
             var l = new List<int>();
             for (int i = 0; i < _items.Count; i++)
             {
-                if (_mode == Mode.Buy) { if (_stock != null ? _stock(i) : (_items[i].Price > 0 && _items[i].Category <= 2)) l.Add(i); }
-                else if (_s.Bag[i] > 0) l.Add(i);
+                if (_s.Bag[i] > 0) l.Add(i);
             }
             return l;
         }
@@ -126,9 +122,8 @@ namespace DW1Remake.Game
                 case Mode.Name:
                     return;   // typing is handled in OnGUI
             }
-            // bag and shop
+            // the bag
             if (cancel) { GoBack(); return; }
-            if ((_mode == Mode.Buy || _mode == Mode.Sell) && side != 0) { _mode = _mode == Mode.Buy ? Mode.Sell : Mode.Buy; _sel = 0; _msg = ""; }
             var list = Entries();
             if (list.Count == 0) { _sel = 0; return; }
             if (_mode == Mode.Bag)      // two columns
@@ -155,18 +150,6 @@ namespace DW1Remake.Game
                 }
                 else { _mode = Mode.None; OnFeed(id); }      // startFeedingItem: the boy hands it to the partner
                 return;
-            }
-            else if (_mode == Mode.Buy)
-            {
-                if (_s.Money < it.Price) _msg = "Not enough Bits.";
-                else if (!_s.AddItem(id, 1)) _msg = "Your bag is full.";
-                else { _s.Money -= it.Price; _msg = "Bought " + it.Name + "."; }
-            }
-            else
-            {
-                _s.RemoveItem(id, 1);
-                _s.Money += it.Price / 2;    // sell price = half (assumed, not checked against the game yet)
-                _msg = "Sold " + it.Name + ".";
             }
         }
 
@@ -424,7 +407,6 @@ namespace DW1Remake.Game
             {
                 case Mode.Main: if (Tri == null) DrawMain(); break;
                 case Mode.Bag: if (Inv == null || _pick != null) DrawBag(); break;
-                case Mode.Buy: case Mode.Sell: DrawList(); break;
                 case Mode.Digimon: DrawDigimon(); break;
                 case Mode.Player: DrawPlayer(); break;
                 case Mode.Msg: DrawMsg(); break;
@@ -525,34 +507,6 @@ namespace DW1Remake.Game
             ClearBox(help, clear);
             string h = _msg.Length > 0 ? _msg : list.Count > 0 ? _items[list[Mathf.Clamp(_sel, 0, list.Count - 1)]].Description : "";
             UiKit.Text(new Rect(help.x + 100, help.y + 10, help.width - 120, 95), h, 50, Color.white, TextAnchor.MiddleLeft, true);
-        }
-
-        void DrawList()
-        {
-            var list = Entries();
-            var box = new Rect(150, 120, 1115, 820);
-            UiKit.Box(box, UiKit.PanelFill);
-            string title = _mode == Mode.Buy ? "SHOP: BUY    (left/right = sell)" : "SHOP: SELL    (left/right = buy)";
-            UiKit.Text(new Rect(box.x + 30, box.y + 14, 800, 70), title, 52, UiKit.Yellow, TextAnchor.MiddleLeft);
-            UiKit.Text(new Rect(box.x + 700, box.y + 14, 380, 70), "Bits " + _s.Money, 46, Color.white, TextAnchor.MiddleRight);
-            UiKit.Text(new Rect(box.x + 30, box.y + 78, 800, 50), "Slots " + _s.BagKinds() + " / " + _s.ItemSlots, 34, UiKit.Cyan, TextAnchor.MiddleLeft);
-            int first = Mathf.Max(0, Mathf.Min(_sel - 4, list.Count - 10));
-            for (int i = first; i < list.Count && i < first + 10; i++)
-            {
-                var it = _items[list[i]];
-                float y = box.y + 135 + (i - first) * 52;
-                if (i == _sel) UiKit.Fill(new Rect(box.x + 20, y, box.width - 40, 50), new Color(0.25f, 0.45f, 0.6f));
-                if (Icons != null) GUI.DrawTextureWithTexCoords(new Rect(box.x + 32, y + 1, 48, 48), Icons.Sheet, Icons.Uv(it.Id));
-                UiKit.Text(new Rect(box.x + 92, y, 600, 50), it.Name, 38, Color.white, TextAnchor.MiddleLeft);
-                string right = _mode == Mode.Buy ? it.Price + " Bits" : "x " + _s.Bag[it.Id];
-                UiKit.Text(new Rect(box.x + 700, y, 360, 50), right, 38, Color.white, TextAnchor.MiddleRight);
-            }
-            if (list.Count == 0) UiKit.Text(new Rect(box.x + 40, box.y + 150, 800, 60), "(nothing here)", 40, UiKit.Grey, TextAnchor.MiddleLeft);
-            var help = new Rect(box.x + 20, box.y + 670, box.width - 40, 130);
-            UiKit.Fill(help, new Color(0.1f, 0.15f, 0.2f));
-            string h = list.Count > 0 ? _items[list[Mathf.Clamp(_sel, 0, list.Count - 1)]].Description : "";
-            UiKit.Text(new Rect(help.x + 14, help.y + 6, help.width - 28, 60), h, 36, Color.white, TextAnchor.UpperLeft, true);
-            if (_msg.Length > 0) UiKit.Text(new Rect(help.x + 14, help.y + 62, help.width - 28, 60), _msg, 34, UiKit.Yellow, TextAnchor.UpperLeft, true);
         }
 
         void DrawDigimon()
@@ -861,6 +815,18 @@ namespace DW1Remake.Game
             var k = Keyboard.current; return k != null && k.eKey.isPressed;
 #elif ENABLE_LEGACY_INPUT_MANAGER
             return Input.GetKey(KeyCode.E);
+#else
+            return false;
+#endif
+        }
+
+        /// <summary>Circle held (Z): ten at a time in the shop's amount box (ALT_BUTTON).</summary>
+        public static bool CircleHeld()
+        {
+#if ENABLE_INPUT_SYSTEM
+            var k = Keyboard.current; return k != null && k.zKey.isPressed;
+#elif ENABLE_LEGACY_INPUT_MANAGER
+            return Input.GetKey(KeyCode.Z);
 #else
             return false;
 #endif

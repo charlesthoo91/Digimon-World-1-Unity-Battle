@@ -78,7 +78,6 @@ namespace DW1Remake.Formats
         // names and numbers the game's text boxes insert (text codes 4-12)
         public string PlayerName = "A", PartnerName = "B";
         public System.Func<int, string> SpeciesNameOf, ItemNameOf, TechNameOf;   // Digimon / item / technique names, read from the disc by the room
-        public System.Func<int, int> TimeValue;                      // arg 0x69 month, 0x6A day, 0x6B hour, 0x6C minute
         public string CodeText(int code, int arg, int speaker = 255)
         {
             switch (code)
@@ -88,11 +87,16 @@ namespace DW1Remake.Formats
                 case 0x07: return SpeciesNameOf != null ? SpeciesNameOf(Vars[arg]) : "";
                 case 0x08: return TechNameOf != null ? TechNameOf(Vars[arg]) : "";   // MOVE_NAMES[variable] (Forget text of lostAllLives)
                 case 0x09: return ItemNameOf != null ? ItemNameOf(Vars[arg]) : "";
-                case 0x0A: return Money.ToString();
-                case 0x04: return TimeValue != null ? TimeValue(arg).ToString() : "0";
+                case 0x0A: return GameDigits ? Game.ItemMenuView.Digits(Money, 6) : Money.ToString();     // intToStringSJIS(MONEY, 6, 0)
+                case 0x10: return ShopVariable.ToString();                                                   // intToStringSJIS(SHOP_VARIABLE, 5, 1)
+                case 0x04: return Vars[arg].ToString();                                                       // intToStringSJIS(readPStat(arg), 3, 1): the variable's value (0x25 STORE_DATE fills the date ones)
+                case 0x0B: return GameDigits ? Game.ItemMenuView.Digits(Stats[14], 4) : Stats[14].ToString();   // intToStringSJIS(MERIT, 4, 0)
                 default: return "";   // codes not understood yet are left out
             }
         }
+        public Action<int> OnDamage;              // 0x69 dealt this much to the partner (the room shows the number)
+        public int ShopVariable;                  // SHOP_VARIABLE: the Bits a baby partner's discount saved (shop text code 0x10)
+        public bool GameDigits;                   // while set, code 0x0A gives the game's padded number (the shop's Bits box draws it with drawString's spaces)
         public int ItemSlots;                     // 0x23: how many items the bag holds (10 at the start, 20/30 with each Dimensional Key Chain)
         /// <summary>INVENTORY.types: the bag's slots in their order (0xFF = an empty slot); the counts stay in Bag. SyncSlots keeps the two in step.</summary>
         public byte[] Slots = NewSlots();
@@ -194,6 +198,7 @@ namespace DW1Remake.Formats
         public int Actor, Target, Frames;    // Actor: 0xFD = the player, 0xFC = the partner, otherwise the map Digimon whose script number matches
         public float X, Z, Angle;            // game units / game angle (4096 = full turn)
         public float Y;                      // game units (0x7D: the height of the point)
+        public int Anim;                     // 0x4E / 0x51-0x53: 0 walk, 1 run (scriptSetEntityWalking)
         public int Map = -1, Exit, Arrive = 255;   // map change (Arrive = script section to run on arrival, 255 = none)
     }
 
@@ -293,6 +298,12 @@ namespace DW1Remake.Formats
             }
             end = j;
             return sb.ToString().Trim('\n', ' ');
+        }
+
+        /// <summary>Whether script 'scriptId' has a section with that number.</summary>
+        public static bool HasSection(MapScripts scripts, int scriptId, int section)
+        {
+            return SectionStart(scripts.GetScriptBytes(scriptId), section) >= 0;
         }
 
         /// <summary>resolveMapHeadEntry: text idx of script 0's section (a table of u16 offsets, 4 bytes apart), as showMapHeadTextbox shows it.</summary>
@@ -443,7 +454,15 @@ namespace DW1Remake.Formats
                     case 0x75: if (st.OnSpawnChest != null) st.OnSpawnChest(d[p + 1], S16(d, p + 2), S16(d, p + 4), S16(d, p + 6), S16(d, p + 8), U16(d, p + 10)); p += 12; continue;
                     case 0x7C: if (st.OnBlockTiles != null) st.OnBlockTiles(S16(d, p + 2), S16(d, p + 4), d[p + 6], d[p + 7]); p += 8; continue;
                     case 0x65: st.Para.Condition &= ~d[p + 1]; p += 2; continue;      // remove conditions
-                    case 0x69: st.Stats[6] = (ushort)Math.Max(1, st.Stats[6] - st.Stats[4] * st.Vars[d[p + 1]] / 100); p += 2; continue;   // damage: percent of max HP
+                    case 0x69:
+                    {
+                        // SCRIPT_OP_DEAL_DAMAGE: max HP x variable / 100, never below 1 HP left; addEntityText puts the number over the partner
+                        int dmg = st.Stats[4] * st.Vars[d[p + 1]] / 100;
+                        if (st.Stats[6] - (short)dmg < 1) dmg = st.Stats[6] - 1;
+                        st.Stats[6] = (ushort)(st.Stats[6] - dmg);
+                        if (st.OnDamage != null) st.OnDamage(dmg);
+                        p += 2; continue;
+                    }
                     case 0x7A: st.Vars[d[p + 3]] = st.Vars[d[p + 2]]; p += 4; continue;   // copy a variable
                     case 0x5A: if (st.OnSound != null) st.OnSound(d[p + 2], d[p + 3]); p += 4; continue;   // play a sound: bank, sound
                     case 0x5D: if (st.OnBgm != null) st.OnBgm(d[p + 1]); p += 2; continue;                 // music
@@ -455,7 +474,7 @@ namespace DW1Remake.Formats
                     case 0x24: st.Vars[d[p + 2]] = (byte)Rng.Next(d[p + 3] + 1); p += 4; continue;   // random number 0..n into a variable
                     case 0x28: st.SetFlag(0, !st.AddItem(d[p + 2], d[p + 3])); p += 4; continue;     // give item; flag 0 = did not fit
                     case 0x29: st.RemoveItem(d[p + 2], d[p + 3]); p += 4; continue;                  // take item
-                    case 0x2A: st.Money += Long(p + 2); p += 6; continue;
+                    case 0x2A: st.Money = Math.Min(st.Money + Long(p + 2), 999999); p += 6; continue;      // ADD_MONEY, at most 999999
                     case 0x2B: st.Money = Math.Max(0, st.Money - Long(p + 2)); p += 6; continue;
                     case 0x2F: if (st.CardCount[d[p + 1]] < 9) st.CardCount[d[p + 1]]++; st.Cards[d[p + 1]] = true; p += 2; continue;   // a card for the Card List (up to 9)
                     case 0x30: if (st.CardCount[d[p + 1]] > 0) st.CardCount[d[p + 1]]--; st.Cards[d[p + 1]] = st.CardCount[d[p + 1]] > 0; p += 2; continue;   // take a card
@@ -525,18 +544,20 @@ namespace DW1Remake.Formats
                     // 251-253 (0xFB-0xFD) = the enemies' actor numbers (0xFF = none; unset = the Digimon being talked to)
                     case 0x66: { var a = new ScriptAction { Cmd = 0x66, Actor = st.Vars[0xFB], Target = st.Vars[0xFC], Frames = st.Vars[0xFA] }; p += 2; return a; }
                     case 0x48: { var a = new ScriptAction { Cmd = 0x48, Actor = d[p + 1] }; p += 2; return a; }     // an actor leaves the map (Agumon walks away and joins the city)
-                    case 0x4A: { p += 2; return new ScriptAction { Cmd = 0x4A }; }
+                    case 0x4A: { var a = new ScriptAction { Cmd = 0x4A, Actor = d[p + 1] }; p += 2; return a; }    // WAIT_FOR_ENTITY: who (0xFF all, 0xC8-0xD6 other slots)
+                    case 0x27: { var a = new ScriptAction { Cmd = 0x27, Actor = d[p + 1] }; p += 2; return a; }    // FADEOUT_HUD: closeBox(n), then the script waits a frame
+                    case 0x6B: { p++; while (p < d.Length && d[p] != 0xFF) p++; p++; continue; }                   // DATA: a table built-ins read; up to its 0xFF
                     case 0x4C: { var a = new ScriptAction { Cmd = op, Actor = d[p + 2], Target = d[p + 3] }; p += 4; return a; }
                     case 0x4D: { var a = new ScriptAction { Cmd = op, Actor = d[p + 1], Angle = U16(d, p + 2) }; p += 4; return a; }
-                    case 0x4E: { var a = new ScriptAction { Cmd = op, Actor = d[p + 1], X = S16(d, p + 2), Z = S16(d, p + 4) }; p += 8; return a; }
+                    case 0x4E: { var a = new ScriptAction { Cmd = op, Actor = d[p + 1], X = S16(d, p + 2), Z = S16(d, p + 4), Anim = d[p + 6] }; p += 8; return a; }
                     case 0x4F: { var a = new ScriptAction { Cmd = op, Frames = d[p + 1], X = S16(d, p + 2), Z = S16(d, p + 4) }; p += 6; return a; }
                     case 0x6C: { var a = new ScriptAction { Cmd = op, Actor = d[p + 1], X = S16(d, p + 2), Z = S16(d, p + 4), Frames = d[p + 6] }; p += 8; return a; }   // ENTITY_MOVE_TO: id, x, z, speed (frames)
                     case 0x50: { var a = new ScriptAction { Cmd = op, Actor = d[p + 2], Frames = d[p + 3] }; p += 4; return a; }              // camera to an actor
-                    case 0x51: case 0x53: { var a = new ScriptAction { Cmd = op, Actor = d[p + 1], Target = d[p + 3] }; p += 4; return a; }   // walk to an actor (0x53 with the camera)
-                    case 0x52: { var a = new ScriptAction { Cmd = op, Actor = d[p + 1], X = S16(d, p + 2), Z = S16(d, p + 4) }; p += 8; return a; }   // walk, the camera goes along
+                    case 0x51: case 0x53: { var a = new ScriptAction { Cmd = op, Actor = d[p + 1], Anim = d[p + 2], Target = d[p + 3] }; p += 4; return a; }   // walk to an actor (0x53 with the camera)
+                    case 0x52: { var a = new ScriptAction { Cmd = op, Actor = d[p + 1], X = S16(d, p + 2), Z = S16(d, p + 4), Anim = d[p + 6] }; p += 8; return a; }   // walk, the camera goes along
                     case 0x6D: case 0x6F: { var a = new ScriptAction { Cmd = op, Actor = d[p + 1], Target = d[p + 2], Frames = d[p + 3] }; p += 4; return a; }   // glide to an actor
                     case 0x6E: { var a = new ScriptAction { Cmd = 0x52, Actor = d[p + 1], X = S16(d, p + 2), Z = S16(d, p + 4) }; p += 8; return a; }
-                    case 0x72: case 0x73: { var a = new ScriptAction { Cmd = 0x72, Actor = d[p + 1], X = S16(d, p + 2), Frames = d[p + 4] }; p += 6; return a; }   // move along one axis
+                    case 0x72: case 0x73: { var a = new ScriptAction { Cmd = op, Actor = d[p + 1], X = S16(d, p + 2), Target = d[p + 4], Frames = d[p + 5] }; p += 6; return a; }   // ENTITY_MOVE_TO_AXIS (0x73 with the camera): id, s16 value, axis, speed
                     case 0x58: { var a = new ScriptAction { Map = st.Vars[d[p + 1]], Exit = st.Vars[d[p + 1] + 1], Arrive = 255 }; p = -1; return a; }             // warp, map and exit in variables
                     case 0x56: { var a = new ScriptAction { Cmd = op, Actor = d[p + 2], Target = d[p + 3] }; p += 4; return a; }
                     case 0x67: { var a = new ScriptAction { Cmd = op, Frames = U16(d, p + 2) }; p += 4; return a; }

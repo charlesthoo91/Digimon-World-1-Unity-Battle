@@ -34,7 +34,7 @@ namespace DW1Remake.Game
                 case 0x35: _line = null; _choiceOpts = null; Run(EndingScene(true), true); wait = true; return true;    // tamerSetState(0x10), then MAIN_STATE 3
                 case 0x36: _line = null; _choiceOpts = null; StartCoroutine(GameClearSave()); wait = true; return true;  // gameClearSave, then scriptTickMainMenu
                 case 0x19: _state.Var0Reset = _state.Vars[0xFE]; return true;                  // MAIN_D_80134FE7 = variable 254
-                case 0x10: return true;                                                        // triggerBoxCloseFlag(2): closes the shop Bits box (ours is drawn only inside the routines)
+                case 0x10: if (_itemBox != null) _itemBox.Close(_itemBox.Bits); _wait = 1f / 20f; wait = true; return true;   // triggerBoxCloseFlag(2): the shop's Bits box shuts; longjmp 2
                 case 0x13: _cartActive = (sbyte)_state.Vars[0xFE]; _wait = 1f / 20f; wait = true; return true;    // setDirtCartModel(variable 254), then longjmp 2
                 case 0x14: _pileSize--; PlacePile(); _wait = 1f / 20f; wait = true; return true;                   // decreaseDirtPileSize, then longjmp 2
                 case 0x1A: LoadDirtCart(); return true;

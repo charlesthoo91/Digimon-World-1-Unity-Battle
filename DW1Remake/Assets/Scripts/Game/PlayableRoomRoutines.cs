@@ -37,12 +37,8 @@ namespace DW1Remake.Game
         IEnumerator DiscardItem()
         {
             _routineOn = true;
-            if (_itemBox == null && _itemCatalog != null)
-            {
-                _itemBox = ItemMenuView.Load(_disc, Battle.StatFont, _menus != null ? _menus.Icons : null, _itemCatalog, HeadText(0x4D8, 0));
-                if (_itemBox != null) _itemBox.Sound = Snd;
-            }
-            var v = _itemBox;
+            var v = ItemBox();
+            if (v != null) v.Type = 5;
             if (v == null || !v.Fill(_state))
             {
                 _state.SetFlag(3, true); _state.Vars[0xFE] = 0xFF;
@@ -85,6 +81,173 @@ namespace DW1Remake.Game
             AdvanceScript();        // the script goes on while the box shrinks away
         }
 
+        ItemMenuView ItemBox()
+        {
+            if (_itemBox == null && _itemCatalog != null)
+            {
+                _itemBox = ItemMenuView.Load(_disc, Battle.StatFont, _menus != null ? _menus.Icons : null, _itemCatalog, HeadText(0x4D8, 0));
+                if (_itemBox != null) _itemBox.Sound = Snd;
+            }
+            return _itemBox;
+        }
+
+        // ------------------------------------------------------------------ 0x08 shop
+
+        // SHOPKEEP_DIGIMON_TYPES (11 bytes), BABY_IDS (8), the one map with a sound after each sale (MAIN_D_801345C0 map, 801345C2 bank and sound)
+        const uint ShopkeepTypes = 0x8012FE5C, BabyIds = 0x801345B4, ShopSoundMap = 0x801345C0;
+        byte[] _exeBytes;
+        byte[] ExeBytes { get { return _exeBytes ?? (_exeBytes = _disc.ReadFile("/SLUS_010.32")); } }
+        int ExeAt(uint a) { return (int)(a - System.BitConverter.ToUInt32(ExeBytes, 0x18) + 0x800); }
+
+        // getShopkeeperLine: variable 254 = 0xFF: section 0x4CE; else the shopkeeper's Digimon type in SHOPKEEP_DIGIMON_TYPES gives 0x4C4 + its place (0x4C4 if none)
+        int ShopSection(int npc)
+        {
+            if (npc == 0xFF) return 0x4CE;
+            foreach (var n in _npcs)
+                if (n.Data.Script == npc && n.T != null)
+                {
+                    for (int i = 0; i < 11; i++) if (ExeBytes[ExeAt(ShopkeepTypes) + i] == n.Data.Type) return 0x4C4 + i;
+                    break;
+                }
+            return 0x4C4;
+        }
+
+        // isPartnerBaby: the partner's type is one of BABY_IDS
+        bool PartnerIsBaby()
+        {
+            for (int i = 0; i < 8; i++) if (ExeBytes[ExeAt(BabyIds) + i] == PartnerType) return true;
+            return false;
+        }
+
+        // playShopSoundOnlyInSavannah
+        void ShopSaleSound()
+        {
+            int at = ExeAt(ShopSoundMap);
+            if (_mapId == System.BitConverter.ToUInt16(ExeBytes, at) && _audio != null) _audio.Play(ExeBytes[at + 2], ExeBytes[at + 3]);
+        }
+
+        // the shopkeeper's Bits line (text 6: "Bits" and MONEY in 6 places with the game's padding)
+        string ShopBitsText(int section)
+        {
+            _state.GameDigits = true;
+            string t = HeadText(section, 6);
+            _state.GameDigits = false;
+            return t;
+        }
+
+        // openShop (built-in 8, states 0-9) with tickItemMenu, tickItemMenuAmountBox and tickItemMenuDescriptionBox. Flag 0x180 + item = sold here
+        // (stock); variable 254 = the shopkeeper. Not ported: key repeat on up / down (setInputRepeatMask 0x5000).
+        IEnumerator Shop(System.Func<int, bool> stock, int npc)
+        {
+            _routineOn = true;
+            var v = ItemBox();
+            int sec = ShopSection(npc);
+            bool any = false, dealt = false;
+            for (int i = 0; i < 0x80; i++) if (stock(i)) { any = true; break; }
+            if (v == null || !any)
+            {
+                yield return HeadSay(sec, 1, npc);              // "I don't have anything to sell."
+                ShopEnd(); yield break;
+            }
+            yield return HeadSay(sec, 0, npc);                  // "What are you going to do?"
+            int choice = 0;
+            while (true)
+            {
+                // state 3: the Bits box, then the boy's choice Buy / Sell / See ya (showShopkeepSelection(2, 0xFD); the cursor stays where it was)
+                v.OpenBits(DialogueOrigin(0xFD), ShopBitsText(sec));
+                int pick = 0;
+                yield return HeadAsk(sec, 2, 3, p => pick = p, 0xFD, choice);
+                choice = pick;
+                if (pick == 2) break;
+                // states 4 / 5: the list grows out of the shopkeeper (buying) or the boy (selling); the shopkeeper's line stays while it is up
+                v.Type = pick;
+                if (pick == 0) v.FillBuy(_state, stock); else v.Fill(_state);
+                RectInt? from = DialogueOrigin(pick == 0 ? npc : 0xFD);
+                v.Open(v.List, v.ListRect, from ?? new RectInt(-5, -5, 10, 10), 0xF1);
+                _line = HeadText(sec, pick == 0 ? 8 : 9, true); _speaker = npc; _choiceOpts = null;
+                int next = 0;
+                while (next == 0)
+                {
+                    yield return null;
+                    if (v.Desc.State != 0)
+                    {
+                        // tickItemMenuDescriptionBox: Cross, Triangle or Start closes it
+                        if (v.Desc.State == 1 && (ShopCross() || GameMenus.TriangleOnly() || GameMenus.StartKey())) { v.Close(v.Desc); Snd(3); }
+                        continue;
+                    }
+                    if (v.Amount.State != 0) { if (v.Amount.State == 1) next = TickShopAmount(v, sec, npc); continue; }
+                    if (v.List.State != 1) continue;
+                    // tickItemMenu: Cross the amount box, Triangle back (state 8), up / down (R1: to the first / last row), Start the description
+                    if (GameMenus.StartKey()) { if (v.OpenDesc()) Snd(3); continue; }
+                    if (ShopCross()) { int r = v.Row; v.OpenAmount(_state.Money, r < v.Types.Count && v.Types[r] != 0xFF ? _state.Bag[v.Types[r]] : 0); continue; }
+                    if (GameMenus.TriangleOnly()) { next = 8; Snd(4); continue; }
+                    int step = MenuStep();
+                    if (step < 0) { if (GameMenus.WalkHeld()) v.ToTop(); else v.Up(); }
+                    else if (step > 0) { if (GameMenus.WalkHeld()) v.ToBottom(); else v.Down(); }
+                }
+                // state 7 (a sale: "Thanks!", or the baby discount line) / 8 ("Have anything else?"); then the choice again
+                v.Close(v.List);
+                _line = null;
+                if (next == 7) { dealt = true; yield return HeadSay(sec, v.Type == 0 && PartnerIsBaby() ? 0x0D : 0x0A, npc); }
+                else yield return HeadSay(sec, 0x0B, npc);
+            }
+            // state 6: the Bits box shuts; "Come again." after a sale, "That's too bad." without one
+            v.Close(v.Bits);
+            yield return HeadSay(sec, dealt ? 4 : 5, npc);
+            ShopEnd();
+        }
+
+        void ShopEnd()
+        {
+            _routineOn = false;
+            if (_runner != null) AdvanceScript();
+        }
+
+        // Cross alone (our ActionPressed also takes Enter = Start and Z = Circle, which the shop uses for other things)
+        static bool ShopCross() { return ActionPressed() && !GameMenus.StartKey() && !GameMenus.CircleKey(); }
+
+        // tickItemMenuAmountBox: up / down one (Circle held: ten, never past the most or below 1), Triangle back, Square the most, Cross buys or sells.
+        // Returns 7 after a sale, else 0.
+        int TickShopAmount(ItemMenuView v, int sec, int npc)
+        {
+            int step = MenuStep();
+            bool alt = GameMenus.CircleHeld();
+            if (v.ShopAmount != v.MaxAmount && step < 0)
+            {
+                if (alt) { v.ShopAmount += 10; if (v.ShopAmount > v.MaxAmount) v.ShopAmount -= 10; } else v.ShopAmount++;
+                Snd(2); return 0;
+            }
+            if (v.ShopAmount != 1 && step > 0)
+            {
+                if (alt) { int q = v.ShopAmount - 10; if (q <= 0) q += 10; v.ShopAmount = q; } else v.ShopAmount--;
+                Snd(2); return 0;
+            }
+            if (GameMenus.TriangleOnly()) { v.Close(v.Amount); Snd(4); return 0; }
+            if (GameMenus.SquareKey()) { v.ShopAmount = v.MaxAmount; Snd(3); return 0; }
+            if (!ShopCross()) return 0;
+            int owner;
+            if (v.Type == 1)
+            {
+                _state.Money = Mathf.Min(_state.Money + v.ShopAmount * v.ShopPrice, 999999);
+                _state.RemoveItem(v.ShopItem, v.ShopAmount);
+                owner = npc;
+            }
+            else
+            {
+                int unit = v.ShopPrice;
+                if (PartnerIsBaby()) { unit = unit * 90 / 100; _state.ShopVariable = (short)(v.ShopAmount * (v.ShopPrice - unit)); }
+                _state.Money -= v.ShopAmount * unit;
+                _state.AddItem(v.ShopItem, v.ShopAmount);
+                owner = 0xFD;
+            }
+            _state.SyncSlots();
+            // closeTextbox(3, origin): the box shrinks into whoever gets the item (buying: the boy) or the Bits (selling: the shopkeeper)
+            v.CloseAmountInto(DialogueOrigin(owner));
+            v.BitsText = ShopBitsText(sec);
+            ShopSaleSound();
+            return 7;
+        }
+
         // a world point in PS1 screen pixels from the middle of the picture
         Vector2 Ps1Point(Vector3 world)
         {
@@ -104,12 +267,13 @@ namespace DW1Remake.Game
         }
 
         // showMapheadSelection with SCRIPT_TEXTBOX_MODE 2: the text's last 'count' lines are the choices; the state goes to next + choice
-        IEnumerator HeadAsk(int section, int idx, int count, System.Action<int> answer)
+        IEnumerator HeadAsk(int section, int idx, int count, System.Action<int> answer, int speaker = -1, int start = 0)
         {
             var lines = new List<string>(HeadText(section, idx, true).Split('\n'));
             int q = Mathf.Max(0, lines.Count - count);
             _line = string.Join("\n", lines.GetRange(0, q).ToArray());
-            _choiceOpts = lines.GetRange(q, lines.Count - q); _choiceSel = 0; _speaker = _state.Vars[0xFE];
+            _choiceOpts = lines.GetRange(q, lines.Count - q); _speaker = speaker < 0 ? _state.Vars[0xFE] : speaker;
+            _choiceSel = Mathf.Clamp(start, 0, Mathf.Max(0, _choiceOpts.Count - 1));
             yield return null;
             while (true)
             {
