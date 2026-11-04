@@ -31,6 +31,26 @@ namespace DW1Remake.Game
 
         public static void End() { GUI.matrix = _old; }
 
+        /// <summary>The PS1 picture on the screen in pixels (GUI space, top left): 4:3, as big as fits, centred. The 3D view is drawn only here.</summary>
+        public static Rect Picture
+        {
+            get
+            {
+                float s = Mathf.Min(Screen.width / W, Screen.height / H);
+                return new Rect((Screen.width - W * s) / 2f, (Screen.height - H * s) / 2f, W * s, H * s);
+            }
+        }
+
+        /// <summary>Black over everything outside the 4:3 picture.</summary>
+        public static void Bars()
+        {
+            Rect p = Picture;
+            var o = GUI.color; GUI.color = Color.black;
+            if (p.x > 0.5f) { GUI.DrawTexture(new Rect(0, 0, p.x, Screen.height), Texture2D.whiteTexture); GUI.DrawTexture(new Rect(p.xMax, 0, Screen.width - p.xMax, Screen.height), Texture2D.whiteTexture); }
+            if (p.y > 0.5f) { GUI.DrawTexture(new Rect(0, 0, Screen.width, p.y), Texture2D.whiteTexture); GUI.DrawTexture(new Rect(0, p.yMax, Screen.width, Screen.height - p.yMax), Texture2D.whiteTexture); }
+            GUI.color = o;
+        }
+
         public static void Fill(Rect r, Color c)
         {
             var o = GUI.color; GUI.color = c;
@@ -41,10 +61,17 @@ namespace DW1Remake.Game
         /// <summary>A panel: black outline, cyan frame, dark fill.</summary>
         public static void Box(Rect r, Color fill, float frame = 5f)
         {
-            Fill(r, Color.black);
-            Fill(new Rect(r.x + 2, r.y + 2, r.width - 4, r.height - 4), Frame);
-            Fill(new Rect(r.x + 2 + frame, r.y + 2 + frame, r.width - 4 - 2 * frame, r.height - 4 - 2 * frame), fill);
+            // drawn as strips so a see-through fill shows the picture behind, not the frame colours
+            Fill(new Rect(r.x, r.y, r.width, 2), Color.black); Fill(new Rect(r.x, r.yMax - 2, r.width, 2), Color.black);
+            Fill(new Rect(r.x, r.y + 2, 2, r.height - 4), Color.black); Fill(new Rect(r.xMax - 2, r.y + 2, 2, r.height - 4), Color.black);
+            float e = 2f + frame;
+            Fill(new Rect(r.x + 2, r.y + 2, r.width - 4, frame), Frame); Fill(new Rect(r.x + 2, r.yMax - e, r.width - 4, frame), Frame);
+            Fill(new Rect(r.x + 2, r.y + e, frame, r.height - 2 * e), Frame); Fill(new Rect(r.xMax - e, r.y + e, frame, r.height - 2 * e), Frame);
+            Fill(new Rect(r.x + e, r.y + e, r.width - 2 * e, r.height - 2 * e), fill);
         }
+
+        /// <summary>The fill of every dialogue and message box: one colour, see-through.</summary>
+        public static readonly Color DialogFill = new Color(0.10f, 0.17f, 0.15f, 0.55f);
 
         public static void Text(Rect r, string s, int size, Color c, TextAnchor a = TextAnchor.UpperLeft, bool wrap = false)
         {
@@ -53,6 +80,13 @@ namespace DW1Remake.Game
             GUI.Label(new Rect(r.x + 2, r.y + 2, r.width, r.height), s, st);   // little shadow so text reads on any background
             st.normal.textColor = c;
             GUI.Label(r, s, st);
+        }
+
+        /// <summary>How tall Text() makes a wrapped string.</summary>
+        public static float Height(string s, int size, float width)
+        {
+            var st = new GUIStyle(GUI.skin.label) { fontSize = size, wordWrap = true, fontStyle = FontStyle.Bold };
+            return st.CalcHeight(new GUIContent(s), width);
         }
 
         public static void Tab(Rect r, string label, bool on)

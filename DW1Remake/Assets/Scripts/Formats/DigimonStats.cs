@@ -15,6 +15,7 @@ namespace DW1Remake.Formats
         public int Attribute;        // record byte +28: 1 Data, 2 Vaccine, 3 Virus (matches "is a Data Type Digimon" in the scripts)
         public string SignatureTech; // the Digimon's own finishing move (Agumon: Pepper Breath); null for babies
         public int Radius, Height;            // record +24, +26: its size in game units
+        public int BoneCount;                 // record +20 (DigimonPara.boneCount)
         public int DropItem, DropChance;      // record +33, +34: what it can leave after a fight, percent
         public int[] Specials = new int[3];   // record +30: its element types (same numbers as a technique's element, 255 = none): Agumon fire and battle
         public List<int> EvolvesFrom = new List<int>(), EvolvesTo = new List<int>();   // exe 0x8012B661, 11 bytes per Digimon: from[5], to[6], 255 = none
@@ -54,6 +55,7 @@ namespace DW1Remake.Formats
         public int PoopTimer, PoopSize, FavoriteFood;            // +12 (s16), +16, +17
         public int SleepCycle, FavoredRegion, TrainingType;      // +18, +19, +20
         public int DefaultWeight;                                // +21
+        public int ViewX, ViewY, ViewZ;                          // +22, +24, +26: where the model stands for the Status page camera (renderDigiviceEntity)
     }
 
     /// <summary>EVOLUTION_REQS row, exe 0x8012ABEC, 28 bytes each, by Digimon; -1 = not asked.</summary>
@@ -119,7 +121,8 @@ namespace DW1Remake.Formats
             {
                 EnergyCap = _exe[r + 8], EnergyThreshold = _exe[r + 9], EnergyUsage = _exe[r + 10],
                 PoopTimer = BitConverter.ToInt16(_exe, r + 12), PoopSize = _exe[r + 16], FavoriteFood = _exe[r + 17],
-                SleepCycle = _exe[r + 18], FavoredRegion = _exe[r + 19], TrainingType = _exe[r + 20], DefaultWeight = _exe[r + 21]
+                SleepCycle = _exe[r + 18], FavoredRegion = _exe[r + 19], TrainingType = _exe[r + 20], DefaultWeight = _exe[r + 21],
+                ViewX = BitConverter.ToInt16(_exe, r + 22), ViewY = BitConverter.ToInt16(_exe, r + 24), ViewZ = BitConverter.ToInt16(_exe, r + 26)
             };
             for (int i = 0; i < 8; i++) d.HungerTimes[i] = (sbyte)_exe[r + i];
             return d;
@@ -143,6 +146,9 @@ namespace DW1Remake.Formats
 
         /// <summary>The Digimon an evolution item makes (exe 0x80127C5C, item - 0x47).</summary>
         public static int EvoItemTarget(DiscImage disc, int item) { Init(disc); return _exe[(int)(0x80127c5c - _load + 0x800) + item - 0x47]; }
+
+        /// <summary>ITEM_TAKE_DISTANCE (exe 0x80122D24, 66 bytes, index type - 1): how far from the boy the partner stops to eat, in tenths.</summary>
+        public static int TakeDistanceOf(DiscImage disc, int type) { Init(disc); return (sbyte)_exe[(int)(0x80122d24 - _load + 0x800) + Mathf.Clamp(type - 1, 0, 65)]; }
 
         /// <summary>toilet n of a map (TOILET_DATA, exe 0x80122E10, 8 bytes each): the door spot, then the spot inside, in game units. n from 1.</summary>
         public static int[] ToiletOf(DiscImage disc, int n)
@@ -178,6 +184,7 @@ namespace DW1Remake.Formats
             var s = new DigimonStats { Type = type, Level = _exe[d + 29], Attribute = _exe[d + 28] };
             s.Radius = BitConverter.ToUInt16(_exe, d + 24);
             s.Height = BitConverter.ToUInt16(_exe, d + 26);
+            s.BoneCount = BitConverter.ToInt32(_exe, d + 20);
             s.DropItem = _exe[d + 33]; s.DropChance = _exe[d + 34];
             int ev = (int)(EvolutionTable - _load + 0x800) + type * 11;
             for (int i = 0; i < 5; i++) if (_exe[ev + i] != 0xFF) s.EvolvesFrom.Add(_exe[ev + i]);

@@ -1,240 +1,433 @@
 using System.Collections.Generic;
-using System.Text;
+using DW1Remake.Disc;
 using DW1Remake.Formats;
 using UnityEngine;
 
 namespace DW1Remake.Game
 {
     /// <summary>
-    /// The game's character setup at the start of a new game: Jijimon asks a few questions (Yes/No, day or night) and you
-    /// type your name and your Digimon's name on a letter grid. The game does this in program code, so the flow is rebuilt
-    /// here, but every line of text is read from the player's disc (script bank at the start of DG.SCN).
+    /// The new game's questions and the naming box (shop/script_menu.c): newGameStateMachine (Jijimon's questions, texts 0x10-0x20 of
+    /// script 0's section 0x4D6), initializeNamingBuffer, tickNamingBox, renderNamingBox, renderSelectionBox, renderNameDisplayBox, US layout.
+    /// Built-in 0x20 opens the naming box alone (flags 2: rename the boy, 3: rename the partner). The letter pages, labels, cursor
+    /// pieces and box positions come from the exe; the cursor is drawn from the clock sheet (VRAM 896,448, colour row 508).
     /// </summary>
     public sealed class CharacterSetup
     {
-        // text positions inside that script (US disc)
-        const int TIntro = 22242, TDigivice = 22342, OYesNo1 = 22416, TSee1 = 22442, TDayNight = 22482, ODayNight = 22618, TSee2 = 22650,
-                  TFriends = 22690, OYesNo2 = 22758, TAlright = 22784, TName = 22828, TNameOk = 22890, OYesNo3 = 22940,
-                  TDName = 22966, TDNameOk = 23048, TGood = 23098, TEnd = 23146;
+        const int Section = 0x4D6;
+        const uint CharPages = 0x80130774, CtrlBoxes = 0x8013078C, RolloverChars = 0x801307A0, RolloverCtrl = 0x80134608,
+                   TitleStr = 0x801345F8, ButtonsStr = 0x80134600, PromptTamer = 0x801345F4,
+                   U02 = 0x8013460C, U13 = 0x80134614, V01 = 0x8013461C, V23 = 0x80134624, CtrlX = 0x8013462C, Ys = 0x80134634,
+                   CtrlW = 0x8013463C, Hs = 0x80134644, CharX = 0x8013464C, CharW = 0x80134654;
+        const int NamingDelete = 0, NamingOk = 1, NamingLabels = 3, GridX = 0x4E;    // US
 
-        enum Mode { Say, Ask, Edit }
-
-        readonly byte[] _d;
+        readonly MapScripts _scripts;
+        readonly ScriptState _st;
         readonly GameMenus _m;
-        int _pc;
-        Mode _mode;
-        string _speaker = "", _body = "", _header = "";
-        List<string> _opts = new List<string>();
-        int _sel, _row, _col;
-        string _buf = "";
-        bool _partner;
+        readonly byte[] _exe;
+        readonly uint _load;
 
         public bool Active { get; private set; }
-        public int DayNight;                 // 0 = day, 1 = night (Jijimon's question)
         public System.Action OnDone;
         public bool DrawBackground = true;   // false when a 3D stage with its own black background is showing
+        public BattleArt Art;                // the clock sheet (cursor pieces)
 
-        public CharacterSetup(byte[] scriptBank, GameMenus menus) { _d = scriptBank; _m = menus; }
+        int _state, _next, _mode;            // SCRIPT_STATE_2, SCRIPT_NEXT_STATE_2, SCRIPT_TEXTBOX_MODE (1 text, 2 selection)
+        string _speaker = "", _body = "";
+        List<string> _opts;
+        int _sel;
+        bool _talking;
 
-        public void Start()
+        int _flags;                          // NAMING_BOX_FLAG: 1 = the partner's name, 2 = opened by a script
+        readonly ushort[] _buf = new ushort[7];   // NAMING_BUFFER, Shift-JIS codes, 0 = end
+        int _letter, _selector;             // NAMING_CURRENT_LETTER, NAMING_SELECTOR (0x8000 | n = a button)
+        bool _naming;
+
+        public CharacterSetup(MapScripts scripts, ScriptState state, GameMenus menus, DiscImage disc)
         {
-            if (_d == null) { Finish(); return; }
-            Active = true; _pc = 0; Enter();
+            _scripts = scripts; _st = state; _m = menus;
+            if (disc != null && disc.Exists("/SLUS_010.32")) { _exe = disc.ReadFile("/SLUS_010.32"); _load = System.BitConverter.ToUInt32(_exe, 0x18); }
         }
 
-        void Finish() { Active = false; if (OnDone != null) OnDone(); }
+        int At(uint a) { return (int)(a - _load + 0x800); }
+        int S16(uint a, int i) { return System.BitConverter.ToInt16(_exe, At(a) + 2 * i); }
+        int U8(uint a, int i) { return _exe[At(a) + i]; }
+        int SB8(uint a, int i) { return (sbyte)_exe[At(a) + i]; }
+        string Str(uint a) { int p = At(a), j = p; while (j < _exe.Length && _exe[j] != 0) j++; return System.Text.Encoding.ASCII.GetString(_exe, p, j - p); }
 
-        // ------------------------------------------------------------------ text
-        static string Decode(byte[] d, int p)
+        // NAMING_CHAR_PAGES[page]: 9 rows of 5 Shift-JIS letters
+        ushort Letter(int page, int row, int col)
         {
-            if (d == null || p < 0 || p + 2 > d.Length || d[p] != 0x1A) return "";
-            var sb = new StringBuilder();
-            int j = p + 2;
-            while (j < d.Length)
+            uint table = System.BitConverter.ToUInt32(_exe, At(CharPages) + 4 * page);
+            uint str = System.BitConverter.ToUInt32(_exe, At(table) + 4 * row);
+            int o = At(str) + col * 2;
+            return (ushort)(_exe[o] << 8 | _exe[o + 1]);
+        }
+
+        void Sfx(int n) { if (_m != null && _m.Sfx != null) _m.Sfx(n); }
+
+        // ------------------------------------------------------------------ start
+
+        /// <summary>newGameScene: initializeNamingBuffer(0), variable 254 = 0, then newGameStateMachine.</summary>
+        public void Start()
+        {
+            if (_exe == null || _scripts == null) { Finish(); return; }
+            Active = true;
+            InitNaming(0);
+            _st.Vars[0xFE] = 0;
+        }
+
+        /// <summary>Built-in 0x20 (initializeNamingBuffer(variable 254)): with flag 2 the naming box opens on the current name.</summary>
+        public void StartNaming(int flags)
+        {
+            if (_exe == null) { Finish(); return; }
+            Active = true;
+            InitNaming(flags);
+        }
+
+        void InitNaming(int flags)
+        {
+            if ((flags & 2) == 0) { _flags = 0; _state = 0; _buf[0] = 0; }
+            else
             {
-                int c = d[j];
-                if ((c >= 0x81 && c <= 0x9F) || (c >= 0xE0 && c <= 0xFC)) { if (j + 1 >= d.Length) break; sb.Append(MapScripts.Pair(c << 8 | d[j + 1])); j += 2; }
-                else if (c == 0x0D) { sb.Append('\n'); j += 2; }
-                else if (c == 0x01) j += 2;
-                else if (c == 0x00) break;
-                else if (c < 0x20) { sb.Append("[name]"); j += 2; }
-                else j++;
+                _talking = false;
+                _flags = flags; _state = 0x14;
+                SetBuffer((_flags & 1) == 0 ? _st.PlayerName : _st.PartnerName);
             }
+        }
+
+        void Finish() { Active = false; _naming = false; if (OnDone != null) OnDone(); }
+
+        // ------------------------------------------------------------------ newGameStateMachine
+
+        // showNewGameDialogue / showNewGameSelection: showMapHeadTextbox(text, 0xFE, 0, 0x4D6); the selection's last two lines are the choices
+        void Dialogue(int text, int next)
+        {
+            string t = ScriptRunner.MapHeadText(_scripts, _st, Section, text, 0xFF) ?? "";
+            int nl = t.IndexOf('\n');
+            _speaker = nl >= 0 ? t.Substring(0, nl).Trim() : ""; _body = nl >= 0 ? t.Substring(nl + 1).Trim() : t.Trim();
+            _opts = null; _talking = true;
+            _state = 1; _next = next; _mode = 1;
+        }
+
+        void Selection(int text, int next)
+        {
+            var lines = new List<string>((ScriptRunner.MapHeadText(_scripts, _st, Section, text, 0xFF) ?? "").Split('\n'));
+            int q = Mathf.Max(0, lines.Count - 2);
+            _speaker = string.Join(" ", lines.GetRange(0, q).ToArray()).Trim(); _body = "";
+            _opts = lines.GetRange(q, lines.Count - q); _sel = 0; _talking = true;
+            _state = 1; _next = next; _mode = 2;
+        }
+
+        void Step()
+        {
+            switch (_state)
+            {
+                case 0:
+                    _st.SetFlag(49, true);
+                    _st.PlayerName = Str(ButtonsStr + 7);      // DIGIMON_NAME(0) = &MAIN_D_80134600[7]
+                    Dialogue(0x10, 2); break;
+                case 2: Dialogue(0x11, 3); break;
+                case 3: Selection(0x12, 4); break;
+                case 4: Dialogue(0x13, 6); break;
+                case 5: Dialogue(0x16, 10); break;
+                case 6: Dialogue(0x14, 7); break;
+                case 7: Selection(0x15, 8); break;
+                case 8: _st.Vars[0xFE] = 0; _state = 0x11; break;
+                case 9: _st.Vars[0xFE] = 1; _state = 0x11; break;
+                case 10: Dialogue(0x17, 0x0B); break;
+                case 0x0B: Selection(0x18, 8); break;
+                case 0x11: Dialogue(0x19, 0x12); break;
+                case 0x12: Dialogue(0x1A, 0x13); break;
+                case 0x13: _talking = false; _state = 0x14; break;
+                case 0x14:
+                    _selector = 0;                                // setupNameSelectorBox: SHOP_AMOUNT = NAMING_START_PAGE (0)
+                    _letter = Length() ; if (_letter == 6) _letter--;      // setupNameDisplayBox
+                    _naming = true; _state = 1; _mode = 0;
+                    break;
+                case 0x15:
+                    _naming = false;
+                    if ((_flags & 1) == 0) _st.PlayerName = BufferText(); else _st.PartnerName = BufferText();
+                    _state = 0x16;
+                    break;
+                case 0x16:
+                    if ((_flags & 2) != 0) { Finish(); return; }
+                    if ((_flags & 1) == 0) Dialogue(0x1B, 0x17); else Dialogue(0x1E, 0x1B);
+                    break;
+                case 0x17: Selection(0x1C, 0x18); break;
+                case 0x18: Dialogue(0x1D, 0x1A); break;
+                case 0x19: _state = 0x13; break;
+                case 0x1A: _flags |= 1; _buf[0] = 0; _state = 0x13; break;
+                case 0x1B: Selection(0x1C, 0x1C); break;
+                case 0x1C: Dialogue(0x1F, 0x1E); break;
+                case 0x1D: _state = 0x13; break;
+                case 0x1E: Dialogue(0x20, 0x1F); break;
+                case 0x1F: _talking = false; _st.SetFlag(49, false); Finish(); return;
+            }
+        }
+
+        // ------------------------------------------------------------------ the name buffer
+
+        int Length() { int n = 0; while (n < 6 && _buf[n] != 0) n++; return n; }
+
+        string BufferText()
+        {
+            var sb = new System.Text.StringBuilder();
+            for (int i = 0; i < 6 && _buf[i] != 0; i++) sb.Append(MapScripts.Pair(_buf[i]));
             return sb.ToString();
         }
 
-        void Say(int off, string name = null)
+        // a stored name back into the letters of the pages it was typed from (a letter not on them is left out)
+        void SetBuffer(string s)
         {
-            string t = Decode(_d, off);
-            if (name != null) t = t.Replace("[name]", name);
-            int nl = t.IndexOf('\n');
-            string first = nl >= 0 ? t.Substring(0, nl).Trim() : "";
-            _speaker = first; _body = nl >= 0 ? t.Substring(nl + 1).Trim() : t.Trim();
-            _mode = Mode.Say;
-        }
-
-        // a question box: the first line is a header (a name, or "???" when nobody is named), the other lines are the answers
-        void Ask(int off, string headerName = null)
-        {
-            string t = Decode(_d, off);
-            var lines = t.Split('\n');
-            string head = lines.Length > 0 ? lines[0].Trim() : "";
-            head = head.Replace("[name]", headerName ?? "");
-            _header = head.Length > 0 ? head : "???";
-            _opts = new List<string>();
-            for (int i = 1; i < lines.Length; i++) { var l = lines[i].Trim(); if (l.Length > 0) _opts.Add(l); }
-            _sel = 0; _mode = Mode.Ask;
-        }
-
-        void Edit(bool partner)
-        {
-            _partner = partner; _buf = ""; _row = 0; _col = 0; _mode = Mode.Edit;
-        }
-
-        // the questions, in the order the game asks them
-        void Enter()
-        {
-            switch (_pc)
+            int n = 0;
+            foreach (char ch in s ?? "")
             {
-                case 0: Say(TIntro); break;
-                case 1: Say(TDigivice); break;
-                case 2: Ask(OYesNo1); break;
-                case 3: Say(TSee1); break;
-                case 4: Say(TDayNight); break;
-                case 5: Ask(ODayNight); break;
-                case 6: Say(TSee2); break;
-                case 7: Say(TFriends); break;
-                case 8: Ask(OYesNo2); break;
-                case 9: Say(TAlright); break;
-                case 10: Say(TName); break;
-                case 11: Edit(false); break;
-                case 12: Say(TNameOk, _m.PlayerName); break;
-                case 13: Ask(OYesNo3, _m.PlayerName); break;
-                case 14: Say(TDName); break;
-                case 15: Edit(true); break;
-                case 16: Say(TDNameOk, _m.PartnerName); break;
-                case 17: Ask(OYesNo3, _m.PartnerName); break;
-                case 18: Say(TGood); break;
-                case 19: Say(TEnd); break;
-                default: Finish(); break;
+                if (n >= 6) break;
+                ushort code = 0;
+                for (int page = 0; page < 2 && code == 0; page++)
+                    for (int r = 0; r < 9 && code == 0; r++)
+                        for (int c = 0; c < 5; c++) { ushort l = Letter(page, r, c); if (l != 0x8140 && MapScripts.Pair(l) == ch.ToString()) { code = l; break; } }
+                if (code != 0) _buf[n++] = code;
             }
+            _buf[n] = 0;
         }
 
-        void Next() { _pc++; Enter(); }
-
-        // ------------------------------------------------------------------ name grid
-        static string Cell(int r, int c)
+        // namingDeleteLast (US: the letter before the cursor goes)
+        void DeleteLast()
         {
-            const string up = "ABCDEFGHIJKLMNOPQRSTUVWXY", lo = "abcdefghijklmnopqrstuvwxy";
-            if (r <= 4) return c < 5 ? up[r * 5 + c].ToString() : lo[r * 5 + (c - 5)].ToString();
-            if (r == 5) return c == 0 ? "Z" : c == 5 ? "z" : "";
-            if (r == 6) return c < 5 ? "Back" : (c - 5).ToString();
-            return c < 5 ? "OK" : (5 + c - 5).ToString();
+            if (_buf[0] == 0) return;
+            if (_letter == 0) _buf[0] = 0;
+            else { _letter--; _buf[_letter] = 0; }
+            Sfx(3);
+        }
+
+        // terminateNamingBuffer: trailing spaces (0x8140) are cut off
+        void Terminate()
+        {
+            int pos = 0;
+            for (; pos < 6; pos++) if (pos + 1 >= 6 || _buf[pos + 1] == 0) break;
+            while (pos != 0 && _buf[pos] == 0x8140) pos--;
+            if (pos + 1 < _buf.Length) _buf[pos + 1] = 0;
         }
 
         // ------------------------------------------------------------------ input
+
         public void Tick(int step, int side, bool action, bool cancel)
         {
             if (!Active) return;
-            switch (_mode)
+            if (_state == 1)
             {
-                case Mode.Say:
-                    if (action) Next();
-                    break;
-                case Mode.Ask:
-                    if (_opts.Count > 0 && step != 0) _sel = (_sel + step + _opts.Count) % _opts.Count;
-                    if (action) Answer();
-                    break;
-                case Mode.Edit:
-                    if (step != 0) _row = (_row + step + 8) % 8;
-                    if (side != 0) _col = (_col + side + 10) % 10;
-                    if (cancel && _buf.Length > 0) _buf = _buf.Substring(0, _buf.Length - 1);
-                    if (action) Press();
-                    break;
-            }
-        }
-
-        void Answer()
-        {
-            if (_pc == 5) DayNight = _sel;
-            if ((_pc == 13 || _pc == 17) && _sel == 1) { _pc = _pc == 13 ? 10 : 14; Enter(); return; }   // "No": ask again
-            Next();
-        }
-
-        void Press()
-        {
-            string c = Cell(_row, _col);
-            if (c.Length == 0) return;
-            if (c == "Back") { if (_buf.Length > 0) _buf = _buf.Substring(0, _buf.Length - 1); return; }
-            if (c == "OK")
-            {
-                if (_buf.Length == 0) return;
-                if (_partner) _m.PartnerName = _buf; else _m.PlayerName = _buf;
-                Next();
+                if (_naming) { TickNaming(step, side, action, cancel); return; }
+                // tickScriptDialogueBox: mode 1 goes on with Cross; mode 2 to the next state + the choice
+                if (_mode == 2 && _opts != null && _opts.Count > 0 && step != 0) { _sel = (_sel + step + _opts.Count) % _opts.Count; Sfx(2); }
+                if (action) { Sfx(3); _state = _mode == 2 ? _next + _sel : _next; }
                 return;
             }
-            if (_buf.Length < 8) _buf += c;
+            for (int guard = 0; guard < 8 && Active && _state != 1; guard++) Step();
+        }
+
+        // tickNamingBox (US), one button a frame in this order
+        void TickNaming(int step, int side, bool action, bool cancel)
+        {
+            int row = _selector / 5, col = _selector % 5, special = _selector & 0x7FFF;
+            bool button = (_selector & 0x8000) != 0;
+            if (GameMenus.SquareKey()) { _buf[0] = 0; _letter = 0; Sfx(3); return; }
+            if (action)
+            {
+                if (!button)
+                {
+                    int page = row < 9 ? 0 : 1;
+                    if (row >= 9) row -= 9;
+                    ushort l = Letter(page, row, col);
+                    if (l == 0x8140 && _letter == 0) { Sfx(0x0B); return; }     // no space first
+                    _buf[_letter] = l; _buf[_letter + 1] = 0;
+                    if (_letter != 5) _letter++;
+                    if (_buf[5] != 0 && _letter == 5) _selector = 0x8000 | NamingOk;
+                    Sfx(3);
+                    return;
+                }
+                if (special == NamingDelete) DeleteLast();
+                else if (special == NamingOk)
+                {
+                    if (_buf[0] == 0) { Sfx(0x0B); return; }
+                    Terminate(); Sfx(3);
+                    _state = 0x15;
+                }
+                return;
+            }
+            if (GameMenus.CircleKey()) { _selector = 0x8000 | 0; Sfx(2); return; }        // NAMING_FIRST_BUTTON
+            if (cancel) { DeleteLast(); return; }
+            if (GameMenus.StartKey()) { _selector = 0x8000 | NamingOk; Sfx(2); return; }
+            if (side < 0) Left(col, row, special);
+            else if (side > 0) Right(col, row, special);
+            else if (step < 0) Up(col, row);
+            else if (step > 0) Down(col, row);
+        }
+
+        // namingSelectionLeft / Right / Up / Down: rows 0-8 the left grid, 9-17 the right; NAMING_ROLLOVER_CHARS / _CTRL join the buttons
+        void Left(int col, int row, int special)
+        {
+            if ((_selector & 0x8000) == 0)
+            {
+                if (row < 9) _selector = col == 0 ? System.BitConverter.ToUInt16(_exe, At(RolloverChars) + 2 * row) : col - 1 + row * 5;
+                else { if (col == 0) { row -= 9; col = 4; } else col--; _selector = col + row * 5; }
+            }
+            else _selector = System.BitConverter.ToUInt16(_exe, At(RolloverCtrl) + 2 * special) + 0x31;
+            Sfx(2);
+        }
+
+        void Right(int col, int row, int special)
+        {
+            if ((_selector & 0x8000) == 0)
+            {
+                if (row < 9) { if (col == 4) { row += 9; col = 0; } else col++; _selector = col + row * 5; }
+                else if (col == 4) _selector = System.BitConverter.ToUInt16(_exe, At(RolloverChars) + 2 * (row - 9));
+                else _selector = col + 1 + row * 5;
+            }
+            else _selector = System.BitConverter.ToUInt16(_exe, At(RolloverCtrl) + 2 * special);
+            Sfx(2);
+        }
+
+        void Up(int col, int row)
+        {
+            if ((_selector & 0x8000) == 0)
+            {
+                if (row < 9) row = row == 0 ? 8 : row - 1;
+                else row = row == 9 ? 17 : row - 1;
+                _selector = col + row * 5;
+            }
+            else if (_selector == (0x8000 | 0)) _selector = 0x8000 | NamingOk;
+            else _selector--;
+            Sfx(2);
+        }
+
+        void Down(int col, int row)
+        {
+            if ((_selector & 0x8000) == 0)
+            {
+                if (row < 9) row = row == 8 ? 0 : row + 1;
+                else row = row == 17 ? 9 : row + 1;
+                _selector = col + row * 5;
+            }
+            else if (_selector == (0x8000 | NamingOk)) _selector = 0x8000 | 0;
+            else _selector++;
+            Sfx(2);
         }
 
         // ------------------------------------------------------------------ drawing
+
+        static float CX(float x) { return 707.5f + x * 4.42f; }       // PS1 pixels from the middle -> UiKit canvas
+        static float CY(float y) { return 530f + y * 4.42f; }
+
         public void OnGUI()
         {
             if (!Active) return;
             if (DrawBackground) UiKit.Fill(new Rect(0, 0, Screen.width, Screen.height), Color.black);
             UiKit.Begin();
-            if (_mode == Mode.Edit) DrawEdit();
-            else DrawChat();
+            if (_naming) DrawNaming();
+            else if (_talking) DrawChat();
             UiKit.End();
         }
 
+        // setupNewGameDialogueBox: the box (-130, -78, 262, 59); the box style and text drawing are ours (as the room's dialogue box)
         void DrawChat()
         {
-            // like the original: one wide box near the top of the screen, Jijimon standing below it on the right
-            var r = new Rect(140, 165, 1145, 270);
-            UiKit.Box(r, new Color(0.16f, 0.22f, 0.26f, 0.98f));
-            if (_mode == Mode.Ask)
+            var r = new Rect(CX(-130), CY(-78), 262 * 4.42f, 59 * 4.42f);
+            UiKit.Box(r, UiKit.DialogFill, 4f);
+            var font = Battle.StatFont;
+            float x = r.x + 10 * 4.42f, y = r.y + 6 * 4.42f;
+            if (_speaker.Length > 0) { Text(_speaker, x, y, font != null ? font.Colour(7) : UiKit.Yellow); y += 13 * 4.42f; }
+            if (_opts != null)
             {
-                UiKit.Text(new Rect(r.x + 30, r.y + 8, r.width - 60, 56), _header, 42, new Color(0.55f, 0.65f, 1f));
                 for (int i = 0; i < _opts.Count; i++)
                 {
-                    float y = r.y + 68 + i * 62;
-                    if (i == _sel) UiKit.Fill(new Rect(r.x + 12, y, 285, 60), new Color(0.35f, 0.38f, 0.40f));
-                    UiKit.Text(new Rect(r.x + 24, y, 400, 60), _opts[i], 46, Color.white, TextAnchor.MiddleLeft);
+                    if (i == _sel) UiKit.Fill(new Rect(x - 2 * 4.42f, y - 4.42f, 60 * 4.42f, 13 * 4.42f), new Color(1f, 1f, 1f, 0.18f));
+                    Text(_opts[i].Trim(), x, y, font != null ? font.Ink : Color.white); y += 13 * 4.42f;
                 }
                 return;
             }
-            float ty = r.y + 22;
-            if (_speaker.Length > 0) { UiKit.Text(new Rect(r.x + 30, r.y + 8, 800, 60), _speaker, 48, UiKit.Yellow); ty = r.y + 68; }
-            UiKit.Text(new Rect(r.x + 30, ty, r.width - 60, r.height - (ty - r.y) - 10), _body, 46, Color.white, TextAnchor.UpperLeft, true);
-            if ((int)(Time.unscaledTime * 2f) % 2 == 0) UiKit.Text(new Rect(r.xMax - 100, r.yMax - 75, 60, 50), "X", 40, new Color(0.5f, 0.6f, 1f), TextAnchor.MiddleCenter);
+            foreach (var line in _body.Split('\n')) { Text(line.Trim(), x, y, font != null ? font.Ink : Color.white); y += 13 * 4.42f; }
         }
 
-        void DrawEdit()
+        static void Text(string s, float x, float y, Color c)
         {
-            var panel = new Rect(150, 40, 1115, 650);
-            UiKit.Box(panel, UiKit.PanelFill);
-            UiKit.Text(new Rect(panel.x + 40, panel.y + 24, 300, 70), "Name", 50, UiKit.Yellow);
-            const float x0 = 470, y0 = 70, cw = 62, ch = 70;
-            for (int r = 0; r < 8; r++)
-                for (int c = 0; c < 10; c++)
+            var font = Battle.StatFont;
+            if (font != null) font.Draw(s, x, y, 4.42f, c);
+            else UiKit.Text(new Rect(x, y - 8, 1000, 62), s, 48, c, TextAnchor.UpperLeft);
+        }
+
+        // one letter in the fixed-width mode (DRAW_STRING2_IS_FIXED_WIDTH = 1): 12 pixels a cell
+        static void Glyph(ushort code, float psx, float psy, Color c)
+        {
+            if (code == 0 || code == 0x8140) return;
+            var font = Battle.StatFont;
+            if (font != null) font.Draw(((char)code).ToString(), CX(psx), CY(psy), 4.42f, c);
+        }
+
+        void DrawNaming()
+        {
+            var font = Battle.StatFont;
+            Color ink = font != null ? font.Ink : Color.white;
+            // setupNameSelectorBox (-145, -91, 290, 138) and setupNameDisplayBox (-145, 60, 149, 42)
+            const int bx = -145, by = -91, dx = -145, dy = 60;
+            UiKit.Box(new Rect(CX(bx), CY(by), 290 * 4.42f, 138 * 4.42f), UiKit.DialogFill, 4f);
+            UiKit.Box(new Rect(CX(dx), CY(dy), 149 * 4.42f, 42 * 4.42f), UiKit.DialogFill, 4f);
+            // renderNamingBox: the labels (NAMING_CTRL_BOXES x, y, width) cut from the line "<colour 7>Name<colour 1>BackOK"
+            string title = Str(TitleStr), buttons = Str(ButtonsStr);
+            string line = title + buttons;
+            int texX = 0;
+            for (int j = 0; j < NamingLabels; j++)
+            {
+                int lx = S16(CtrlBoxes, j * 3), ly = S16(CtrlBoxes, j * 3 + 1), lw = S16(CtrlBoxes, j * 3 + 2);
+                for (int k = 0; k < lw / 12; k++)
                 {
-                    string t = Cell(r, c);
-                    if (t.Length == 0) continue;
-                    bool special = t == "Back" || t == "OK";
-                    if (special && c != 0) continue;           // Back and OK are drawn once, at the left
-                    float x = special ? panel.x + 70 : x0 + c * cw + (c >= 5 ? 90 : 0);
-                    float y = y0 + r * ch + 10;
-                    bool on = r == _row && (c == _col || (special && _col < 5 && _row == r));
-                    if (on) UiKit.Fill(new Rect(x - 8, y - 4, special ? 150 : cw - 8, ch - 12), new Color(1f, 0.75f, 0.1f));
-                    if (on) UiKit.Fill(new Rect(x - 4, y, special ? 142 : cw - 16, ch - 20), new Color(0.12f, 0.18f, 0.22f));
-                    UiKit.Text(new Rect(x - 4, y - 4, special ? 150 : cw - 8, ch - 12), t, special ? 44 : 46, (t == "OK" && _buf.Length == 0) ? UiKit.Grey : Color.white, special ? TextAnchor.MiddleLeft : TextAnchor.MiddleCenter);
+                    int ci = texX / 12 + k;
+                    if (ci >= line.Length) break;
+                    Color c = ci < title.Length ? (font != null ? font.Colour(7) : UiKit.Yellow) : ink;
+                    if (font != null) font.Draw(line[ci].ToString(), CX(bx + lx + k * 12), CY(by + ly), 4.42f, c);
                 }
-            var nb = new Rect(150, 720, 480, 130);
-            UiKit.Box(nb, UiKit.PanelFill);
-            UiKit.Text(new Rect(nb.x + 28, nb.y + 14, 420, 50), _partner ? "Digimon's name" : "Your name", 40, UiKit.Yellow);
-            string shown = _buf + ((int)(Time.unscaledTime * 2f) % 2 == 0 ? "_" : " ");
-            UiKit.Text(new Rect(nb.x + 28, nb.y + 62, 420, 60), shown, 50, Color.white);
-            UiKit.Text(new Rect(660, 790, 700, 60), "Arrows move, Space types, Tab erases", 30, UiKit.Grey);
+                texX += lw;
+            }
+            // the letters: left grid at x + 0x4E, right one 0x70 further, 18 apart, rows 14 apart from y + 6
+            for (int page = 0; page < 2; page++)
+                for (int r = 0; r < 9; r++)
+                    for (int k = 0; k < 5; k++)
+                        Glyph(Letter(page, r, k), bx + GridX + page * 0x70 + k * 18, by + 6 + r * 14, ink);
+            DrawSelector(bx, by);
+            // renderNameDisplayBox (US): the name, in fixed-width cells, at x + 7, y + 6 (the US prompt is empty), and the underscore
+            for (int i = 0; i < 6 && _buf[i] != 0; i++) Glyph(_buf[i], dx + 7 + Str(PromptTamer).Length * 12 + i * 12, dy + 6, ink);
+            // renderNamingUnderscore: three lines (0x020202, 0x10C0C0, 0x020202) under the current letter
+            float ux = dx + _letter * 12 + 4, uy = dy + 0x10;
+            UiKit.Fill(new Rect(CX(ux), CY(uy), 12 * 4.42f, 4.42f), new Color32(2, 2, 2, 255));
+            UiKit.Fill(new Rect(CX(ux), CY(uy + 1), 12 * 4.42f, 4.42f), new Color32(0xC0, 0xC0, 0x10, 255));
+            UiKit.Fill(new Rect(CX(ux), CY(uy + 2), 12 * 4.42f, 4.42f), new Color32(2, 2, 2, 255));
+        }
+
+        // renderSelectionBox: 8 pieces of the clock sheet (VRAM 896,448; CLUT 256,508) round the letter or the button
+        void DrawSelector(int bx, int by)
+        {
+            var art = Art;
+            if (art == null) return;
+            int baseX, baseY;
+            bool button = (_selector & 0x8000) != 0;
+            if (!button)
+            {
+                int row = _selector / 5, col = _selector % 5;
+                if (row < 9) { baseX = bx + col * 18 + 0x4A; baseY = by + row * 14 + 2; }
+                else { baseX = bx + col * 18 + 0xBA; baseY = by + (row - 9) * 14 + 2; }
+            }
+            else
+            {
+                int idx = (_selector & 0x7FFF) * 3 + 3;
+                baseX = bx + S16(CtrlBoxes, idx) - 4; baseY = by + S16(CtrlBoxes, idx + 1) - 4;
+            }
+            for (int i = 0; i < 8; i++)
+            {
+                int u0 = U8(U02, i), u1 = U8(U13, i), v0 = U8(V01, i), v1 = U8(V23, i);
+                int x = baseX + (button ? SB8(CharX, i) : SB8(CtrlX, i)), y = baseY + SB8(Ys, i);
+                int w = button ? SB8(CharW, i) : SB8(CtrlW, i), h = SB8(Hs, i);
+                art.ClockQuad(508 - 496, u0, v0, u1, v1, x, y, w, h);
+            }
         }
     }
 }

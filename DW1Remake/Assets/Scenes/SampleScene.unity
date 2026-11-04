@@ -418,7 +418,6 @@ MonoBehaviour:
   Palette: 0
   HasPartner: 1
   RootMotion: 1
-  ShadowPieceOpacity: 0.5
   PartnerType: 3
   PartnerPlaceZOffset: -3.5
   PartnerDistance: 3
@@ -448,15 +447,15 @@ MonoBehaviour:
   Vignette: 0.3
   Saturation: 10
   Contrast: 8
-  ShadowOpacity: 0.6
   ShowNames: 1
   InitialFlags: 36000000i
-  NewGame: 1
+  NewGame: 0
   ChaseSpeed: 7
   PlayerNameText: A
   PartnerNameText: B
-  QuickStart: 1
+  QuickStart: 0
   LoadSaveOnStart: 0
+  TitleScreen: 1
 --- !u!4 &559601211
 Transform:
   m_ObjectHideFlags: 0

@@ -124,6 +124,8 @@ namespace DW1Remake.Formats
             }
         }
 
+        /// <summary>Set by the room while the Triangle menu is open: every model stops where it is, as on the PS1.</summary>
+        public static bool Paused;
         static int _sharedFrame = -1, _sharedTicks;
         static double _sharedAcc;
 
@@ -133,6 +135,8 @@ namespace DW1Remake.Formats
             if (Time.frameCount != _sharedFrame)
             {
                 _sharedFrame = Time.frameCount;
+                _sharedTicks = 0;
+                if (Paused) return 0;
                 _sharedAcc += System.Math.Min(Time.unscaledDeltaTime, 0.25);
                 _sharedTicks = 0;
                 while (_sharedAcc >= tick) { _sharedAcc -= tick; _sharedTicks++; }
@@ -145,6 +149,7 @@ namespace DW1Remake.Formats
             double now = Time.realtimeSinceStartupAsDouble;
             double dt = now - _last; _last = now;
             if (_sim == null || !Playing) return;
+            if (Paused && Application.isPlaying) return;
             if (_blend < 1f) { _blend = Mathf.Min(1f, _blend + (float)dt / Mathf.Max(0.01f, BlendSeconds)); Apply(); }
             if (_held) return;
             double tick = 1.0 / TicksPerSecond;

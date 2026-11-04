@@ -121,6 +121,17 @@ namespace DW1Remake.Disc
             }
         }
 
+        /// <summary>True for a raw image (.bin, 2352 bytes a sector): only these keep the sector sub-headers and the XA audio sectors movies need.</summary>
+        public bool IsRaw { get { return _stride == 2352; } }
+
+        /// <summary>The whole 2352-byte sector (sync, header, sub-header at 16, data from 24). Raw images only.</summary>
+        public void ReadRawSector(int lba, byte[] buffer)
+        {
+            if (!IsRaw) throw new InvalidOperationException("Not a raw (.bin) disc image.");
+            _stream.Seek((long)lba * 2352, SeekOrigin.Begin);
+            ReadExact(buffer, 2352);
+        }
+
         public bool Exists(string path) { return _byPath.ContainsKey(path); }
 
         public DiscFile Find(string path)

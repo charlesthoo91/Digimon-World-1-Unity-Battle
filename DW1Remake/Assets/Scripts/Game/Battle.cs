@@ -27,6 +27,7 @@ namespace DW1Remake.Game
             public DigimonStats Info;
             public int Off, Def, Spd, Brain, Hp, MaxHp, Mp, MaxMp;
             public List<Tech> Techs = new List<Tech>(); public Tech Finisher;     // the partner has at most 3 (the Techset)
+            public int Head = -1; public bool Collided;     // heading (game units) and hasCollidedWhileDistanceCmd of BTL_backAwayFromTarget
             public int Finish, FinishMax;       // finishing gauge: +1 a frame, 6% on a hit, full at 3000 - Speed
             public int Energy = 100, Style;     // energy bar: + (Speed / 100 + 1) every 2 frames, minus the power of each technique; Style = how full it must be
             public int Wait, Stall, Bore, SelfUses, ConfuseFrames;
@@ -36,16 +37,71 @@ namespace DW1Remake.Game
             public float NextAct, AnimReset, StunUntil;
             public float ShownHp;               // the HP shown on screen: it drains smoothly after a hit (393, 379, 365 ...)
             public Vector3 Slot;
+            public Vector3 FleeTo; public int Leaving;      // NPCEntity.flee (Unity); after the fight 0 getting up, 1 running off, 2 done
         }
 
-        sealed class Swing { public Fighter From, To; public float T; public bool Done; public Tech Tech; public Vector3 Start; public float Boost = 1f, Release, Length; public bool Effect, Landed; }
+        static Vector3 FleeOf(MapDigimon d, Transform t) { return new Vector3(d.Flee.x * 0.01f, t.position.y, d.Flee.z * 0.01f); }
+
+        sealed class Swing { public Fighter From, To; public float T; public bool Done; public Tech Tech; public Vector3 Start; public float Boost = 1f, Release, Length; public bool Effect, Landed, Fell; public int DrawnAtStart; public Vector3? HitAt; }
         sealed class Shot { public Fighter From, To; public Tech Tech; public Vector3 Pos, Dir; public float Travelled; public GameObject Go; public float Boost = 1f; }
-        sealed class Pop { public string Text; public Vector3 Pos; public float T; public Color Col; }
+        sealed class Pop { public string Text; public Vector3 Pos; public float T; public Color Col; public int Icon; }     // Icon: addEntityText's icon, 1 HP, 2 MP
         sealed class Fx { public GameObject Go; public Material Mat; public Vector3 Vel; public float T, Life, S0, S1; public Color Col; }
         readonly List<Fx> _fx = new List<Fx>();
-        sealed class Throw { public int Item; public float T; public int Heal, Mana; }
+        // addThrownItem / tickThrownItem (main.c): the item sits in the boy's hand (bone 9) until his animation 6 reaches frame 7, then flies to the partner in 24 frames:
+        // x and z close a 1 / (25 - t) part of the gap each frame, y follows ITEM_THROW_HEIGHT; at the end the item works (ITEM_FUNCTIONS) and the sparkle starts (BTL_addItemParticles)
+        sealed class Throw { public int Item, Hold, Time; public Vector3 G; public System.Action Apply; }
+        public byte[] Exe;      // SLUS_010.32, set by the room (tables read at run time)
+        int[] _throwHeight;     // ITEM_THROW_HEIGHT (exe 0x8012F36C, 24 s16): the item's height each frame of its flight
+        float _throwAcc;
 
-        enum Phase { Notice, Banner, Fight, Win, Lose, Fled }
+        /// <summary>startThrowingItem: false while an item is still in the air (TAMER_ITEM busy).</summary>
+        public bool ThrowBusy { get { return _throws.Count > 0; } }
+
+        public void ThrowItem(int item, System.Action apply)
+        {
+            if (_throws.Count > 0 || _player == null) return;
+            if (_playerA != null && _playerA.HasSlot(6)) _playerA.SetSlot(6, true);
+            _throws.Add(new Throw { Item = item, Apply = apply, G = EffectPlayer.ToGame(HandOf()) });
+        }
+
+        Vector3 HandOf() { var n = _playerA != null ? _playerA.Node(9) : null; return n != null ? n.position : _player.position + Vector3.up; }
+
+        void TickThrows(float dt)
+        {
+            _throwAcc += dt;
+            while (_throwAcc >= Frame)
+            {
+                _throwAcc -= Frame;
+                for (int i = _throws.Count - 1; i >= 0; i--)
+                {
+                    var th = _throws[i];
+                    if (th.Hold < 7) { th.Hold++; th.G = EffectPlayer.ToGame(HandOf()); continue; }
+                    Vector3 p = EffectPlayer.ToGame(Partner.T.position);
+                    float dx = p.x - th.G.x, dz = p.z - th.G.z;
+                    if (th.Time > 0) { th.G.x += (int)dx / (25 - th.Time); th.G.z += (int)dz / (25 - th.Time); }
+                    if (_throwHeight == null && Exe != null)
+                    {
+                        _throwHeight = new int[24];
+                        int o = (int)(0x8012F36C - BitConverter.ToUInt32(Exe, 0x18) + 0x800);
+                        for (int k = 0; k < 24; k++) _throwHeight[k] = BitConverter.ToInt16(Exe, o + 2 * k);
+                    }
+                    th.G.y = _throwHeight != null ? _throwHeight[th.Time] : 0;
+                    th.Time++;
+                    if (th.Time >= 24)
+                    {
+                        _throws.RemoveAt(i);
+                        int h0 = _s.Stats[6], m0 = _s.Stats[7];
+                        if (th.Apply != null) th.Apply();
+                        ReadBack();
+                        if (_s.Stats[6] > h0) _pops.Add(new Pop { Text = (_s.Stats[6] - h0).ToString(), Pos = Partner.T.position + Vector3.up * 0.9f, Col = new Color(0f, 1f, 0f), Icon = 1 });     // TEXT_COLORS[0xB], icon 1 (item.c)
+                        if (_s.Stats[7] > m0) _pops.Add(new Pop { Text = (_s.Stats[7] - m0).ToString(), Pos = Partner.T.position + Vector3.up * 1.4f, Col = new Color(0f, 1f, 0f), Icon = 2 });
+                        if (Effects != null) Effects.AddItemParticles(Partner.T.position, Partner.Info != null ? Partner.Info.Height : 200);
+                    }
+                }
+            }
+        }
+
+        enum Phase { Notice, Banner, Fight, Win, Lose, Fled, Leave }
 
         // animation slots, from the battle code: stance 33, walk 35, hit from the front 40 and from behind 41, win 42, a technique = 46 + its place in the move list.
         // collapse 43: played when HP reaches 0 (code 0x8005AFDC).
@@ -61,9 +117,8 @@ namespace DW1Remake.Game
         public bool Fled { get; private set; }
         public bool NoFlee;                     // scripted fights (script variable 250 = 1): running away is locked
         public Fighter Partner, Enemy;           // Enemy = the one the partner is after; the others wait in Extras (up to three enemies, "Change target!")
-        readonly List<Fighter> Extras = new List<Fighter>();
+        public readonly List<Fighter> Extras = new List<Fighter>();
         public BattleIcons Icons; public ItemIcons Items;
-        public int LastItem = -1;               // the room tells which bag item was just used
 
         readonly ScriptState _s;
         readonly Func<Vector3, Quaternion> _face;
@@ -84,14 +139,17 @@ namespace DW1Remake.Game
         readonly List<Pop> _pops = new List<Pop>();
         readonly List<Throw> _throws = new List<Throw>();
         readonly int[] _before = new int[6], _gain = new int[6], _shown = new int[6], _left = new int[6];
-        int _bitsLeft, _statWait; float _countAcc; bool _fanfare;
+        int _bitsLeft, _statWait; float _countAcc; bool _fanfare, _cheered;
         public System.Action<int> Sfx;           // playSound(0, n)
-        public EffectPlayer Effects; bool _quietHit;
+        public EffectPlayer Effects;
         public System.Action OnStopMusic;
+        public System.Action<int, Vector3> OnDrop;     // spawnDroppedItems (battle_ui.c, with the result boxes): the item lies on the ground at once
         void Snd(int n) { if (Sfx != null) Sfx(n); }
         int _bits, _enemyBits, _startHp, _used, _blocks, _bigHits;
         readonly List<int> _seen = new List<int>();     // the Tech page techniques the enemy used in this fight (the game keeps up to 12)
-        string _learned, _dropped;
+        string _learned, _dropped, _dropName;
+        /// <summary>The item the enemy dropped (-1 none) and where it fell: the room puts it on the ground there (spawnDroppedItems).</summary>
+        public int DropItem = -1; public Vector3 DropAt;
         public Func<int, string> ItemName;      // the room tells the names
         string _log = ""; float _logUntil;
         static Texture2D _disc; static Material _shotMat;
@@ -107,6 +165,8 @@ namespace DW1Remake.Game
         /// <summary>Technique n from the game's table. Finishing moves cost no MP (they come from the gauge).</summary>
         public static Tech MakeTech(int id, bool finisher)
         {
+            // BTL_startQueuedMove / BTL_tickMeleeAttack: any technique 0x3A-0x70 is a finishing move (aura, 80-frame hold, no MP)
+            finisher |= IsFinisherId(id);
             var d = DigimonStatsCatalog.TechOf(id);
             if (d == null) return new Tech { Id = id, Name = "?", Col = Color.white };
             return new Tech
@@ -123,7 +183,7 @@ namespace DW1Remake.Game
             if (data == null)
             {
                 for (int i = 0; i < info.Learnable.Count && f.Techs.Count < 3; i++)
-                    if (_s.Techs[info.Learnable[i]] && (_s.TechSet.Count == 0 || _s.TechSet.Contains(info.Learnable[i]))) f.Techs.Add(MakeTech(info.Learnable[i], false));
+                    if (_s.Techs[info.Learnable[i]] && (!_s.TechSet.Exists(x => x >= 0) || _s.TechSet.Contains(info.Learnable[i]))) f.Techs.Add(MakeTech(info.Learnable[i], false));
                 if (f.Techs.Count == 0 && info.Learnable.Count > 0) f.Techs.Add(MakeTech(info.Learnable[0], false));   // Agumon starts with Spit Fire
                 for (int i = 0; i < f.Techs.Count; i++) f.Moves[i] = f.Techs[i];
             }
@@ -159,8 +219,9 @@ namespace DW1Remake.Game
                 MaxHp = Mathf.Max(1, enemyData.Hp), Hp = Mathf.Max(1, enemyData.Hp), MaxMp = enemyData.Mp, Mp = enemyData.Mp
             };
             _enemyBits = enemyData.Bits;
+            Enemy.FleeTo = FleeOf(enemyData, enemy);
             SetupTechs(Enemy, enemyInfo, enemyData);
-            _seen.Clear(); _learned = null; _dropped = null;
+            _seen.Clear(); _learned = null; _dropped = null; _dropName = null; DropItem = -1; _dropTyped = 0f;
             foreach (var f in new[] { Partner, Enemy })
             {
                 f.FinishMax = 3000 - f.Spd;
@@ -168,6 +229,7 @@ namespace DW1Remake.Game
                 f.SelfUses = f.Brain < 400 ? f.Brain / 100 + 1 : f.Brain < 600 ? 4 : 5;
             }
             _wantFinish = false; _frame = 0; _acc = 0f; _used = 0; _blocks = 0; _bigHits = 0;
+            _deathCount = 0; _cdTimer = -1; _fainted = false; _rising = false; _faintAcc = 0f;
 
             Partner.ShownHp = Partner.Hp; Enemy.ShownHp = Enemy.Hp;
             _barFrames = 21; _lifeBarOn = false; _hudAcc = 0f;
@@ -178,7 +240,7 @@ namespace DW1Remake.Game
             _player = player; _playerA = playerAnim;
             Snd(0x10);
             Active = true; Won = false; Fled = false; _phase = Phase.Notice; _time = 0f; _phaseStart = 0f; _running = false; _bannerUntil = 0f;
-            _swings.Clear(); _pops.Clear(); _throws.Clear(); ClearShots(); _log = ""; _startHp = Partner.Hp;
+            _swings.Clear(); _pops.Clear(); _throws.Clear(); _runners.Clear(); ClearShots(); _log = ""; _startHp = Partner.Hp;
             Partner.Scale = partner.localScale; Enemy.Scale = enemy.localScale;
             enemy.rotation = _face(partner.position - enemy.position);
             Stand(Partner);
@@ -233,15 +295,16 @@ namespace DW1Remake.Game
             if (!Active) return;
             float dt = Time.deltaTime; _time += dt;
             if (Effects != null) Effects.Tick(dt, Camera.main);
+            TickAura(dt);
             Animate(Partner); Animate(Enemy);
             foreach (var x in Extras) Animate(x);
-            for (int i = _pops.Count - 1; i >= 0; i--) { _pops[i].T += dt; if (_pops[i].T > 1.2f) _pops.RemoveAt(i); }
+            for (int i = _pops.Count - 1; i >= 0; i--) { _pops[i].T += dt; if (_pops[i].T >= 31f / 20f) _pops.RemoveAt(i); }     // renderEntityText: 31 frames
             foreach (var f in new[] { Partner, Enemy })
             {
                 if (f.A != null && f.A.Slot != WalkSlot && f.A.Slot != RunSlot && f.A.Slot != 2 && f.A.Slot != 4)      // the animation itself throws it back; it stays inside the fight
                 {
                     Vector3 next = f.T.position - f.T.forward * f.A.TakeBodyMove();
-                    if (InArea(next)) f.T.position = next;
+                    if (!LeavesScreen(f.T.position, next, 280, 200, RadiusOf(f))) OnGround(f.T, next - f.T.position);     // not into a wall (Glitch FAQ C2, see OnGround)
                 }
             }
             _hudAcc += dt;
@@ -254,30 +317,24 @@ namespace DW1Remake.Game
             }
             if (_phase == Phase.Fight && GameMenus.SelectKey()) _lifeBarOn = !_lifeBarOn;
             TickFx(dt);
-            for (int i = _throws.Count - 1; i >= 0; i--)
-            {
-                _throws[i].T += dt;
-                if (_throws[i].T >= 0.55f)
-                {
-                    var th = _throws[i]; _throws.RemoveAt(i);
-                    if (th.Heal > 0) _pops.Add(new Pop { Text = th.Heal.ToString(), Pos = Partner.T.position + Vector3.up * 0.9f, Col = new Color(0.4f, 1f, 0.4f) });
-                    if (th.Mana > 0) _pops.Add(new Pop { Text = th.Mana.ToString(), Pos = Partner.T.position + Vector3.up * 1.4f, Col = new Color(0.5f, 0.8f, 1f) });
-                }
-            }
+            TickThrows(dt);
             float inPhase = _time - _phaseStart;
 
             switch (_phase)
             {
                 case Phase.Notice:   // the enemy gets angry
                     TickBoy();
+                    TickRunners();
                     if (inPhase > 1.3f) SetPhase(Phase.Banner);
                     break;
                 case Phase.Banner:   // BATTLE; everyone takes their place
                 {
                     bool c = TickBoy();
                     bool wordDone = TickWord(dt);
-                    if (c && wordDone)
+                    bool gone = TickRunners();          // the fight waits for the runners to leave the screen
+                    if (c && wordDone && gone)
                     {
+                        RemoveRunners();
                         Enemy.T.rotation = _face(Partner.T.position - Enemy.T.position);
                         Partner.T.rotation = _face(Enemy.T.position - Partner.T.position);
                         SetPhase(Phase.Fight);
@@ -285,33 +342,62 @@ namespace DW1Remake.Game
                     break;
                 }
                 case Phase.Fight:
-                    if (!_charging && SquarePressed() && Partner.Finisher != null && Partner.Finish >= Partner.FinishMax) { _wantFinish = true; Partner.Pending = null; Partner.Wait = 0; }
+                    if (!_charging && SquarePressed() && Partner.Finisher != null && Partner.Finish >= Partner.FinishMax) { _wantFinish = true; Partner.Pending = null; Partner.Wait = 0; Snd(3); Shout(Partner.Finisher.Name); }     // battle_tick.c: command 0xB and its shout
                     if (triangle) { if (OnOpenBag != null) OnOpenBag(); }
                     if (side != 0) { Snd(2); MoveHover(side); }
                     if (action) { Snd(3); if (_playerA != null) _playerA.SetSlot(14, true); Choose(_hover - 1); }
-                    if (_charging) { TickCharge(dt); TickSwings(dt); TickShots(dt); break; }
+                    if (_charging) { HoldOthers(_chargeBy); TickCharge(dt); TickSwings(dt); TickShots(dt); break; }
+                    Fighter finishing = FinishingFighter();       // NO_AI_FLAG: while a finishing move runs nobody else thinks, moves or gains anything
                     _acc += dt;
-                    while (_acc >= Frame) { _acc -= Frame; _frame++; FrameTick(Partner, Enemy); if (Enemy.Hp > 0) FrameTick(Enemy, Partner); foreach (var x in Extras) if (x.Hp > 0) FrameTick(x, Partner); if (_shoutFrame >= 0 && ++_shoutFrame > 20) _shoutFrame = -1; }
-                    Move(Partner, Enemy, dt); Move(Enemy, Partner, dt);
-                    foreach (var x in Extras) if (x.Hp > 0) Move(x, Partner, dt);
+                    while (_acc >= Frame)
+                    {
+                        _acc -= Frame; _frame++;
+                        if (_running)
+                        {
+                            // battle_tick.c, each frame of the Run order, whatever the partner is doing: handleFleeing moves the boy, FLEE_TIMER counts;
+                            // BTL_isBattleFinished: FLEE_TIMER >= 0x29 ends the fight (always works, 41 frames after the order)
+                            TickFlee();
+                            if (++_runFrames > 40) { Fled = true; Sync(); ClearShots(); SetPhase(Phase.Fled); break; }
+                        }
+                        if (finishing == null) { FrameTick(Partner, Enemy); if (Enemy.Hp > 0) FrameTick(Enemy, Partner); foreach (var x in Extras) if (x.Hp > 0) FrameTick(x, Partner); }
+                        if (_shoutFrame >= 0 && ++_shoutFrame > 20) _shoutFrame = -1;
+                    }
+                    if (_phase != Phase.Fight) break;
+                    if (finishing != null) HoldOthers(finishing);
+                    else { Move(Partner, Enemy, dt); Move(Enemy, Partner, dt); foreach (var x in Extras) if (x.Hp > 0) Move(x, Partner, dt); }
                     TickSwings(dt); TickShots(dt);
-                    if (Enemy.Hp <= 0) { if (!NextEnemy()) Finish(true); }
-                    else if (Partner.Hp <= 0) Finish(false);
+                    if (Enemy.Hp <= 0) { if (!NextEnemy() && AllFallen()) Finish(true); }
+                    else if (TickFaint(dt)) Finish(false);
                     break;
                 case Phase.Win:
                     TickSwings(dt); TickShots(dt);
-                    if (!_fanfare && inPhase >= 41 * Frame) { _fanfare = true; Snd(0x18); }
-                    if (_fanfare && inPhase > 1.2f)
+                    // BTL_handleVictorySequence: after 41 frames sound 0x18, the boy cheers (slot 11) and the partner its win (42); the boxes come when both are done
+                    if (!_fanfare && inPhase >= 41 * Frame)
+                    {
+                        _fanfare = true; Snd(0x18);
+                        if (_playerA != null && _playerA.HasSlot(11)) _playerA.SetSlot(11, true);
+                        if (Partner.A != null && Partner.A.HasSlot(CheerSlot)) Partner.A.SetSlot(CheerSlot, true);
+                    }
+                    if (_fanfare && !_cheered && (_playerA == null || !_playerA.Busy) && (Partner.A == null || !Partner.A.Busy))
+                    {
+                        _cheered = true;
+                        if (_playerA != null) _playerA.SetSlot(_playerA.HasSlot(1) ? 1 : 0);
+                        Stand(Partner);
+                    }
+                    if (_cheered)
                     {
                         bool counting = _bitsLeft > 0 || HasLeft();
                         if (counting && (action || cancel)) SkipCounting();
-                        else if (!counting && (action || cancel)) End();
+                        else if (!counting && (action || cancel)) StartLeave();
                         else { _countAcc += dt; while (_countAcc >= Frame) { _countAcc -= Frame; CountFrame(); } }
                     }
                     break;
+                case Phase.Leave:
+                    // ours: a 10-second limit, in case a flee point is on the screen (the game would wait for ever)
+                    if (TickLeave() || inPhase > 10f) End();
+                    break;
                 case Phase.Lose:
-                    TickSwings(dt); TickShots(dt);
-                    if (inPhase > 3f && (action || cancel)) End();
+                    End();      // BTL_deinitializeCombat: no victory part; the life-lost scene follows on the map
                     break;
                 case Phase.Fled:
                     if (inPhase > 0.8f) End();
@@ -348,6 +434,7 @@ namespace DW1Remake.Game
             SetupTechs(f, info, data);
             f.FinishMax = 3000 - f.Spd; f.Bore = f.Brain / 10 + 5; f.SelfUses = f.Brain < 400 ? f.Brain / 100 + 1 : f.Brain < 600 ? 4 : 5;
             f.ShownHp = f.Hp;
+            f.FleeTo = FleeOf(data, t);
             _enemyBits += data.Bits;
             t.rotation = _face(Partner.T.position - t.position);
             Stand(f);
@@ -365,9 +452,45 @@ namespace DW1Remake.Game
 
         void SetPhase(Phase p) { _phase = p; _phaseStart = _time; if (p == Phase.Banner) { Snd(0x11); StartWord(); } }
 
+        // after the result boxes (BTL_handleVictorySequence): every enemy gets up (0x2C); in a scripted fight they then stand (0x21);
+        // in a wild one they run (0x24) towards their map record's flee point until all of them are off the screen (entityIsOffScreen 0x140 x 0xF0)
+        void StartLeave()
+        {
+            SetPhase(Phase.Leave);
+            foreach (var f in Enemies()) { f.Leaving = 0; if (f.A != null && f.A.HasSlot(0x2C)) f.A.SetSlot(0x2C, true); }
+        }
+
+        IEnumerable<Fighter> Enemies() { yield return Enemy; foreach (var x in Extras) yield return x; }
+
+        bool TickLeave()
+        {
+            Camera cam = Camera.main;
+            bool done = true;
+            foreach (var f in Enemies())
+            {
+                if (f.T == null) continue;
+                if (f.Leaving == 0)
+                {
+                    if (f.A != null && f.A.Busy) { done = false; continue; }
+                    if (NoFlee) { if (f.A != null && f.A.HasSlot(0x21)) f.A.SetSlot(0x21); f.Leaving = 2; continue; }
+                    if (f.A != null && f.A.HasSlot(0x24)) f.A.SetSlot(0x24);
+                    f.Leaving = 1;
+                }
+                if (f.Leaving != 1) continue;
+                // entityLookAtLocation(flee), then the run animation carries it
+                Vector3 d = f.FleeTo - f.T.position; d.y = 0f;
+                if (d.sqrMagnitude > 0.0001f) f.T.rotation = _face(d);
+                if (f.A != null) f.T.position -= f.T.forward * f.A.TakeBodyMove();
+                bool off = true;
+                if (cam != null) { Vector3 v = cam.WorldToViewportPoint(f.T.position); off = !(v.z > 0 && v.x > 0f && v.x < 1f && v.y > 0f && v.y < 1f); }
+                if (!off) done = false;
+            }
+            return done;
+        }
+
         void End()
         {
-            if (_phase == Phase.Win) { int[] idx = { 4, 5, 0, 1, 2, 3 }; for (int i = 0; i < 6; i++) _s.SetStat(idx[i], _before[i] + _gain[i]); _s.Money += _bits; if (Partner.A != null) Partner.A.SetSlot(0); }
+            if (_phase == Phase.Win || _phase == Phase.Leave) { int[] idx = { 4, 5, 0, 1, 2, 3 }; for (int i = 0; i < 6; i++) _s.SetStat(idx[i], _before[i] + _gain[i]); _s.Money += _bits; if (Partner.A != null) Partner.A.SetSlot(0); }
             ClearShots();
             Active = false;
             foreach (var f in new[] { Partner, Enemy }) if (f.A != null) f.A.BodyMovesItself = false;
@@ -389,6 +512,8 @@ namespace DW1Remake.Game
             {
                 if (NoFlee) return;
                 _running = true; _runFrames = 0; _order = RunOrder; Shout("Run!");
+                // command 1: the boy's run (animation 3) starts at once, over the animation 0xE of the order
+                if (_playerA != null) _playerA.SetSlot(PlayerRunSlot);
                 return;
             }
             if (o == ChangeOrder) { Shout("Change!"); NextEnemy(); return; }
@@ -400,7 +525,12 @@ namespace DW1Remake.Game
 
         void Shout(string s) { _shout = s; _shoutFrame = 0; }
 
-        void Animate(Fighter f) { if (f != null && f.A != null && f.AnimReset > 0f && _time >= f.AnimReset) { f.AnimReset = 0f; if (f.Hp > 0) Stand(f); } }
+        // a fighter at 0 HP first finishes its hit reaction, then collapses (slot 43, BTL_faintDigimon)
+        void Animate(Fighter f) { if (f != null && f.A != null && f.AnimReset > 0f && _time >= f.AnimReset) { f.AnimReset = 0f; if (f.Hp > 0) Stand(f); else if (f.A.HasSlot(DownSlot)) f.A.SetSlot(DownSlot, true); } }
+
+        // BTL_isBattleFinished: won once every enemy's collapse animation has played to its end
+        bool Fallen(Fighter f) { return f.Hp <= 0 && (f.A == null || !f.A.HasSlot(DownSlot) ? f.AnimReset == 0f : f.A.Slot == DownSlot && !f.A.Busy); }
+        bool AllFallen() { if (!Fallen(Enemy)) return false; foreach (var x in Extras) if (!Fallen(x)) return false; return true; }
 
         // the battle stance (models without one use the normal idle)
         void Stand(Fighter f) { if (f.A != null) f.A.SetSlot(f.A.HasSlot(IdleSlot) ? IdleSlot : 0); }
@@ -417,14 +547,20 @@ namespace DW1Remake.Game
         const int EmptyWait = 80, StallFrames = 100;
         float _acc; int _frame;
         bool _wantFinish;                                                  // the player chose the finishing move
-        bool _running; int _runFrames; Camera _view;                       // Run: the partner goes to the boy and the fight ends after 41 frames
+        bool _running; int _runFrames; Camera _view;                       // Run (FLEE_TIMER): the boy runs off, the picture fades to black from frame 20, the fight ends after 41 frames
+        /// <summary>handleFleeing: where the boy runs once he is back on the tile he came in on: 3000 units out of the map from his arrival point,
+        /// against its exit's rotation (MAP_WARPS spawn of CURRENT_EXIT); the room sets it (Unity position).</summary>
+        public Vector3 FleeOut;
         static readonly int[] PowerRank = { 50, 20, 5 }, CostRank = { 50, 20, 10 }, ReachRank = { 10, 5, 0 };
 
         static int EffectBonus(int effect) { return effect == 2 ? 1 : effect == 5 ? 3 : effect == 10 ? 5 : effect == 15 ? 7 : effect == 20 ? 10 : 0; }
         static int FirstType(Fighter f) { return f.Info != null ? f.Info.Specials[0] : 255; }
 
         // code 0x8005D378: what makes a technique usable now
-        bool Usable(Fighter me, Tech t) { return t != null && t.Id != 45 && me.Mp >= Cost(me, t, me == Partner) && (!t.Self || me.SelfUses > 0); }
+        // BTL_isMoveUsable: technique 0x2D and the finishing moves (0x3A-0x70) are never picked as normal moves; an enemy's finisher (slot 3) comes only from its full gauge
+        bool Usable(Fighter me, Tech t) { return t != null && t.Id != 45 && !IsFinisherId(t.Id) && me.Mp >= Cost(me, t, me == Partner) && (!t.Self || me.SelfUses > 0); }
+
+        static bool IsFinisherId(int id) { return id >= 0x3A && id < 0x71; }
 
         // code 0x8005D6E4: how full the energy bar must be before the technique starts, by the fighter's style
         static bool Ready(Fighter me, Tech t) { return me.Style == 2 ? me.Energy >= 100 : me.Style == 1 ? me.Energy == 100 || me.Energy >= t.Power : me.Energy > 0; }
@@ -441,7 +577,7 @@ namespace DW1Remake.Game
                 int dmg = me.MaxHp * (_rng.Next(3) + 1) / 100;
                 if (me == Enemy) _barFrames = 0;
                 me.Hp = Mathf.Max(0, me.Hp - dmg);
-                _pops.Add(new Pop { Text = dmg.ToString(), Pos = me.T.position + Vector3.up * 0.9f, Col = new Color(0.75f, 0.4f, 1f) });
+                _pops.Add(new Pop { Text = dmg.ToString(), Pos = me.T.position + Vector3.up * 0.9f, Col = new Color(1f, 0f, 1f) });     // TEXT_COLORS[0xC] (battle_main.c poison)
                 Sync();
             }
             if (me.Flat > 0 && --me.Flat == 0) me.T.localScale = me.Scale;
@@ -567,22 +703,23 @@ namespace DW1Remake.Game
             {
                 if (_running)
                 {
+                    // the partner (moveRange 1) goes after the boy: ours, the battle AI's moveRange 1 is not traced
                     if (_player != null && !MoveTo(me.T, me.A, _player.position, 4.5f, dt)) { }
-                    if (++_runFrames > 40) { Fled = true; Sync(); ClearShots(); SetPhase(Phase.Fled); }      // always works, 41 frames after the order
                     return;
                 }
                 if (_order == DefensiveOrder) { Hold(me, foe, dt); return; }
                 if (_order == DistanceOrder)
                 {
                     float keep = MaxReachSq(foe) + 640000f + (moving ? 160000f : 0f);
-                    if (dSq < keep) BackAway(me, foe, dt, walk); else Hold(me, foe, dt);
+                    if (dSq < keep) BackAway(me, foe, dt, walk); else { me.Collided = false; Hold(me, foe, dt); }
                     return;
                 }
             }
             var t = me.Pending;
             if (t != null && Ready(me, t))
             {
-                if (!Usable(me, t)) { me.Pending = null; return; }
+                // a finishing move is queued from the gauge (BTL_tickEnemyAI / command 0xB) and never checked again; BTL_isMoveUsable only screens normal moves
+                if (!t.Finisher && !Usable(me, t)) { me.Pending = null; return; }
                 var target = me.PendingTarget ?? foe;
                 if (t.Self || me.Blind) { Begin(me, target, t); return; }
                 Vector3 to = Flat(foe.T.position - me.T.position).normalized;
@@ -615,14 +752,83 @@ namespace DW1Remake.Game
         }
 
         // BTL_backAwayFromTarget: straight away; at the edge of the fight it turns a quarter, else stands
+        // BTL_backAwayFromTarget. Headings in game units (4096 a turn; front = (-sin, -cos)). Straight away until something blocks; then
+        // BTL_findUnblockedRotation picks a free heading, and from then on (hasCollidedWhileDistanceCmd) it turns back towards "away" by at most 20 a frame.
         void BackAway(Fighter me, Fighter foe, float dt, int walk)
         {
-            Vector3 away = Flat(me.T.position - foe.T.position).normalized, side = Vector3.Cross(Vector3.up, away);
-            if (InArea(me.T.position + away * 0.2f)) Step(me, away, foe, dt, walk);
-            else if (InArea(me.T.position + side * 0.2f)) Step(me, side, foe, dt, walk);
-            else if (InArea(me.T.position - side * 0.2f)) Step(me, -side, foe, dt, walk);
-            else Hold(me, foe, dt);
+            int toward = AngleOf(foe.T.position - me.T.position), away = (toward + 0x800) & 0xFFF;
+            int orig = me.Head < 0 ? away : me.Head, rot;
+            if (!me.Collided)
+            {
+                rot = away;
+                int hit = Blocked(me, rot);
+                if (hit != -1) { me.Collided = true; rot = Unblocked(me, rot, hit, orig); }
+            }
+            else if (orig == FighterAngle(foe))
+            {
+                rot = (orig + 0x400) & 0xFFF;
+                if (Blocked(me, rot) != -1) { rot = (orig + 0xC00) & 0xFFF; if (Blocked(me, rot) != -1) { int hit = Blocked(me, orig); rot = hit != -1 ? Unblocked(me, orig, hit, orig) : orig; } }
+            }
+            else
+            {
+                int ccw = (orig - away) & 0xFFF, cw = (away - orig) & 0xFFF, turn = Mathf.Max(1, Mathf.RoundToInt(20f * dt * 20f));
+                rot = ccw - cw < 0 ? (ccw > turn ? orig - turn : orig - ccw) : (cw > turn ? orig + turn : orig + cw);
+                rot &= 0xFFF;
+                if (Blocked(me, rot) != -1) { int hit = Blocked(me, orig); rot = hit != -1 ? Unblocked(me, orig, hit, orig) : orig; }
+            }
+            if (rot < 0) { Hold(me, foe, dt); return; }
+            me.Head = rot;
+            Step(me, Front(rot), foe, dt, walk);
         }
+
+        static readonly int[] Cardinal = { 0, 1024, 2048, 3072 };
+
+        // BTL_findUnblockedRotation for the fight's edge (hit 11). A wall or another Digimon goes to collisionGrace, which is not ported: it stays (-1).
+        int Unblocked(Fighter me, int rot, int hit, int orig)
+        {
+            if (hit != 11) return -1;
+            int b = Cardinal[(rot & 0xFFF) / 1024], i;
+            int[] cand = { b, (b + 0x400) & 0xFFF, 0 };
+            for (i = 0; i < 2; i++) if (Blocked(me, cand[i]) == -1) break;
+            int start = i == 0 ? 0xC00 : i == 1 ? 0x400 : 0x800;
+            int k;
+            for (k = 0; k < 3; k++)
+            {
+                cand[k] = (b + start + k * 0x200) & 0xFFF;
+                if (Blocked(me, cand[k]) != -1) break;
+            }
+            if (i >= 2 && k == 3) { int back = (orig + 0x800) & 0xFFF; if (Blocked(me, back) == -1) return back; }
+            if (k != 3) return -1;           // collisionGrace
+            int r = (cand[0] + _rng.Next(0x400)) & 0xFFF;
+            return Blocked(me, r) == -1 ? r : -1;
+        }
+
+        // entityCheckCollision with the fight box (280 x 200): 11 = it would leave the fight area, 10 = a wall, -1 = free. Other Digimon are not tested here.
+        int Blocked(Fighter me, int rot)
+        {
+            Vector3 next = me.T.position + Front(rot) * 0.2f;
+            if (LeavesScreen(me.T.position, next, 280, 200, RadiusOf(me))) return 11;
+            if (Walkable != null && !Walkable(next) && Walkable(me.T.position)) return 10;     // already in a wall: let it walk out (see OnGround)
+            return -1;
+        }
+
+        // Fix for the original's "stuck in the scenery" glitches (GameFAQs Glitch FAQ C2, and E: the boy in Factorial Town): a fighter or the
+        // boy never steps from walkable ground into a wall; it slides along it, and one that is already inside a wall may walk out.
+        // False when no part of the step could be taken.
+        bool OnGround(Transform t, Vector3 by)
+        {
+            Vector3 pos = t.position;
+            if (Walkable == null || !Walkable(pos) || Walkable(pos + by)) { t.position = pos + by; return true; }
+            if (Walkable(pos + new Vector3(by.x, 0, 0))) { t.position = pos + new Vector3(by.x, 0, 0); return true; }
+            if (Walkable(pos + new Vector3(0, 0, by.z))) { t.position = pos + new Vector3(0, 0, by.z); return true; }
+            return false;
+        }
+
+        static Vector3 Front(int a) { float r = a * Mathf.PI * 2f / 4096f; return new Vector3(-Mathf.Sin(r), 0f, -Mathf.Cos(r)); }
+        static int AngleOf(Vector3 d) { return ((int)(Mathf.Atan2(-d.x, -d.z) / (Mathf.PI * 2f) * 4096f)) & 0xFFF; }
+        int FighterAngle(Fighter f) { return f.Head >= 0 ? f.Head : -2; }
+
+        static float RadiusOf(Fighter f) { return (f.Info != null ? f.Info.Radius : 0) * 0.01f; }
 
         // the fight stays inside a screen area of 280 x 200 of the PS1's 320 x 240 (entityCheckCombatArea)
         bool InArea(Vector3 p)
@@ -652,7 +858,7 @@ namespace DW1Remake.Game
 
         void Step(Fighter me, Vector3 dir, Fighter foe, float dt, int walk)
         {
-            me.T.position += dir * (me.A != null ? me.A.TakeForward() : 0f);      // the animation carries it: one step, one step sound
+            OnGround(me.T, dir * (me.A != null ? me.A.TakeForward() : 0f));      // the animation carries it: one step, one step sound
             me.T.rotation = Quaternion.RotateTowards(me.T.rotation, _face(dir), 400f * dt);
             if (me.A != null && me.A.Slot != walk) me.A.SetSlot(walk);
         }
@@ -667,7 +873,7 @@ namespace DW1Remake.Game
 
         void Begin(Fighter me, Fighter target, Tech t)
         {
-            me.Pending = null;
+            me.Pending = null; me.Collided = false;
             if (!me.Blind) me.T.rotation = _face(target.T.position - me.T.position);
             if (me == Partner || !NoFlee) me.Mp -= Cost(me, t, me == Partner);     // enemies in scripted fights pay nothing
             if (t.Self) me.SelfUses--;
@@ -675,9 +881,10 @@ namespace DW1Remake.Game
             if (me != Partner && t.Id < 58 && !_seen.Contains(t.Id) && _seen.Count < 12) _seen.Add(t.Id);
             if (t.Finisher)
             {
-                me.Finish = 0; _banner = t.Name; _bannerUntil = _time + 2.6f;
-                if (me == Partner) { _charging = true; _chargeT = 0f; _chargeCount = 0; _chargeTech = t; _chargeFoe = target; ShowRing(true); }
-                else StartSwing(me, target, t, 1f + _rng.Next(0, 101) / 100f);
+                me.Finish = 0;
+                // BTL_tickMeleeAttack / BTL_tickRangedAttack: any fighter's finishing move first gets the aura and holds 80 frames (BTL_FINISHER_TIMER) facing
+                // its target while nobody else acts; only the partner fills a bar (BTL_initializeFinisherChargeup)
+                _charging = true; _chargeBy = me; _chargeT = 0f; _chargeCount = 0; _chargeTech = t; _chargeFoe = target; ShowRing(true);
                 return;
             }
             StartSwing(me, target, t, 1f);
@@ -693,13 +900,14 @@ namespace DW1Remake.Game
             length = Mathf.Max(length, release + 0.3f);
             var swing = new Swing { From = me, To = foe, Tech = tech, Start = me.T.position, Boost = boost, Release = release, Length = length };
             _swings.Add(swing);
-            StartEffect(swing);
+            StartEffect(swing);      // BTL_setupMoveExecution starts the effect (BTL_startEFE) the moment the move starts; its program times itself
+            swing.DrawnAtStart = Effects != null ? Effects.Drawn : 0;
             Play(me, slot, length);
             Sync();
         }
 
         // the partner's finishing move: 80 frames in which L1 and R1 (Q and E) fill a bar; from just over half it multiplies the blow, up to double
-        bool _charging; float _chargeT; int _chargeCount; Tech _chargeTech; Fighter _chargeFoe;
+        bool _charging; float _chargeT; int _chargeCount; Tech _chargeTech; Fighter _chargeFoe, _chargeBy;
         const float ChargeSeconds = 80f / 20f;
 
         // Square (X on the keyboard): fires the finishing move once FINISH!! shows
@@ -715,32 +923,74 @@ namespace DW1Remake.Game
 #endif
         }
 
-        // the yellow ring on the ground around the partner while the bar fills (reference/4.mp4); our drawing, the game's effect art is not decoded
-        GameObject _ring; static Texture2D _ringTex;
+        // the finisher aura (BTL_addFinisherAura, 80 frames; BTL_renderFinisherAura). BTL_REL.BIN starts with its TIM (VRAM 768,448) and holds its TMD at 0xD20:
+        // objects 0-2 the light column in three turns (one every 2 frames), 3 the ground disc, 4 a wider disc turned at random. Added to the picture,
+        // colour 60 (90 for the disc), as BTL_initializeFinisherAuraModel sets them. The ten sparks of the first 7 frames are not drawn yet.
+        Mesh[] _auraMesh; Material _auraMat; readonly MaterialPropertyBlock _auraMp = new MaterialPropertyBlock();
+        int _auraFrame = -1; float _auraAcc; int _auraSpin;
 
-        void ShowRing(bool on)
+        public void LoadAura(byte[] btl)
         {
-            if (_ring != null) { UnityEngine.Object.Destroy(_ring); _ring = null; }
-            if (!on) return;
-            if (_ringTex == null)
+            try
             {
-                const int n = 128;
-                _ringTex = new Texture2D(n, n, TextureFormat.RGBA32, false);
-                for (int y = 0; y < n; y++) for (int x = 0; x < n; x++)
+                TimImage tim;
+                if (btl == null || !TimImage.TryParse(btl, 0, out tim)) return;
+                const int At = 0xD20;
+                var buf = new byte[btl.Length - At + 4];
+                buf[0] = 4; Array.Copy(btl, At, buf, 4, btl.Length - At);
+                var model = MmdModel.Parse(buf);
+                _auraMesh = new Mesh[model.Parts.Count];
+                for (int k = 0; k < _auraMesh.Length; k++)
                 {
-                    float d = new Vector2(x - n / 2f, y - n / 2f).magnitude / (n / 2f);
-                    float a = d > 1f ? 0f : Mathf.Clamp01(1f - Mathf.Abs(d - 0.8f) / 0.2f) + 0.25f * (1f - d);
-                    _ringTex.SetPixel(x, y, new Color(1f, 1f, 0.7f, Mathf.Clamp01(a)));
+                    var part = model.Parts[k];
+                    var v = new List<Vector3>(); var uv = new List<Vector2>(); var t = new List<int>();
+                    foreach (var f in part.Faces)
+                        for (int n = 0; n < 3; n++)
+                        {
+                            int q = f.V[n] * 3;
+                            t.Add(v.Count);
+                            v.Add(new Vector3(part.Verts[q], -part.Verts[q + 1], part.Verts[q + 2]) * 0.01f);
+                            uv.Add(new Vector2((f.U[n] + 0.5f) / tim.Width, 1f - (f.T[n] - 192 + 0.5f) / tim.Height));     // the TIM sits at v 192 of its page
+                        }
+                    var m = new Mesh(); m.SetVertices(v); m.SetUVs(0, uv); m.SetTriangles(t, 0); m.RecalculateBounds();
+                    _auraMesh[k] = m;
                 }
-                _ringTex.Apply();
+                var sh = Shader.Find("DW1Remake/Effect");
+                if (sh != null) { _auraMat = new Material(sh); _auraMat.mainTexture = tim.ToTexture(0); }
             }
-            _ring = GameObject.CreatePrimitive(PrimitiveType.Quad);
-            var c = _ring.GetComponent<Collider>(); if (c != null) UnityEngine.Object.Destroy(c);
-            if (_shotMat == null) _shotMat = new Material(Shader.Find("Sprites/Default"));
-            _ring.GetComponent<MeshRenderer>().sharedMaterial = new Material(_shotMat) { mainTexture = _ringTex };
-            _ring.transform.position = Partner.T.position + Vector3.up * 0.05f;
-            _ring.transform.rotation = Quaternion.Euler(90f, 0f, 0f);
-            _ring.transform.localScale = Vector3.one * 3f;
+            catch (Exception e) { Debug.LogWarning("Finisher aura not available: " + e.Message); _auraMesh = null; }
+        }
+
+        void ShowRing(bool on) { _auraFrame = on ? 0 : -1; _auraAcc = 0f; }
+
+        static int PsSin(int a) { return Mathf.RoundToInt(Mathf.Sin((a & 0x1FF) * Mathf.PI * 2f / 512f) * 4096f); }
+
+        void TickAura(float dt)
+        {
+            Fighter who = _chargeBy ?? Partner;
+            if (_auraFrame < 0 || who == null) return;
+            _auraAcc += dt;
+            while (_auraAcc >= Frame) { _auraAcc -= Frame; _auraSpin = _rng.Next(4096); if (++_auraFrame > 80) { _auraFrame = -1; return; } }
+            if (_auraMesh == null || _auraMesh.Length < 5 || _auraMat == null) return;
+            int fr = _auraFrame;
+            int radius = who.Info != null ? who.Info.Radius : 150, height = who.Info != null ? who.Info.Height : 350;
+            int sx = fr < 10 ? (4096 - PsSin(fr * 0x80 / 9 + 128)) * 0xB34 / 4096 + 0x4CC : 4096;
+            sx = sx * radius / 150;
+            int t = (0x200 * fr / 16) % 0x201;
+            int sy = fr < 5 ? fr * 4096 / 4 : 4096;
+            sy = sy * height / 350;
+            sy = sy * 85 / 100 + sy * 15 / 100 * PsSin(t) / 4096;
+            Vector3 at = who.T.position, s = new Vector3(sx, sy, sx) / 4096f;
+            DrawAura(fr / 2 % 3, at, Quaternion.identity, s, 60);
+            DrawAura(3, at, Quaternion.identity, s, 90);
+            DrawAura(4, at, Quaternion.Euler(0f, _auraSpin * 360f / 4096f, 0f), new Vector3(s.x * 1.4f, s.y, s.z * 1.4f), 60);
+        }
+
+        void DrawAura(int obj, Vector3 at, Quaternion rot, Vector3 scale, int colour)
+        {
+            float c = colour / 128f;
+            _auraMp.SetTexture("_MainTex", _auraMat.mainTexture); _auraMp.SetColor("_Color", new Color(c, c, c, 1f)); _auraMp.SetVector("_Rect", new Vector4(0, 0, 1, 1));
+            Graphics.DrawMesh(_auraMesh[obj], Matrix4x4.TRS(at, rot, scale), _auraMat, 0, null, 0, _auraMp);
         }
 
         static int ChargePresses()
@@ -756,15 +1006,46 @@ namespace DW1Remake.Game
             return n;
         }
 
+        // the fighter whose finishing move is running (NO_AI_FLAG, FINISHING_ENTITY), if any
+        Fighter FinishingFighter()
+        {
+            foreach (var sw in _swings) if (sw.Tech.Finisher) return sw.From;
+            return null;
+        }
+
+        // BTL_tickQueuedMove, BTL_tickChargeState...: under NO_AI_FLAG every other fighter that is not in the middle of something (hit, block, attack, stun, flat, down) goes back to its idle stance (handleBattleIdle) and stays
+        void HoldOthers(Fighter finishing)
+        {
+            var all = new List<Fighter> { Partner, Enemy };
+            all.AddRange(Extras);
+            foreach (var f in all)
+            {
+                if (f == finishing || f.Hp <= 0 || f.A == null) continue;
+                bool acting = f.AnimReset > 0f || _time < f.NextAct || _time < f.StunUntil || f.Flat > 0 || f.Stall > 0;
+                foreach (var sw in _swings) if (sw.From == f) acting = true;
+                if (acting) continue;
+                if (f.A.Slot != IdleSlot && f.A.Slot != 0) Stand(f);
+                f.A.TakeForward(); f.A.TakeBodyMove();      // what its walk would have moved must not be paid out later
+            }
+        }
+
         void TickCharge(float dt)
         {
+            var me = _chargeBy;
+            if (me.A != null)      // it stands facing the target (BTL_FINISHER_TIMER, entityLookAtLocation)
+            {
+                if (me.A.Slot != IdleSlot && me.A.Slot != 0) Stand(me);
+                me.A.TakeForward(); me.A.TakeBodyMove();
+            }
+            if (_chargeFoe != null) me.T.rotation = _face(_chargeFoe.T.position - me.T.position);
             _chargeT += dt;
-            _chargeCount = Mathf.Min(80, _chargeCount + ChargePresses() * 2);     // each press of L1 or R1 adds 2, up to 80 (code 0x80062148)
+            if (me == Partner) _chargeCount = Mathf.Min(80, _chargeCount + ChargePresses() * 2);     // each press of L1 or R1 adds 2, up to 80 (code 0x80062148)
             if (_chargeT >= ChargeSeconds)
             {
                 _charging = false;
                 ShowRing(false);
-                StartSwing(Partner, _chargeFoe, _chargeTech, _chargeCount >= 41 ? _chargeCount / 40f : 1f);
+                // the partner's blow x count / 40 from 41 up; an enemy's x a random 1.00 to 2.00 (the damage code)
+                StartSwing(me, _chargeFoe, _chargeTech, me == Partner ? (_chargeCount >= 41 ? _chargeCount / 40f : 1f) : 1f + _rng.Next(0, 101) / 100f);
             }
         }
 
@@ -785,9 +1066,16 @@ namespace DW1Remake.Game
                     {
                         // the blow lands only if the target is still within the distance it was started from
                         float radii = (sw.From.Info != null ? sw.From.Info.Radius : 0) + (sw.To.Info != null ? sw.To.Info.Radius : 0);
-                        if (Vector3.Distance(Flat(sw.From.T.position), Flat(sw.To.T.position)) * 100f <= radii * 1.3f) Apply(sw.From, sw.To, sw.Tech, sw.Boost);
+                        if (Vector3.Distance(Flat(sw.From.T.position), Flat(sw.To.T.position)) * 100f <= radii * 1.3f) Apply(sw.From, sw.To, sw.Tech, sw.Boost, sw.HitAt);
                         else Miss(sw.To);
                     }
+                }
+                // an effect that put nothing on the screen would leave the shot invisible: use the plain shot instead and say so
+                if (sw.Effect && !sw.Landed && !sw.Fell && Effects != null && sw.T >= sw.Release + 0.4f && Effects.Drawn == sw.DrawnAtStart)
+                {
+                    sw.Fell = true; sw.Effect = false; sw.Landed = true;
+                    Debug.LogWarning("[effect] " + sw.Tech.Name + ": its program drew nothing in 0.4 s, using the plain shot (runs " + Effects.Running + ")");
+                    if (ranged && !sw.Tech.Wide) Fire(sw); else Apply(sw.From, sw.To, sw.Tech, sw.Boost);
                 }
                 if (sw.T >= Mathf.Max(sw.Length, sw.Release + 0.5f) && (!sw.Effect || sw.Landed || sw.T > sw.Release + 4f))
                 {
@@ -803,24 +1091,32 @@ namespace DW1Remake.Game
 
         static Vector3 Flat(Vector3 v) { v.y = 0; return v; }
 
+        EffectActor ActorFor(Fighter f)
+        {
+            return new EffectActor { T = f.T, A = f.A, Type = f.Info != null ? f.Info.Type : 0, Radius = f.Info != null ? f.Info.Radius : 120, Height = f.Info != null ? f.Info.Height : 200, BoneCount = f.Info != null ? f.Info.BoneCount : 2 };
+        }
+
+        // where a blow lands when no effect part said so: the target's bone 1 (ours; the game always has the effect's attack object)
+        static Vector3 HitPoint(Fighter d) { var b = d.A != null ? d.A.Node(1) : null; return b != null ? b.position : d.T.position + Vector3.up * 0.8f; }
+
         // BTL_startEFE: the technique's own effect from the disc. Ranged ones then decide the hit themselves; a blow by hand still lands with its animation.
         void StartEffect(Swing sw)
         {
             if (Effects == null || sw.Tech.Self) return;
-            Func<Fighter, EffectActor> actor = f => new EffectActor { T = f.T, A = f.A, Type = f.Info != null ? f.Info.Type : 0, Radius = f.Info != null ? f.Info.Radius : 120, Height = f.Info != null ? f.Info.Height : 200 };
             bool ok = false;
             try
             {
-                ok = Effects.Start(sw.Tech.Id, actor(sw.From), actor(sw.To), at =>
+                ok = Effects.Start(sw.Tech.Id, ActorFor(sw.From), ActorFor(sw.To), at =>
                 {
+                    // BTL_addAttackObjectToTarget: the attack object sits where the effect part touched; the hit effect starts there
+                    sw.HitAt = at;
                     if (sw.Tech.Melee || sw.Landed) return;
                     sw.Landed = true;
-                    _quietHit = true;
-                    Apply(sw.From, sw.To, sw.Tech, sw.Boost);
-                    _quietHit = false;
+                    Apply(sw.From, sw.To, sw.Tech, sw.Boost, at);
                 });
             }
             catch (Exception e) { Debug.LogWarning("Effect of " + sw.Tech.Name + ": " + e.Message); }
+            Debug.Log("[effect] start " + sw.Tech.Name + " (technique " + sw.Tech.Id + ") by " + sw.From.Name + ": " + (ok ? "program running" : "no program, plain shot"));
             sw.Effect = ok && !sw.Tech.Melee;
         }
 
@@ -880,18 +1176,6 @@ namespace DW1Remake.Game
             go.GetComponent<MeshRenderer>().sharedMaterial = mat;
             go.transform.position = pos; go.transform.localScale = Vector3.one * s0;
             _fx.Add(new Fx { Go = go, Mat = mat, Vel = vel, Life = life, S0 = s0, S1 = s1, Col = col });
-        }
-
-        // the hit in the recording: a white-yellow flash, then yellow sparks flying out for half a second
-        void Burst(Vector3 pos, Color tint, float size, bool big)
-        {
-            NewFx(pos, new Color(1f, 0.97f, 0.8f, 1f), 3.4f * size, 0.9f * size, 0.22f, Vector3.zero);    // 3.5 m wide at first, gone in about 0.2 s (53.4-53.6 s)
-            int n = big ? 34 : 7;     // about 35 sparks of 0.3 m, spreading about 2.5 m in 0.6 s (33.9 and 53.8 s)
-            for (int i = 0; i < n; i++)
-            {
-                Vector3 v = UnityEngine.Random.onUnitSphere; v.y = Mathf.Abs(v.y) * 0.8f + 0.2f;
-                NewFx(pos, Color.Lerp(new Color(1f, 0.9f, 0.45f), tint, 0.25f), 0.32f * size, 0.2f, 0.7f, v * UnityEngine.Random.Range(1.5f, 4f));
-            }
         }
 
         void TickFx(float dt)
@@ -983,11 +1267,12 @@ namespace DW1Remake.Game
 
         // a block (code 0x8005CADC): the pose of slot 37 facing the attacker. A short-range blow still does 10-30% of its damage; a long-range one nothing.
         // The finishing gauges gain here: 6% for the blocker, 8% for the attacker.
-        void Block(Fighter a, Fighter d, Tech tech, float v)
+        void Block(Fighter a, Fighter d, Tech tech, float v, Vector3 at)
         {
             d.T.rotation = _face(a.T.position - d.T.position);
             Play(d, BlockSlot, d.A != null ? d.A.SecondsOf(BlockSlot) : 0f);
-            NewFx(d.T.position + Vector3.up * 0.8f, new Color(1f, 0.97f, 0.8f, 1f), 0.2f, 0.7f, 0.2f, Vector3.zero);
+            // BTL_tickAttackHits, a blocked blow: createParticleFX(0, 2, attack position, the blocker, 0x11)
+            if (Effects != null) Effects.AddHitFx(0, 2, at, ActorFor(d), 0x11);
             AddFinish(d, d.FinishMax * 3 / 50);
             AddFinish(a, a.FinishMax * 4 / 50);
             if (d == Partner) _blocks++;
@@ -1015,21 +1300,26 @@ namespace DW1Remake.Game
             }
             f.Off = Mathf.Min(999, f.Off + off); f.Def = Mathf.Min(999, f.Def + def); f.Spd = Mathf.Min(999, f.Spd + spd);
             int shown = off + def + spd;
-            if (shown > 0) _pops.Add(new Pop { Text = "+" + shown, Pos = f.T.position + Vector3.up * 1.2f, Col = new Color(1f, 0.7f, 0.2f) });
+            if (shown > 0) _pops.Add(new Pop { Text = "+" + shown, Pos = f.T.position + Vector3.up * 1.2f, Col = new Color(0f, 1f, 0f) });     // BTL_buffStats: colour 0xB
         }
 
-        void Apply(Fighter a, Fighter d, Tech tech, float boost = 1f)
+        void Apply(Fighter a, Fighter d, Tech tech, float boost = 1f, Vector3? at = null)
         {
             if (d.Hp <= 0) return;
+            Vector3 hitAt = at ?? HitPoint(d);
+            // the hit code (battle_main.c), before the hit roll: a blow on the fighter whose finishing move is running ends it
+            // (BTL_removeFinisherChargeup, BTL_removeFinisherAura, NO_AI_FLAG and FINISHING_ENTITY cleared, BTL_removeMoveEffect)
+            if (_charging && _chargeBy == d) { _charging = false; ShowRing(false); _chargeBy = null; }
+            for (int i = _swings.Count - 1; i >= 0; i--) if (_swings[i].From == d && _swings[i].Tech.Finisher && !_swings[i].Done) _swings.RemoveAt(i);
             float v = Damage(a, d, tech, boost);
-            if (a != d && Blocks(a, d, tech)) { Block(a, d, tech, v); return; }
+            if (a != d && Blocks(a, d, tech)) { Block(a, d, tech, v, hitAt); return; }
             int dmg = Mathf.Max(1, Mathf.RoundToInt(v));
             d.Hp = Mathf.Max(0, d.Hp - dmg);
             if (d == Enemy) _barFrames = 0;
             if (d == Partner && dmg * 100 / Partner.MaxHp >= 20) _bigHits++;
             _pops.Add(new Pop { Text = dmg.ToString(), Pos = d.T.position + Vector3.up * 0.9f, T = 0f, Col = Color.white });
             Vector3 away = Flat(d.T.position - a.T.position); if (away.sqrMagnitude < 0.01f) away = Vector3.left;
-            if (d.Hp > 0)
+            // the reaction plays even on the last blow; the collapse follows when it ends (Animate)
             {
                 // the game picks the reaction by which side was hit; the fighter can do nothing until it ends. The model's front is -Z.
                 bool front = Vector3.Dot(d.T.forward, away) >= 0f;
@@ -1041,8 +1331,8 @@ namespace DW1Remake.Game
                 Play(d, slot, length);
                 d.NextAct = Mathf.Max(d.NextAct, _time + length);
             }
-            else Play(d, DownSlot, 3f);
-            if (!_quietHit) Burst(d.T.position + Vector3.up * 0.8f, tech.Col, tech.Finisher ? 1.6f : 1f, true);
+            // BTL_startHitAnimation: createParticleFX(MOVE_DATA.special, 1, attack position, the hit Digimon, MOVE_DATA.iframes + 0x10)
+            if (Effects != null) Effects.AddHitFx(tech.Element, 1, hitAt, ActorFor(d), tech.Stagger + 0x10);
             if (tech.Status > 0 && d.Hp > 0 && _rng.Next(100) < tech.StatusChance)
             {
                 // the game's timers in frames (code 0x8005C4A0): stun 200-240 (no action at all), confuse 200-300. Poison's and flat's effects are not decoded.
@@ -1062,9 +1352,105 @@ namespace DW1Remake.Game
         {
             if (Partner == null) return;
             int dh = _s.Stats[6] - Partner.Hp, dm = _s.Stats[7] - Partner.Mp;
-            if ((dh > 0 || dm > 0) && LastItem >= 0) _throws.Add(new Throw { Item = LastItem, Heal = Mathf.Max(0, dh), Mana = Mathf.Max(0, dm) });
-            if (LastItem >= 0) LastItem = -1;
             Partner.Hp = _s.Stats[6]; Partner.Mp = _s.Stats[7]; Partner.MaxHp = Mathf.Max(1, _s.Stats[4]); Partner.MaxMp = _s.Stats[5];
+        }
+
+        // ---- fainting (BTL_faintDigimon, BTL_isBattleFinished, BTL_addDeathCountdown / BTL_tickDeathCountdown, handleRestore)
+        // At 0 HP the partner falls (animation 0x2B). Once that has played, a counter runs each frame (not while the boy is throwing an item);
+        // at 20 the countdown shows over the partner, at 171 the fight is lost. An item that heals it first makes it get up (animation 0x2C)
+        // and the fight goes on.
+        public static TimImage CountdownTim;        // ETCDAT/ETCTIM.BIN image 0 (VRAM 896,384; colour sets from row 480)
+        static readonly int[] CountU = { 0x50, 0x68, 0x58, 0x68 }, CountV = { 0xA8, 0x90, 0x90, 0x80 };     // BTL_DEATH_COUNTDOWN_DIGIT_U / _V
+        int _deathCount, _cdTimer = -1, _cdStep, _cdRow = 13; float _cdRingScale = 1f, _cdDigitScale = 1f, _cdRot; bool _fainted, _rising;
+        float _faintAcc;
+        readonly Texture2D[] _cdTex = new Texture2D[16];
+
+        bool TickFaint(float dt)
+        {
+            if (Partner.Hp > 0)
+            {
+                if (_fainted)
+                {
+                    // handleRestore: it gets up (0x2C); BTL_isBattleFinished clears the countdown and lets it fight again when that ends
+                    _fainted = false; _deathCount = 0; _cdTimer = -1;
+                    if (Partner.A != null && Partner.A.HasSlot(0x2C)) { Partner.A.SetSlot(0x2C, true); _rising = true; }
+                }
+                if (_rising && (Partner.A == null || !Partner.A.Busy)) { _rising = false; Stand(Partner); }
+                return false;
+            }
+            _fainted = true;
+            if (Partner.A != null && Partner.A.HasSlot(DownSlot) && (Partner.A.Slot != DownSlot || Partner.A.Busy))
+            {
+                if (Partner.A.Slot != DownSlot) Partner.A.SetSlot(DownSlot, true);
+                return false;
+            }
+            _faintAcc += dt;
+            while (_faintAcc >= Frame)
+            {
+                _faintAcc -= Frame;
+                if (!ThrowBusy)
+                {
+                    _deathCount++;
+                    if (_deathCount == 0x14) { _cdTimer = 0; _cdStep = 0; _cdRow = 13; }
+                    if (_cdTimer >= 0) TickCountdown();
+                }
+                if (_deathCount >= 0xAB) { _cdTimer = -1; return true; }
+            }
+            return false;
+        }
+
+        // BTL_tickDeathCountdown: the digit changes every 30 frames (4, 3, 2, 1, then the last picture); in each 31-frame step it pops for 20 frames
+        // (+0x199 a frame for 3, -0x199 for 3), the ring's colour set moves on every 3 (rows 13-15); then both shrink 5% a frame and turn 64 degrees
+        void TickCountdown()
+        {
+            _cdTimer++;
+            if (_cdTimer % 31 == 0) _cdStep = 0;
+            _cdStep++;
+            if (_cdStep > 0 && _cdStep < 0x15)
+            {
+                if (_cdStep == 1) { _cdRingScale = 1f; _cdRot = 0f; }
+                if (_cdStep >= 2 && _cdStep < 5) _cdDigitScale += 0x199 / 4096f;
+                else if (_cdStep >= 5 && _cdStep < 8) _cdDigitScale -= 0x199 / 4096f;
+                else _cdDigitScale = 1f;
+                if (_cdStep % 3 == 0 && ++_cdRow >= 16) _cdRow = 13;
+            }
+            else
+            {
+                _cdDigitScale = _cdRingScale = (0x64 - (_cdStep - 0x14) * 5) / 100f;
+                _cdRot += 64f;
+            }
+            if (_cdTimer >= 0x96) _cdTimer = -1;      // BTL_renderDeathCountdown removes it at 150
+        }
+
+        // BTL_renderDeathCountdown: the 16 x 16 digit (centre 8, 8) over the 40 x 40 ring (centre 20, 20), both from ETCTIM image 0, at the partner
+        // (kept inside x -140..140, y -100..100). Where on the partner getEntityScreenPos(mode 1) aims is not decoded: we use its middle.
+        void DrawCountdown(Camera cam)
+        {
+            var tim = CountdownTim;
+            if (tim == null || Partner.T == null) return;
+            Func<int, Texture2D> tex = row => row < tim.PaletteCount ? (_cdTex[row] ?? (_cdTex[row] = tim.ToTexture(row))) : null;
+            int h = Partner.Info != null ? Partner.Info.Height : 100;
+            Vector2 at = Ps1Of(cam, Partner.T.position + Vector3.up * (h * 0.5f * 0.01f));
+            at.x = Mathf.Clamp(at.x, -0x8C, 0x8C); at.y = Mathf.Clamp(at.y, -0x64, 0x64);
+            int frame = (_cdTimer + 0x1D) / 30;
+            int du = frame >= 1 && frame < 5 ? CountU[frame - 1] : 0x58, dv = frame >= 1 && frame < 5 ? CountV[frame - 1] : 0x80;
+            float cx = 707.5f + at.x * 4.42f, cy = 530f + at.y * 4.42f;
+            var ring = tex(_cdRow); var digit = tex(13);
+            var old = GUI.matrix;
+            if (ring != null)
+            {
+                GUIUtility.RotateAroundPivot(_cdRot, new Vector2(cx, cy));
+                float s = 40f * 4.42f * _cdRingScale;
+                GUI.DrawTextureWithTexCoords(new Rect(cx - s / 2f, cy - s / 2f, s, s), ring, new Rect(0x32 / (float)ring.width, 1f - 40f / ring.height, 40f / ring.width, 40f / ring.height));
+                GUI.matrix = old;
+            }
+            if (digit != null)
+            {
+                GUIUtility.RotateAroundPivot(_cdRot, new Vector2(cx, cy));
+                float s = 16f * 4.42f * _cdDigitScale;
+                GUI.DrawTextureWithTexCoords(new Rect(cx - s / 2f, cy - s / 2f, s, s), digit, new Rect(du / (float)digit.width, 1f - (dv - 0x80 + 16) / (float)digit.height, 16f / digit.width, 16f / digit.height));
+                GUI.matrix = old;
+            }
         }
 
         void Finish(bool won)
@@ -1077,19 +1463,22 @@ namespace DW1Remake.Game
                 if (OnStopMusic != null) OnStopMusic();
                 Snd(0x15);
                 _bits = _enemyBits;
-                _bitsLeft = _bits; _statWait = 100; _countAcc = 0f; _fanfare = false;
+                _bitsLeft = _bits; _statWait = 100; _countAcc = 0f; _fanfare = false; _cheered = false;
                 _dropped = null;
                 if (Enemy.Info != null && _rng.Next(100) < Enemy.Info.DropChance && Enemy.Info.DropItem != 0xFF)    // the enemy's item, at its chance
                 {
-                    _s.AddItem(Enemy.Info.DropItem, 1);
-                    _dropped = Enemy.Name + " dropped " + (ItemName != null ? ItemName(Enemy.Info.DropItem) : "");
+                    DropItem = Enemy.Info.DropItem; DropAt = Enemy.T.position;      // it lies where the enemy fell until the boy picks it up
+                    _dropName = Enemy.Name;
+                    _dropped = ItemName != null ? ItemName(Enemy.Info.DropItem) : "";
+                    if (OnDrop != null) OnDrop(DropItem, DropAt);
                 }
                 TryLearn();
                 int[] idx = { 4, 5, 0, 1, 2, 3 };
                 for (int i = 0; i < 6; i++) { _before[i] = _s.Stats[idx[i]]; _gain[i] = 0; }
                 StatGains();
                 for (int i = 0; i < 6; i++) { _shown[i] = _before[i]; _left[i] = _gain[i]; }
-                if (Partner.A != null) Partner.A.SetSlot(CheerSlot, true);
+                if (_playerA != null) _playerA.SetSlot(_playerA.HasSlot(1) ? 1 : 0);
+                Stand(Partner);
             }
             else
             {
@@ -1135,41 +1524,94 @@ namespace DW1Remake.Game
             if (_phase != Phase.Notice) Hud();
             if (_phase == Phase.Fight)
             {
-                if (_time < _bannerUntil) Outlined(new Rect(0, 250, UiKit.W, 90), _banner + "!", 72, new Color(1f, 0.55f, 0.15f), TextAnchor.MiddleCenter);
                 if (_time < _logUntil) Outlined(new Rect(50, 880, 1300, 70), _log, 46, Color.white);
             }
-            if (_phase == Phase.Win && _time - _phaseStart > 1.2f) ResultWindow();
-            if (_phase == Phase.Lose && _time - _phaseStart > 1.2f)
-            {
-                var box = new Rect(300, 380, 815, 260);
-                UiKit.Box(box, new Color(0.10f, 0.17f, 0.15f, 0.95f));
-                UiKit.Text(new Rect(box.x + 50, box.y + 40, box.width - 80, 70), Partner.Name + " collapsed...", 52, UiKit.Yellow, TextAnchor.MiddleLeft);
-                UiKit.Text(new Rect(box.x + 50, box.y + 120, box.width - 80, 70), "You carry it back to File City.", 46, Color.white, TextAnchor.MiddleLeft);
-            }
+            if (_phase == Phase.Win && _cheered) ResultWindow();
+            if (_phase == Phase.Fight && _cdTimer >= 0 && cam != null) DrawCountdown(cam);
             if (cam != null && (_phase == Phase.Fight || _phase == Phase.Win)) EnemyBar(cam);
+            if (cam != null && _phase == Phase.Fight && _shoutFrame >= 0 && _player != null) DrawShout(cam);
+            if (cam != null) foreach (var p in _pops) DrawPop(cam, p);
             UiKit.End();
             if (cam != null)
             {
                 if (_phase == Phase.Fight || _phase == Phase.Win)
                 {
-                    if (_phase == Phase.Fight && _shoutFrame >= 0 && _player != null)     // only when you give an order: it hops up over the boy
-                    {
-                        float hop = ShoutHop[Mathf.Min(_shoutFrame, 19)] * Screen.height / 240f;
-                        Vector3 sp = cam.WorldToScreenPoint(_player.position + Vector3.up * 1.8f);
-                        if (sp.z > 0) Outlined(new Rect(sp.x - 150, Screen.height - sp.y - 25 + hop, 300, 50), _shout, 36, Color.white, TextAnchor.MiddleCenter);
-                    }
                 }
-                foreach (var p in _pops) Floating(cam, p.Pos + Vector3.up * p.T * 0.9f, p.Text, 40, p.Col);
                 foreach (var th in _throws)   // the boy throws the item to the partner
                 {
                     if (_player == null || Items == null) continue;
-                    float k = Mathf.Clamp01(th.T / 0.55f);
-                    Vector3 w = Vector3.Lerp(_player.position, Partner.T.position, k) + Vector3.up * (1.2f + Mathf.Sin(k * Mathf.PI) * 1.3f);
-                    Vector3 sp = cam.WorldToScreenPoint(w);
-                    if (sp.z > 0) GUI.DrawTextureWithTexCoords(new Rect(sp.x - 24, Screen.height - sp.y - 24, 48, 48), Items.Sheet, Items.Uv(th.Item));
+                    // renderThrownItem -> renderOverworldItem: the item's picture at its place, VIEWPORT_DISTANCE x 128 / depth pixels wide (128 game units)
+                    Vector3 w = EffectPlayer.ToUnity((int)th.G.x, (int)th.G.y, (int)th.G.z);
+                    Vector3 sp = cam.WorldToScreenPoint(w), up = cam.WorldToScreenPoint(w + cam.transform.up * 1.28f);
+                    float size = Mathf.Abs(up.y - sp.y);
+                    if (sp.z > 0) GUI.DrawTextureWithTexCoords(new Rect(sp.x - size / 2f, Screen.height - sp.y - size / 2f, size, size), Items.Sheet, Items.Uv(th.Item));
                 }
             }
         }
+
+        public GameFont Font;
+        sbyte[] _hopOff, _dropOff, _textRise;
+
+        /// <summary>Tables from BTL_REL.BIN (BTL_SHOUT_HOP_OFFSETS 0x80072E54, BTL_SHOUT_DROP_OFFSETS 0x80072E68) and the exe (ENTITY_TEXT_Y_OFFSETS 0x8012AA28).</summary>
+        public void LoadTextTables(byte[] btl, byte[] exe)
+        {
+            _hopOff = new sbyte[20]; _dropOff = new sbyte[20]; _textRise = new sbyte[24];
+            for (int i = 0; i < 20; i++) { _hopOff[i] = (sbyte)btl[0x80072E54 - 0x80052AE0 + i]; _dropOff[i] = (sbyte)btl[0x80072E68 - 0x80052AE0 + i]; }
+            uint load = BitConverter.ToUInt32(exe, 0x18);
+            for (int i = 0; i < 24; i++) _textRise[i] = (sbyte)exe[(int)(0x8012AA28 - load + 0x800) + i];
+            _iconU = new int[4];
+            for (int i = 0; i < 4; i++) _iconU[i] = exe[(int)(0x801343EC - load + 0x800) + i];      // ENTITY_TEXT_ICON_U
+            Func<uint, string> str = a => { int p = (int)(a - load + 0x800), j = p; while (exe[j] != 0) j++; return System.Text.Encoding.ASCII.GetString(exe, p, j - p); };
+            for (int i = 0; i < 6; i++) _statNames[i] = str(0x80124C0C + (uint)(i * 12));
+            _bitsLabel = str(0x801344D4);
+        }
+
+        static Vector2 Ps1Of(Camera cam, Vector3 world)
+        {
+            Vector3 sp = cam.WorldToScreenPoint(world); Rect pic = UiKit.Picture;
+            return new Vector2((sp.x - pic.x) / pic.width * 320f - 160f, (Screen.height - sp.y - pic.y) / pic.height * 240f - 120f);
+        }
+
+        // BTL_drawCommandShout / BTL_renderCommandShout: the name in the game's font over the boy, in a box of 12 per letter centred on him (kept inside x -140..140, y -100..100);
+        // it grows from 0.2 to 1 in the first 4 frames, then hops (or drops when it is high on the screen, y < -40); a black copy 1 pixel down and right lies under it; 20 frames
+        void DrawShout(Camera cam)
+        {
+            if (Font == null || _hopOff == null || string.IsNullOrEmpty(_shout)) return;
+            Vector2 p = Ps1Of(cam, _player.position + Vector3.up * 1.8f);
+            int w = _shout.Length * 12, f = Mathf.Min(_shoutFrame, 19);
+            float x = Mathf.Round(p.x), y = Mathf.Round(p.y);
+            if (x - w / 2 < -140) x = w / 2 - 140;
+            if (x + w / 2 >= 141) x = 140 - w / 2;
+            y = Mathf.Clamp(y, -100, 100);
+            y += y < -40 ? _dropOff[f] : _hopOff[f];
+            float s = _shoutFrame < 4 ? (_shoutFrame * 2 + 2) / 10f : 1f, k = 4.42f * s;
+            float left = 707.5f + x * 4.42f - w / 2f * k, top = 530f + y * 4.42f - 6f * k;
+            Font.Draw(_shout, left + 4.42f, top + 4.42f, k, Color.black);
+            Font.Draw(_shout, left, top, k, Font.Ink);
+        }
+
+        // addEntityText / renderEntityText / drawEntityText: 8 x 8 digits of the HUD sheet (colour set 4, row 55), 7 apart, tinted by TEXT_COLORS
+        // (0 plain for damage, 0xB green for items, 0xC purple for poison); starts 8 over the fighter and rises by ENTITY_TEXT_Y_OFFSETS for 21 frames
+        void DrawPop(Camera cam, Pop p)
+        {
+            int n;
+            if (!int.TryParse(p.Text, out n) || Art == null || _textRise == null) return;
+            int frame = Mathf.Min((int)(p.T * 20f), 30), rise = 0;
+            for (int i = 0; i <= Mathf.Min(frame, 20); i++) rise += _textRise[i];
+            Vector2 at = Ps1Of(cam, p.Pos);
+            var o = GUI.color; GUI.color = p.Col;
+            float x0 = Mathf.Round(at.x) - 14, y0 = Mathf.Round(at.y) - 8 + rise;
+            Art.Digits(n, 4, x0, y0);
+            GUI.color = o;
+            // drawEntityTextIcon: 8 x 8 at u ENTITY_TEXT_ICON_U[icon - 1] (exe 0x801343EC), v 0xB8 of the same page, colour set 6, 8 pixels left of the number
+            if (p.Icon > 0 && _iconU != null && p.Icon <= _iconU.Length)
+            {
+                int len = Mathf.Clamp(n, 0, 9999).ToString().Length;
+                Art.Hud(6, _iconU[p.Icon - 1], 0xB8 - 128, 8, 8, x0 + (4 - len) * 7 - 8, y0);
+            }
+        }
+
+        int[] _iconU;
 
         static void Floating(Camera cam, Vector3 world, string text, int size, Color? col = null)
         {
@@ -1181,19 +1623,58 @@ namespace DW1Remake.Game
         static readonly int[] BubbleScale = { 100, 104, 108, 112, 116, 120, 116, 112, 108, 104 };
 
         // the bubble over the enemy when a fight starts (renderFleeBubble): it pops up from the head, then pulses; its size is 1.44 m at that distance
+        // ---- the Digimon of the map that do not fight (handleBattleStart / BTL_tickBattleStart): a scared bubble, then animation 0x24 towards
+        // the flee point of their map record until they are off the screen; then they are off the map (isOnMap = 0)
+        sealed class Runner { public Transform T; public DigimonAnimator A; public Vector3 To; public int Height; }
+        readonly List<Runner> _runners = new List<Runner>();
+        public void AddRunner(Transform t, DigimonAnimator a, Vector3 fleeTo, int height)
+        {
+            if (a != null && a.HasSlot(0x24)) a.SetSlot(0x24);
+            _runners.Add(new Runner { T = t, A = a, To = fleeTo, Height = height });
+        }
+
+        bool TickRunners()
+        {
+            Camera cam = Camera.main; bool allOff = true;
+            foreach (var r in _runners)
+            {
+                if (r.T == null || !r.T.gameObject.activeSelf) continue;
+                Vector3 d = r.To - r.T.position; d.y = 0f;
+                if (d.sqrMagnitude > 0.0001f) r.T.rotation = _face(d);
+                float step = r.A != null ? r.A.TakeForward() : 0f;
+                r.T.position += d.normalized * Mathf.Min(step, d.magnitude);
+                if (cam != null)
+                {
+                    Vector3 v = cam.WorldToViewportPoint(r.T.position);
+                    if (v.z > 0 && v.x > 0f && v.x < 1f && v.y > 0f && v.y < 1f) allOff = false;     // entityIsOffScreen(0x140, 0xF0)
+                }
+            }
+            return allOff;
+        }
+
+        void RemoveRunners() { foreach (var r in _runners) if (r.T != null) r.T.gameObject.SetActive(false); _runners.Clear(); }
+
         void AngerIcon(Camera cam)
         {
             if (Art == null) return;
+            DrawBubble(cam, Enemy.T, Enemy.Info != null ? Enemy.Info.Height : 0, 0);
+            foreach (var x in Extras) DrawBubble(cam, x.T, x.Info != null ? x.Info.Height : 0, 0);
+            foreach (var r in _runners) if (r.T != null && r.T.gameObject.activeSelf) DrawBubble(cam, r.T, r.Height, 1);
+        }
+
+        // renderFleeBubble: 0 angry, 1 scared; it rises and grows for 5 frames, then pulses (FLEE_BUBBLE_SCALE)
+        void DrawBubble(Camera cam, Transform who, int height, int type)
+        {
             int frame = (int)((_time - _phaseStart) * 20f);
-            float head = (Enemy.Info != null ? Enemy.Info.Height : 0) * 0.01f + (frame < 5 ? 2f + (frame + 1) * 0.1f : 2.5f);
-            Vector3 world = Enemy.T.position + Vector3.up * head, v = cam.WorldToViewportPoint(world);
+            float head = height * 0.01f + (frame < 5 ? 2f + (frame + 1) * 0.1f : 2.5f);
+            Vector3 world = who.position + Vector3.up * head, v = cam.WorldToViewportPoint(world);
             if (v.z <= 0f) return;
             float size = Mathf.Abs(cam.WorldToViewportPoint(world + cam.transform.right * 1.44f).x - v.x) * 320f;
             size *= frame < 5 ? (frame + 1) / 5f : BubbleScale[(frame - 5) % 10] / 100f;
             float x = Mathf.Clamp((v.x - 0.5f) * 320f, -140f, 140f), y = Mathf.Clamp((0.5f - v.y) * 240f, -100f, 100f);
-            Vector3 feet = cam.WorldToViewportPoint(Enemy.T.position);
+            Vector3 feet = cam.WorldToViewportPoint(who.position);
             float dx = (feet.x - 0.5f) * 320f - x, dy = (0.5f - feet.y) * 240f - y;
-            Art.Bubble(0, x, y, size, Mathf.Atan2(-dx, dy) * Mathf.Rad2Deg);
+            Art.Bubble(type, x, y, size, Mathf.Atan2(-dx, dy) * Mathf.Rad2Deg);
         }
 
         // BTL_tickBattleStart: the boy runs back along his waypoints to the tile he came in on, and stops there or at the edge of the screen, whichever comes first
@@ -1221,12 +1702,44 @@ namespace DW1Remake.Game
             if (step <= 0f) return false;
             Vector3 by = dir * step;
             if (LeavesScreen(pos, pos + by, w, h)) { BoyStops(); return true; }
-            if (Walkable == null || Walkable(pos + by)) pos += by;
-            else if (Walkable(pos + new Vector3(by.x, 0, 0))) pos.x += by.x;
-            else if (Walkable(pos + new Vector3(0, 0, by.z))) pos.z += by.z;
-            _player.position = pos;
+            // a wall in every direction: he stops where he is instead of running on the spot for ever (Glitch FAQ E, see OnGround)
+            if (!OnGround(_player, by)) { BoyStops(); return true; }
             return false;
         }
+
+        // handleFleeing (each frame of Run): the boy faces the last of his waypoints (dropping it once he is on it), then the tile he came in on, and
+        // from there he faces FleeOut and runs on the spot; his run animation (3, started with the order) carries him until then
+        void TickFlee()
+        {
+            if (_player == null) return;
+            if (_playerA != null && _playerA.Slot != PlayerRunSlot) _playerA.SetSlot(PlayerRunSlot);
+            Vector3 pos = _player.position, aim;
+            Vector2Int here = TileOf(pos);
+            if (_route != null && _route.Count > 0)
+            {
+                var t = _route[_route.Count - 1];
+                aim = TileMid(t);
+                if (here == t) _route.RemoveAt(_route.Count - 1);
+            }
+            else if (here != _startTile) aim = TileMid(_startTile);
+            else
+            {
+                // on the tile he came in on: he faces out of the map and is held there (animFlag |= 2), running on the spot until the fight ends
+                Vector3 o = FleeOut - pos; o.y = 0f;
+                if (o.sqrMagnitude > 0.0001f) _player.rotation = _face(o.normalized);
+                if (_playerA != null) _playerA.TakeForward();
+                return;
+            }
+            Vector3 dir = aim - pos; dir.y = 0f;
+            if (dir.sqrMagnitude > 0.0001f) { dir.Normalize(); _player.rotation = _face(dir); }
+            float step = _playerA != null ? _playerA.TakeForward() : 10f * Time.deltaTime;
+            if (step > 0f && dir.sqrMagnitude > 0f) OnGround(_player, dir * step);
+        }
+
+        static Vector3 TileMid(Vector2Int t) { return new Vector3(((t.x - 50) * 100 + 50) * 0.01f, 0f, ((50 - t.y) * 100 - 50) * 0.01f); }
+
+        /// <summary>fadeToBlack(0x14) at FLEE_TIMER 20 (the partner still standing): how dark the picture is, 0 to 1.</summary>
+        public float FleeBlack { get { return _running && Partner != null && Partner.Hp > 0 ? Mathf.Clamp01((_runFrames - 20) / 20f) : 0f; } }
 
         void BoyStops()
         {
@@ -1236,14 +1749,17 @@ namespace DW1Remake.Game
         }
 
         // entityCheckCombatArea: a corner of him, at the feet or 2 m up, is past the box round the middle of the screen and going further
-        bool LeavesScreen(Vector3 from, Vector3 to, int w, int h)
+        bool LeavesScreen(Vector3 from, Vector3 to, int w, int h) { return LeavesScreen(from, to, w, h, _boyRadius); }
+
+        // hasMovedOutsideCombatArea: only a step that takes a corner further out past the box is refused; one already outside may come back in
+        bool LeavesScreen(Vector3 from, Vector3 to, int w, int h, float radius)
         {
-            Camera cam = Camera.main;
+            Camera cam = _view != null ? _view : Camera.main;
             if (cam == null) return false;
             for (int i = 0; i < 2; i++)
                 for (int up = 0; up < 2; up++)
                 {
-                    var corner = new Vector3((i == 0 ? -1 : 1) * _boyRadius, up * 2f, _boyRadius);
+                    var corner = new Vector3((i == 0 ? -1 : 1) * radius, up * 2f, radius);
                     Vector3 a = cam.WorldToViewportPoint(from + corner), b = cam.WorldToViewportPoint(to + corner);
                     float ax = (a.x - 0.5f) * 320f, ay = (0.5f - a.y) * 240f, bx = (b.x - 0.5f) * 320f, by = (0.5f - b.y) * 240f;
                     if ((bx < -w / 2 && bx < ax) || (bx > w / 2 && bx > ax) || (by < -h / 2 && by < ay) || (by > h / 2 && by > ay)) return true;
@@ -1342,14 +1858,9 @@ namespace DW1Remake.Game
             for (int i = 0; i < n; i++)
             {
                 int stripX = (i > 0 ? (i - 1) * 14 + 11 : 0) - 143;
-                Art.Cmd(1, labelU[labelRun[i]], 32, labelW[labelRun[i]], bottom - top, stripX, top);
+                Art.CmdHalf(1, labelU[labelRun[i]], 32, labelW[labelRun[i]], bottom - top, stripX, top);      // setSemiTrans(prim, 1)
             }
             bool oddUp = count % 2 != 0;
-            if (_phase == Phase.Fight)
-            {
-                bool upper = (_hover % 2 == 1) == oddUp;
-                Art.Cursor(baseX - _hover * 14 - 3, upper ? -0x64 : -0x5a);
-            }
             for (int i = 1; i < n; i++)
             {
                 int cell = System.Array.IndexOf(OrderNames, _orders[i - 1]), row = 0;
@@ -1357,13 +1868,20 @@ namespace DW1Remake.Game
                 bool upper = (i % 2 == 1) == oddUp;
                 Art.Cmd(0, cell * 32 + (i == _hover && blink ? 16 : 0), row, 16, 16, baseX - i * 14, top + (upper ? 3 : 13));
             }
-            if (_phase == Phase.Fight) Outlined(new Rect(40, 225, 500, 50), _orders[_hover - 1], 36, Color.white);
+            // the cursor is added to the ordering table first, so it is drawn last, over the icons
+            if (_phase == Phase.Fight)
+            {
+                bool upper = (_hover % 2 == 1) == oddUp;
+                Art.Cursor(baseX - _hover * 14 - 3, upper ? -0x64 : -0x5a);
+            }
+            // BTL_drawHoveredCommandName: the hovered name in the game's font, colour 0, at (-0x8C, -0x42), in a 0x90-wide slice of the text page
+            if (_phase == Phase.Fight) PsText(ClipTo(_orders[_hover - 1], 0x90), -0x8C, -0x42, Tinted(0x80, 0x80, 0x80));
             // the finishing-move gauge: F, FI ... FINISH, then !! and PUSH (BTL_renderFinisherGauge)
             int letters = Mathf.Clamp(Partner.Finish * 6 / Mathf.Max(1, Partner.FinishMax), 0, 6);
             if (letters == 6) { letters = 8; Art.Hud(2, 128, 8, 37, 9, 0x6e, -0x4b); }
             for (int i = 0; i < letters; i++) Art.Hud(12, FinishU[i], 29, FinishW[i], 15, FinishU[i] + 0x37, -0x4f);
             // the charge bar over the partner's head (BTL_renderFinisherChargeup), up to 10 ticks
-            if (_charging && _view != null)
+            if (_charging && _chargeBy == Partner && _view != null)
             {
                 float height = Partner.Info != null ? Partner.Info.Height : 0;
                 Vector3 v = _view.WorldToViewportPoint(Partner.T.position + Vector3.up * (height + 100f) * 0.01f);
@@ -1417,27 +1935,124 @@ namespace DW1Remake.Game
             if (left > 0) f.ShownHp -= 1;
         }
 
-        void ResultWindow()
+        /// <summary>
+        /// The stats box after a fight (renderPostBattleStatsBox) and after training (TRN_renderPostTrainingStatsBox): same layout.
+        /// Box (x, y, w, 96) in PS1 pixels from the middle; rows 13 apart from y + 9; name at x + 10, number at x + 68, bar at x + 66 (blue when raised),
+        /// a line at x + 122, the blue arrow (12 x 12 at 96, 180 of the HUD sheet, colour row 11) at x + 130 and the gain at x + 142.
+        /// Order HP, MP, Off, Def, Speed, Brains. Game font not decoded: names and digits are our text, in the game's colours.
+        /// </summary>
+        // ---- the game's text in the result and training boxes: drawString into the text page, then renderString / renderNumber with a TEXT_COLORS tint
+        public static GameFont StatFont;
+        static string[] _statNames = { "HP", "MP", "Off", "Def", "Speed", "Brain" };      // replaced by the exe's strings (0x80124C0C, 12 bytes each)
+        static string _bitsLabel = "Bits";                                                  // STR_BITS 0x801344D4
+
+        // a textured primitive multiplies the picture by colour / 128 (and clamps): the font's ink times the TEXT_COLORS entry
+        static Color Tinted(int r, int g, int b)
         {
-            string[] names = { "HP", "MP", "Off", "Def", "Speed", "Brain" };
-            var box = new Rect(60, 60, 880, 600);
-            UiKit.Box(box, new Color(0.12f, 0.2f, 0.16f, 0.95f));
-            UiKit.Fill(new Rect(box.x + 600, box.y + 8, 5, box.height - 16), UiKit.Frame);
+            Color ink = StatFont != null ? StatFont.Ink : Color.white;
+            return new Color(Mathf.Min(1f, ink.r * r / 128f), Mathf.Min(1f, ink.g * g / 128f), Mathf.Min(1f, ink.b * b / 128f), 1f);
+        }
+
+        // renderString shows only w pixels of the text page: the letters that fit
+        static string ClipTo(string s, int w)
+        {
+            if (StatFont == null || string.IsNullOrEmpty(s)) return s;
+            while (s.Length > 0 && StatFont.Measure(s) > w) s = s.Substring(0, s.Length - 1);
+            return s;
+        }
+
+        // text with its top left at (x, y), PS1 pixels from the middle of the screen
+        static void PsText(string s, float x, float y, Color c)
+        {
+            if (StatFont != null) StatFont.Draw(s, 707.5f + x * 4.42f, 530f + y * 4.42f, 4.42f, c);
+            else UiKit.Text(new Rect(707.5f + x * 4.42f, 530f + y * 4.42f - 8, 400, 62), s, 50, c, TextAnchor.MiddleLeft);
+        }
+
+        // renderNumber: n places 8 apart (the US DIGIT_WIDTH), the digits right-aligned, no leading zeros
+        static void PsNumber(int value, int n, float x, float y, Color c)
+        {
+            string s = Mathf.Max(0, value).ToString();
+            if (s.Length > n) s = s.Substring(s.Length - n);
+            for (int i = 0; i < s.Length; i++) PsText(s[i].ToString(), x + (n - s.Length + i) * 8, y, c);
+        }
+
+        public static void DrawStatsBox(BattleArt art, float bx, float by, float bw, int[] values, int[] gains, bool[] raised)
+        {
+            string[] names = _statNames;
+            Func<float, float> px = v => 707.5f + v * 4.42f, py = v => 530f + v * 4.42f;
+            UiKit.Box(new Rect(px(bx), py(by), bw * 4.42f, 96 * 4.42f), UiKit.DialogFill);
+            UiKit.Fill(new Rect(px(bx + 122), py(by + 2), 4.42f, 91 * 4.42f), new Color32(0x90, 0xD9, 0xFA, 255));
+            UiKit.Fill(new Rect(px(bx + 123), py(by + 2), 4.42f, 91 * 4.42f), new Color32(2, 2, 2, 255));
             for (int i = 0; i < 6; i++)
             {
-                float y = box.y + 30 + i * 90;
-                int v = _shown[i];
-                UiKit.Text(new Rect(box.x + 30, y, 200, 70), names[i], 52, UiKit.Yellow, TextAnchor.MiddleLeft);
-                UiKit.Text(new Rect(box.x + 270, y - 8, 160, 60), v.ToString(), 48, Color.white, TextAnchor.MiddleRight);
-                UiKit.Bar(new Rect(box.x + 270, y + 48, 300, 14), i < 2 ? v / 1500f : v / 999f, UiKit.Cyan);
-                if (_left[i] > 0) UiKit.Text(new Rect(box.x + 640, y, 220, 70), "^ " + _left[i], 52, new Color(0.35f, 0.75f, 1f), TextAnchor.MiddleLeft);
+                float y = by + 9 + i * 13;
+                int stat = values[i], max = i < 2 ? 9999 : 999;
+                PsText(names[i], bx + 10, y, Tinted(0xC8, 0xB4, 0x32));          // renderString colour 4
+                float ty = py(y + 11);
+                UiKit.Fill(new Rect(px(bx + 64), ty - 3 * 4.42f, 53 * 4.42f, 4 * 4.42f), new Color32(0x66, 0x66, 0x66, 255));
+                UiKit.Fill(new Rect(px(bx + 66), ty - 2 * 4.42f, 50 * 4.42f, 2 * 4.42f), raised[i] ? new Color32(0x00, 0x5A, 0x96, 255) : new Color32(0x28, 0x28, 0x28, 255));
+                UiKit.Fill(new Rect(px(bx + 66), ty - 2 * 4.42f, Mathf.Min(stat, max) * 50 / max * 4.42f, 2 * 4.42f), raised[i] ? new Color32(0x69, 0xC2, 0xFF, 255) : new Color32(0x78, 0x78, 0x78, 255));
+                // the number lies over its bar (user's PS1 screenshot 2026-11-04)
+                PsNumber(stat, 4, bx + 68, y, Tinted(0x80, 0x80, 0x80));         // renderNumber colour 0, 4 places
+                if (gains[i] <= 0) continue;
+                if (art != null) art.Hud(11, 96, 52, 12, 12, bx + 130, y);
+                PsNumber(gains[i], 3, bx + 142, y, Tinted(0x1E, 0x80, 0x80));    // renderNumber colour 5 (its blue is set from green)
             }
-            var bits = new Rect(60, 690, 880, 120);
-            UiKit.Box(bits, new Color(0.12f, 0.2f, 0.16f, 0.95f));
-            UiKit.Text(new Rect(bits.x + 30, bits.y + 20, 300, 80), "Bits", 56, UiKit.Yellow, TextAnchor.MiddleLeft);
-            UiKit.Text(new Rect(bits.x + 360, bits.y + 20, 480, 80), (_s.Money + _bits - _bitsLeft).ToString() + (_bitsLeft > 0 ? "   (+" + _bitsLeft + ")" : ""), 56, Color.white, TextAnchor.MiddleRight);
+        }
+
+        float _dropTyped;
+
+        // BTL_appendItemDroppedText (BTL_REL strings): "#C7" name "#R#C1dropped #C7" item "#C1#W": the name in colour 7 on the first row, "dropped " in
+        // colour 1 and the item in colour 7 on the second; BTL_drawBattleEndText types one letter a frame into the area (-78, 54, 156, 24)
+        void DropText()
+        {
+            if (StatFont == null) return;
+            if (Event.current.type == EventType.Repaint) _dropTyped += Time.deltaTime * 20f;
+            int n = (int)_dropTyped;
+            string a = _dropName ?? "", b1 = "dropped ", b2 = _dropped ?? "";
+            Color yellow = StatFont.Colour(7), white = StatFont.Colour(1);
+            ClipText(a.Substring(0, Mathf.Min(a.Length, n)), -78, 54, 156, yellow);
+            n -= a.Length;
+            if (n <= 0) return;
+            string s1 = b1.Substring(0, Mathf.Min(b1.Length, n));
+            ClipText(s1, -78, 66, 156, white);
+            n -= b1.Length;
+            if (n <= 0) return;
+            int w = StatFont.Measure(b1);
+            ClipText(b2.Substring(0, Mathf.Min(b2.Length, n)), -78 + w, 66, 156 - w, yellow);
+        }
+
+        // renderString of a 'w'-wide slice: letters past the width are not shown
+        static void ClipText(string s, float x, float y, int w, Color c) { PsText(ClipTo(s, w), x, y, c); }
+
+        void ResultWindow()
+        {
+            // createPostBattleStatsBox: (-88, -78, 176, 96)
+            var raised = new bool[6];
+            for (int i = 0; i < 6; i++) raised[i] = _gain[i] > 0;
+            DrawStatsBox(Art, -88, -78, 176, _shown, _left, raised);
+            Func<float, float> px = v => 707.5f + v * 4.42f, py = v => 530f + v * 4.42f;
+            // createBitsBox: (-88, 18, 176, 31), 66 high when there is text under it; renderBitBox: "Bits" at (-78, 28), the gain (5 digits, colour 2) at -18
+            bool text = _dropped != null;
+            UiKit.Box(new Rect(px(-88), py(18), 176 * 4.42f, (text ? 66 : 31) * 4.42f), UiKit.DialogFill);
+            PsText(_bitsLabel, -78, 28, Tinted(0xC8, 0xB4, 0x32));
+            if (_bitsLeft > 0) PsNumber(_bitsLeft, 5, -18, 28, Tinted(0x69, 0xC2, 0xC2));      // renderNumber colour 2 (blue set from green)
+            if (text)       // a line at y 50, then BTL_appendItemDroppedText in the text area (-78, 54, 156, 24)
+            {
+                UiKit.Fill(new Rect(px(-86), py(50), 170 * 4.42f, 4.42f), new Color32(0x8E, 0x8E, 0x8E, 255));
+                UiKit.Fill(new Rect(px(-85), py(51), 170 * 4.42f, 4.42f), new Color32(0x12, 0x12, 0x12, 255));
+                DropText();
+            }
+            // createFinalBalanceBox, once every stat has counted up: (-88, -13, 176, 31); the label at x + 10 and the money (6 digits) at x + 58
+            bool counted = true;
+            for (int i = 0; i < 6; i++) if (_left[i] > 0) counted = false;
+            if (counted)
+            {
+                UiKit.Box(new Rect(px(-88), py(-13), 176 * 4.42f, 31 * 4.42f), UiKit.DialogFill);
+                PsText(_bitsLabel, -78, -3, Tinted(0x80, 0x80, 0x80));                          // renderFinalBalance: renderString colour 0
+                PsNumber(_s.Money + _bits - _bitsLeft, 6, -30, -3, Tinted(0x80, 0x80, 0x80));
+            }
             if (_learned != null) Outlined(new Rect(0, 50, 1415, 80), _learned + " learned!", 56, UiKit.Yellow, TextAnchor.MiddleCenter);
-            if (_dropped != null) Outlined(new Rect(0, 130, 1415, 80), _dropped, 50, Color.white, TextAnchor.MiddleCenter);
         }
     }
 }

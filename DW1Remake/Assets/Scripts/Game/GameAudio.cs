@@ -40,6 +40,7 @@ namespace DW1Remake.Game
             _load = BitConverter.ToUInt32(_exe, 0x18);
             _banks[0] = VabBank.Parse(disc.ReadFile("/SOUND/VHB/SS.VHB"), 0);
             _banks[1] = VabBank.Parse(disc.ReadFile("/SOUND/VHB/SL.VHB"), 0);
+            _sb = disc.ReadFile("/SOUND/VHB/SB.VHB");
             _vl = disc.ReadFile("/SOUND/VHB/VLALL.VHB");
             _vb = disc.ReadFile("/SOUND/VHB/VBALL.VHB");
             _es = disc.ReadFile("/SOUND/VHB/ESALL.VHB");
@@ -51,6 +52,14 @@ namespace DW1Remake.Game
 
         byte Exe(uint addr) { return _exe[(int)(addr - _load + 0x800)]; }
         ushort Exe16(uint addr) { return BitConverter.ToUInt16(_exe, (int)(addr - _load + 0x800)); }
+
+        /// <summary>loadSB: in a fight sound bank 8 holds SOUND\SB (the technique effects' sounds), not the map's sounds; the map's come back after (loadMapSounds2).</summary>
+        public void BattleSounds()
+        {
+            _banks[8] = VabBank.Parse(_sb, 0);
+            ForgetClips(8);
+            _map = -1;
+        }
 
         /// <summary>loadMapSounds: id = the map's flags & 0x1F.</summary>
         public void SetMapSounds(int id)

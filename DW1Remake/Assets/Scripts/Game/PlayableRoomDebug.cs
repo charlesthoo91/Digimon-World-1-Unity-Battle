@@ -25,7 +25,8 @@ namespace DW1Remake.Game
             if (_player == null || _mapId < 0) return;
             var d = SaveGameData.From(_state);
             d.Map = _mapNames[_mapId]; d.X = _player.position.x; d.Y = _player.position.y; d.Z = _player.position.z;
-            d.Clock = _clock; d.Day = _dayCount; d.PartnerType = PartnerType;
+            d.Clock = _clock; d.Day = _dayCount; d.PartnerType = PartnerType; d.MainState = _mainState;
+            d.PrevScreen = _prevScreen; d.PrevExit = _prevExit; d.CurExit = _curExit;
             File.WriteAllText(SavePath, JsonUtility.ToJson(d));
             Say("Saved to " + SavePath);
         }
@@ -41,6 +42,8 @@ namespace DW1Remake.Game
         {
             d.ApplyTo(_state);
             _dayCount = d.Day;
+            _mainState = d.MainState;      // loadSavegame: MAIN_STATE = savegame->mainState
+            _prevScreen = d.PrevScreen; _prevExit = d.PrevExit; _curExit = d.CurExit;     // PREVIOUS_SCREEN = SAVED_STATE.previousScreen
             _care.PartnerType = d.PartnerType;
             _care.SetClock((int)d.Clock, (int)((d.Clock % 1f) * 60f));
             _clock = _care.ClockHours;
@@ -63,7 +66,7 @@ namespace DW1Remake.Game
             ApplySave(d);
             int mi = _mapNames.IndexOf(d.Map);
             if (mi < 0) { Say("Save points to an unknown map " + d.Map); return; }
-            try { LoadMap(MapCatalog.PathFor(_mapNames, mi), -1); PlaceFromSave(d); }
+            try { LoadMap(MapCatalog.PathFor(_mapNames, mi), -1); PlaceFromSave(d); RunMapStart(255); }
             catch (System.Exception e) { _error = e.Message; Debug.LogException(e); return; }
             Say("Loaded.");
         }
@@ -81,6 +84,44 @@ namespace DW1Remake.Game
         }
 
         // leaves the setup screens or the opening script wherever they are and starts in File City, as Quick Start does
+        // dev tool: a fight at once against an Agumon with the first fight's numbers (MAYO00: 400 HP, 300 MP, 30/30/30/50, 100 Bits, Spit Fire and Sonic Jab), the partner's FINISH gauge full
+        void TestFight() { TestFight(1); }
+
+        // dev tool: the same with more Agumon at once; the extra ones join as in a scripted fight with several enemies (AddEnemy)
+        void TestFight(int count)
+        {
+            if (_battle == null || _battle.Active || _runner != null || _player == null || _partner == null || _changing) { Say("Not now."); return; }
+            if (_entries == null) _entries = new List<DigimonEntry>(DigimonCatalog.Load(_disc));
+            if (_allTim == null) _allTim = _disc.ReadFile("/CHDAT/ALLTIM.TIM");
+            DigimonEntry entry = null;
+            foreach (var e in _entries) if (e.Type == 3) { entry = e; break; }
+            if (entry == null) { Say("No Agumon model."); return; }
+            Vector3 right = _cam != null ? _cam.transform.right : Vector3.right; right.y = 0f; right.Normalize();
+            Vector3 up = Vector3.Cross(right, Vector3.up);
+            var foes = new List<Npc>();
+            for (int k = 0; k < count; k++)
+            {
+                var data = new MapDigimon { Type = 3, FollowMode = 12, Hp = 400, Mp = 300, Off = 30, Def = 30, Spd = 30, Brain = 50, Bits = 100 };
+                data.MoveSlots[0] = 46; data.MoveSlots[1] = 51; data.MoveSlots[2] = 255; data.MoveSlots[3] = 255;
+                data.MoveChance[0] = 50; data.MoveChance[1] = 50;
+                var go = MmdModel.Parse(_disc.ReadFile(entry.MmdPath)).Build(entry, _allTim);
+                go.transform.SetParent(transform, false);
+                Vector3 side = k == 0 ? Vector3.zero : up * (k == 1 ? 2.5f : -2.5f);
+                Vector3 at = _player.position - right * 5f + side;
+                if (!Free(at)) at = _player.position + right * 5f + side;
+                go.transform.position = at;
+                go.transform.rotation = FaceRot(_player.position - at);
+                var n = new Npc { Data = data, T = go.transform, Anim = go.GetComponent<DigimonAnimator>(), Name = entry.Name, Home = at };
+                if (n.Anim != null) { n.Anim.DigimonType = 3; n.Anim.SetSlot(IdleSlot); }
+                _npcs.Add(n);
+                foes.Add(n);
+            }
+            _debugOpen = false;
+            StartBattle(foes[0]);
+            for (int k = 1; k < foes.Count; k++) _battle.AddEnemy(foes[k].T, foes[k].Anim, foes[k].Name, DigimonStatsCatalog.Get(_disc, 3), foes[k].Data);
+            _battle.Partner.Finish = _battle.Partner.FinishMax;
+        }
+
         void SkipOpening()
         {
             if (_changing) return;
@@ -128,6 +169,8 @@ namespace DW1Remake.Game
             _debugScroll = GUILayout.BeginScrollView(_debugScroll);
             GUILayout.Label("Progress");
             if (GUILayout.Button("Skip the opening (go to File City with Agumon)")) { SkipOpening(); _debugOpen = false; }
+            if (GUILayout.Button("Test fight: Agumon (the first fight's numbers), FINISH ready")) { TestFight(); }
+            if (GUILayout.Button("Test fight: two Agumon at once")) { TestFight(2); }
             if (GUILayout.Button("Recruit Coelamon (flag 0xF9)")) { _state.SetFlag(0xF9, true); BuildNpcs(); }
             if (GUILayout.Button("Recruit EVERY Digimon (all recruit flags)")) { foreach (var f in RecruitFlags) _state.SetFlag(f, true); BuildNpcs(); Say("All recruit flags on."); }
             GUILayout.BeginHorizontal(); GUILayout.Label("Flag", GUILayout.Width(40)); _flagText = GUILayout.TextField(_flagText, GUILayout.Width(80));
@@ -144,7 +187,10 @@ namespace DW1Remake.Game
             if (GUILayout.Button("5 of every item (bag slots 128)")) { for (int i = 0; i < _state.Bag.Length; i++) _state.Bag[i] = 5; _state.ItemSlots = 128; }
             if (GUILayout.Button("Learn every technique")) { for (int i = 0; i < 58; i++) _state.Techs[i] = true; }
             if (GUILayout.Button("Raise every Digimon (Chart page)")) { for (int i = 0; i < _state.Raised.Length; i++) _state.Raised[i] = true; }
-            if (GUILayout.Button("Collect every card")) { for (int i = 0; i < Portraits.Count; i++) _state.Cards[i] = true; }
+            // getCardAmount reads the count (0-9) of each of the 66 cards; the old button only set the "seen" list, so the Card page stayed empty
+            if (GUILayout.Button("Every card (1 of each of the 66)")) { for (int i = 0; i < 66; i++) { if (_state.CardCount[i] == 0) _state.CardCount[i] = 1; _state.Cards[i] = true; } Say("1 of every card."); }
+            // unlockMedal: trigger 0x16C + medal (the Medals page shows 15)
+            if (GUILayout.Button("Every medal (flags 0x16C-0x17A)")) { for (int i = 0; i < 15; i++) _state.SetFlag(0x16C + i, true); Say("Every medal."); }
 
             GUILayout.Label("Time");
             GUILayout.BeginHorizontal();

@@ -42,6 +42,11 @@ namespace DW1Remake.Game
         public System.Action<int> OnCommand, OnFeed;     // 15 praise, 4 scold, 3 sleep; an item handed to the partner
         public System.Func<bool> InBattle, CanSleep;
         public System.Action<int> Sfx;                   // playSound(0, n): 2 cursor, 3 confirm, 4 back
+        public TriangleMenuView Tri;                     // the game's own Triangle menu (null: the old drawing)
+        public InventoryView Inv;                        // the game's own bag (null: the old drawing)
+        bool _invOpened;
+        public System.Func<RectInt> BoyOrigin;           // the boy's 10 x 10 square on screen (getEntityScreenPos), where the boxes grow from
+        public int Year = 1, DayOfYear = 1;              // YEAR + 1, DAY + 1
         int _nameStage;
         string _input = "";
 
@@ -52,8 +57,12 @@ namespace DW1Remake.Game
 
         public bool Active { get { return _mode != Mode.None; } }
 
-        public void OpenMain() { _mode = Mode.Main; _back = Mode.None; _sel = 0; }
-        public void OpenBag() { _mode = Mode.Bag; _back = Mode.None; _sel = 0; _msg = ""; }
+        public void OpenMain() { _mode = Mode.Main; _back = Mode.None; _sel = 0; if (Tri != null) { Tri.CloseNow(Tri.Box); Tri.Selection = 1; } }
+        public void OpenBag() { _mode = Mode.Bag; _back = Mode.None; _sel = 0; _msg = ""; _pick = null; }
+
+        // script built-in 0 (openDiscardItem, item menu type 5): the bag opens to choose one item; Cross gives its number, back gives -1
+        Action<int> _pick;
+        public void OpenPick(Action<int> pick) { _mode = Mode.Bag; _back = Mode.None; _sel = 0; _msg = ""; _pick = pick; }
         Func<int, bool> _stock;   // which items this shop sells (null = the development test shop: everything priced)
         /// <summary>stock(i) says whether item i is for sale. The real shops have no list: the shopkeeper's script switches on flag 0x180 + item number for each item it sells.</summary>
         public void OpenShop(Func<int, bool> stock = null) { _stock = stock; _mode = Mode.Buy; _back = Mode.None; _sel = 0; _msg = ""; }
@@ -78,11 +87,19 @@ namespace DW1Remake.Game
             return l;
         }
 
-        void GoBack() { _mode = _back == Mode.Main ? Mode.Main : Mode.None; _back = Mode.None; _msg = ""; }
+        void GoBack()
+        {
+            _mode = _back == Mode.Main ? Mode.Main : Mode.None; _back = Mode.None; _msg = "";
+            if (_pick != null) { var p = _pick; _pick = null; p(-1); }
+        }
 
         /// <summary>One frame of input. step = up/down, side = left/right, action = Cross, cancel = Triangle/back.</summary>
         public void Tick(int step, int side, bool action, bool cancel)
         {
+            if (_mode == Mode.Main && Tri != null) { TickTri(step, side, action, cancel); return; }
+            if (_mode == Mode.Bag && Inv != null && _pick == null) { TickInv(step, side, action, cancel); return; }
+            if (_mode == Mode.Player && PlayerMenu != null) { TickPlayer(step, side, action, cancel); return; }
+            if (_mode == Mode.Digimon && DigimonMenu != null && PartnerInfo != null) { TickDigimon(step, side, action, cancel); return; }
             if (Sfx != null && _mode != Mode.Name) { if (cancel) Sfx(4); else if (action) Sfx(3); else if (step != 0 || side != 0) Sfx(2); }
             switch (_mode)
             {
@@ -96,10 +113,10 @@ namespace DW1Remake.Game
                 case Mode.Player:
                 {
                     int n = _mode == Mode.Digimon ? 2 : 4;
-                    if (cancel && _treeType >= 0) { _treeType = -1; return; }
+                    if (_mode == Mode.Digimon && _tab == 1 && _techIn) { TickTech(step, side, action, cancel); return; }
                     if (cancel) { _mode = Mode.Main; return; }
-                    if (_mode == Mode.Digimon && _tab == 1) { TickTech(step, side, action); return; }
-                    if (_mode == Mode.Player && _tab == 1 && TickChart(step, side, action)) return;
+                    // tickDigimonMenu: Left / Right change the tab, Cross on the Tech tab puts the cursor in the grid (MENU_STATE 6)
+                    if (_mode == Mode.Digimon && _tab == 1 && action) { _techIn = true; Snd(3); return; }
                     if (side != 0) _tab = (_tab + side + n) % n;
                     return;
                 }
@@ -126,7 +143,16 @@ namespace DW1Remake.Game
             var it = _items[id];
             if (_mode == Mode.Bag)
             {
-                if (InBattle()) _msg = Use(it);
+                if (_pick != null) { var p = _pick; _pick = null; _mode = Mode.None; p(id); return; }
+                if (InBattle())
+                {
+                    // inventory action 5 in a fight: the page closes and startThrowingItem takes the item out of the bag; it works when it lands
+                    if (!CanApply(id)) { _msg = "Can't use " + it.Name + " yet."; return; }
+                    if (ThrowBusy != null && ThrowBusy()) return;
+                    _s.RemoveItem(id, 1);
+                    LastUsedItem = id;
+                    _mode = Mode.None;
+                }
                 else { _mode = Mode.None; OnFeed(id); }      // startFeedingItem: the boy hands it to the partner
                 return;
             }
@@ -144,43 +170,260 @@ namespace DW1Remake.Game
             }
         }
 
+        // tickTriangleMenu / tickGameMenu with the game's menu: the box grows out of the boy each time the menu comes back (state 0); Cross works once it is
+        // open (TRIANGLE_MENU_STATE -1), sound 3 or 4 for a disabled option; Circle / Triangle closes it (sound 4) once it is open or gone
+        void TickTri(int step, int side, bool action, bool cancel)
+        {
+            var o = BoyOrigin != null ? BoyOrigin() : new RectInt(-5, -5, 10, 10);
+            if (!Tri.Showing) Tri.Open(o, CanSleep == null || CanSleep(), Tri.Selection);
+            Tri.Year = Year; Tri.Day = DayOfYear;
+            Tri.Move(step, side);
+            if (!Tri.Ready) return;
+            if (action)
+            {
+                int sel = Tri.Selection;
+                if (Sfx != null) Sfx(Tri.Disabled[sel] ? 4 : 3);
+                if (Tri.Disabled[sel]) return;
+                Tri.Shut(o);
+                // handleGameMenuSelection: 1 Item, 2 Digimon, 3 Player, 4 Praise (partner state 0xF), 5 Scold (4), 6 Sleep (3)
+                switch (sel)
+                {
+                    case 1: _mode = Mode.Bag; _back = Mode.Main; _sel = 0; _msg = ""; break;
+                    case 2: _mode = Mode.Digimon; _tab = 0; _techIn = false; _digimonOpened = false; break;
+                    case 3: _mode = Mode.Player; _tab = 0; _playerOpened = false; break;
+                    case 4: _mode = Mode.None; OnCommand(15); break;
+                    case 5: _mode = Mode.None; OnCommand(4); break;
+                    case 6: _mode = Mode.None; OnCommand(3); break;
+                }
+                return;
+            }
+            if (cancel) { if (Sfx != null) Sfx(4); Tri.Shut(o); _mode = Mode.None; }
+        }
+
+        // tickInventoryUI: Cross / Circle go to box 3 (sort or drop) if it is open, else to box 2 (Use, Move, Sort, Drop), else to the list
+        void TickInv(int step, int side, bool action, bool cancel)
+        {
+            var o = BoyOrigin != null ? BoyOrigin() : new RectInt(-5, -5, 10, 10);
+            if (!_invOpened) { Inv.InBattle = InBattle != null && InBattle(); Inv.Open(o); _invOpened = true; }
+            var v = Inv;
+            if (v.Third.State == 1)
+            {
+                if (v.ThirdIsSort)
+                {
+                    v.MoveOption(step, ref v.Sort, 3);
+                    // selectSorting, then actions 11-13 close box 3 and box 2
+                    if (action) { v.SortBy(v.Sort); v.Close(v.Third); v.Close(v.Options); }
+                    else if (cancel) v.Close(v.Third);
+                }
+                else
+                {
+                    v.MoveDrop(side);
+                    if (action && v.DropPick == 0)
+                    {
+                        // action 7: both boxes close, then every one of the item goes
+                        int id = v.SelectedItem;
+                        v.Close(v.Third); v.Close(v.Options);
+                        if (id != 0xFF) { _s.RemoveItem(id, _s.Bag[id]); _s.SyncSlots(); }
+                    }
+                    else if (action || cancel) v.Close(v.Third);
+                }
+                return;
+            }
+            if (v.Options.State == 1)
+            {
+                v.MoveOption(step, ref v.Option, 4);
+                if (cancel) { v.Close(v.Options); return; }
+                if (!action) return;
+                switch (v.Option)
+                {
+                    case 0:
+                        if (!v.OptionUsable(0)) return;
+                        UseItem(v.SelectedItem, o);
+                        return;
+                    case 1: v.MoveSource = v.Pointer; v.Close(v.Options); return;     // UI box 0 state 4
+                    case 2: v.OpenThird(true); return;
+                    case 3: if (v.OptionUsable(3)) v.OpenThird(false); return;
+                }
+                return;
+            }
+            if (v.Options.State != 0 || v.Third.State != 0 || !v.Ready) return;
+            v.MoveCursor(step, side);
+            if (action)
+            {
+                // selectRegularInventory: in the move state Cross swaps (sound 4), otherwise it opens box 2
+                if (v.Moving) { if (Sfx != null) Sfx(4); v.SwapMoved(); }
+                else v.OpenOptions();
+                return;
+            }
+            if (cancel)
+            {
+                if (v.Moving) { if (Sfx != null) Sfx(3); v.MoveSource = -1; return; }
+                // action 2: the boxes close and the Triangle menu comes back (in a fight the page just closes)
+                v.Shut(o); _invOpened = false;
+                _mode = _back == Mode.Main && !v.InBattle ? Mode.Main : Mode.None; _back = Mode.None;
+            }
+        }
+
+        // Triangle menu states 5 and 6 with tickPlayerMenu: box 1 grows out of the boy once the Triangle menu's box has gone; Triangle / Circle on a page
+        // closes it, and the Triangle menu comes back once it has shrunk away
+        bool _playerOpened;
+        PlayerMenuView _playerMenu; bool _playerMenuTried;
+        PlayerMenuView PlayerMenu
+        {
+            get
+            {
+                if (!_playerMenuTried && Disc != null && Battle.StatFont != null)
+                {
+                    _playerMenuTried = true;
+                    try { _playerMenu = PlayerMenuView.Load(Disc, Battle.StatFont); } catch (Exception e) { Debug.LogWarning("[menu] player menu: " + e.Message); }
+                    if (_playerMenu != null) _playerMenu.Sound = n => { if (Sfx != null) Sfx(n); };
+                }
+                return _playerMenu;
+            }
+        }
+
+        void TickPlayer(int step, int side, bool action, bool cancel)
+        {
+            var o = BoyOrigin != null ? BoyOrigin() : new RectInt(-5, -5, 10, 10);
+            var v = PlayerMenu;
+            if (!_playerOpened)
+            {
+                if (Tri != null && Tri.Showing) return;
+                v.Open(o); _playerOpened = true;
+                return;
+            }
+            if (!v.Showing) { _playerOpened = false; _mode = Tri != null ? Mode.Main : Mode.None; return; }
+            if (!v.Ready) return;
+            if (v.Tick(_s, step, side, action, cancel)) v.Shut(o);
+        }
+
+        /// <summary>The Player and Digimon menus hide the boy and his partner while they are open (tickPlayerMenu / tickDigimonMenu clear their isOnScreen).</summary>
+        public bool HidesActors
+        {
+            get
+            {
+                if (_mode == Mode.Player) return _playerMenu != null && _playerOpened && _playerMenu.Showing && !_playerMenu.Closing;
+                if (_mode == Mode.Digimon) return _digimonMenu != null && _digimonOpened && _digimonMenu.Showing && !_digimonMenu.Closing;
+                return false;
+            }
+        }
+
+        // Triangle menu states 3 and 4 with tickDigimonMenu, the same way as the Player menu
+        bool _digimonOpened;
+        DigimonMenuView _digimonMenu; bool _digimonMenuTried;
+        DigimonMenuView DigimonMenu
+        {
+            get
+            {
+                if (!_digimonMenuTried && Disc != null && Battle.StatFont != null)
+                {
+                    _digimonMenuTried = true;
+                    try { _digimonMenu = DigimonMenuView.Load(Disc, Battle.StatFont); } catch (Exception e) { Debug.LogWarning("[menu] digimon menu: " + e.Message); }
+                    if (_digimonMenu != null) _digimonMenu.Sound = n => { if (Sfx != null) Sfx(n); };
+                }
+                return _digimonMenu;
+            }
+        }
+
+        void TickDigimon(int step, int side, bool action, bool cancel)
+        {
+            var o = BoyOrigin != null ? BoyOrigin() : new RectInt(-5, -5, 10, 10);
+            var v = DigimonMenu;
+            if (!_digimonOpened)
+            {
+                if (Tri != null && Tri.Showing) return;
+                v.Open(o); _digimonOpened = true;
+                return;
+            }
+            if (!v.Showing) { _digimonOpened = false; _mode = Tri != null ? Mode.Main : Mode.None; return; }
+            if (!v.Ready) return;
+            // Square (X) is also one of our cancel keys: here it has its own job (the help page)
+            bool square = SquareKey();
+            if (square) cancel = false;
+            ThreeSlots();
+            if (v.Tick(step, side, action, cancel, square, CanLeaveGrid, (c, r) => CrossTech(r, c))) v.Shut(o);
+        }
+
+        // tickDigimonMenu state 6, Circle: allowed with at least one technique set and one of them with power
+        bool CanLeaveGrid()
+        {
+            bool any = false, power = false;
+            foreach (int id in _s.TechSet) if (id >= 0) { any = true; if (Battle.MakeTech(id, false).Power != 0) power = true; }
+            return any && power;
+        }
+
+        // Cross in the grid: getEquippedSlot takes a set technique out, else equipMove
+        void CrossTech(int row, int col)
+        {
+            int id = TechAt(row, col);
+            ThreeSlots();
+            int slot = EquippedSlot(id);
+            if (slot >= 0) { _s.TechSet[slot] = -1; Snd(3); }
+            else EquipMove(id);
+        }
+
+        // action 5: the boxes close; then startFeedingItem (the boy hands it over) or, in a fight, startThrowingItem
+        void UseItem(int id, RectInt boy)
+        {
+            if (id == 0xFF) return;
+            Inv.Shut(boy); _invOpened = false;
+            if (Inv.InBattle)
+            {
+                if (!CanApply(id) || (ThrowBusy != null && ThrowBusy())) { _mode = Mode.None; return; }
+                _s.RemoveItem(id, 1); _s.SyncSlots();
+                LastUsedItem = id;
+                _mode = Mode.None;
+                return;
+            }
+            _mode = Mode.None;
+            OnFeed(id);
+        }
+
         void PickMain()
         {
             switch (_sel)
             {
                 case 0: _mode = Mode.Bag; _back = Mode.Main; _sel = 0; _msg = ""; break;
-                case 1: _mode = Mode.Digimon; _tab = 0; break;
-                case 2: _mode = Mode.Player; _tab = 0; break;
+                case 1: _mode = Mode.Digimon; _tab = 0; _techIn = false; _digimonOpened = false; break;
+                case 2: _mode = Mode.Player; _tab = 0; _playerOpened = false; break;
                 case 3: _mode = Mode.None; OnCommand(15); break;
                 case 4: _mode = Mode.None; OnCommand(4); break;
                 case 5: if (CanSleep()) { _mode = Mode.None; OnCommand(3); } break;     // the option is off unless it is sleepy
             }
         }
 
-        string Use(ItemEntry it)
+        public System.Func<bool> ThrowBusy;
+
+        static bool CanApply(int id) { return id >= 0 && id <= 7; }
+
+        /// <summary>The item's effect in a fight, when the thrown item reaches the partner. Only the recovery items are wired up so far (ids 0-7; amounts from their names).</summary>
+        public void ApplyItem(int id)
         {
-            // only the recovery items are wired up so far (ids 0-7: HP and MP recovery)
             int[] hp = { 500, 1500, 5000, 9999 };
             int[] mp = { 500, 1500, 5000 };
-            int id = it.Id;
             if (id >= 0 && id <= 3) _s.AddStat(6, hp[id]);
             else if (id >= 4 && id <= 6) _s.AddStat(7, mp[id - 4]);
             else if (id == 7) { _s.AddStat(6, 1500); _s.AddStat(7, 1500); }
-            else return "Can't use " + it.Name + " yet.";
-            _s.RemoveItem(id, 1);
-            LastUsedItem = id;
-            return "Used " + it.Name + ".  HP " + _s.Stats[6] + "/" + _s.Stats[4] + "  MP " + _s.Stats[7] + "/" + _s.Stats[5];
         }
 
         // ================================================================ drawing
+        public Func<GameObject> BuildPartnerModel;      // a new copy of the partner's model (the Status page shows it)
+        readonly DigiviceModel _digivice = new DigiviceModel();
+        TechView _techView; bool _techTried;
+
         public void OnGUI()
         {
+            _digivice.Hide();       // shown again below while the Status page is open
+            _boyDigivice.Hide();
+            if (_playerMenu != null && _mode != Mode.Player) _playerMenu.HideModels();
+            if (Tri != null && Tri.Showing) Tri.Draw();      // also while it shrinks away after the menu closed
+            if (Inv != null && Inv.Showing) Inv.Draw();
             if (_mode == Mode.None) return;
             UiKit.Begin();
             switch (_mode)
             {
-                case Mode.Main: DrawMain(); break;
-                case Mode.Bag: DrawBag(); break;
+                case Mode.Main: if (Tri == null) DrawMain(); break;
+                case Mode.Bag: if (Inv == null || _pick != null) DrawBag(); break;
                 case Mode.Buy: case Mode.Sell: DrawList(); break;
                 case Mode.Digimon: DrawDigimon(); break;
                 case Mode.Player: DrawPlayer(); break;
@@ -214,12 +457,17 @@ namespace DW1Remake.Game
                     UiKit.Fill(new Rect(tile.x - 6, tile.y - 6, tile.width + 12, tile.height + 12), new Color(1f, 0.75f, 0.1f));
                     UiKit.Fill(new Rect(tile.x - 1, tile.y - 1, tile.width + 2, tile.height + 2), new Color(0.12f, 0.18f, 0.22f));
                 }
+                // addGameMenu / renderRectPolyFT4: Sleep is disabled unless the partner is sleepy (condition bit 1); a disabled option is drawn at colour 0x32 of 0x80
+                bool off = i == 5 && CanSleep != null && !CanSleep();
+                Color tint = off ? new Color(0x32 / 128f, 0x32 / 128f, 0x32 / 128f, 1f) : Color.white;
                 if (Art != null)
                 {
                     var size = Art.Size(i) * 4.4f;
+                    var o = GUI.color; GUI.color = tint;
                     GUI.DrawTextureWithTexCoords(new Rect(cx - size.x / 2, cy - size.y / 2, size.x, size.y), Art.Sheet(i), Art.Uv(i, i == _sel ? (int)(Time.time * 3f) % 2 : 0));
+                    GUI.color = o;
                 }
-                UiKit.Text(new Rect(cx - 80, cy + 62, 160, 50), names[i], 34, Color.white, TextAnchor.MiddleCenter);
+                UiKit.Text(new Rect(cx - 80, cy + 62, 160, 50), names[i], 34, tint, TextAnchor.MiddleCenter);
             }
         }
 
@@ -309,6 +557,16 @@ namespace DW1Remake.Game
 
         void DrawDigimon()
         {
+            var dm = PartnerInfo != null ? DigimonMenu : null;
+            if (dm != null)
+            {
+                dm.Draw((tab, state) =>
+                {
+                    if (tab == 0) { if (state >= 1) DrawStatus(); }
+                    else DrawTechPage(state, dm.Col, dm.Row);
+                });
+                return;
+            }
             UiKit.Tab(new Rect(75, 40, 310, 72), "Status", _tab == 0);
             UiKit.Tab(new Rect(415, 40, 240, 72), "Tech", _tab == 1);
             UiKit.Box(new Rect(47, 110, 1318, 895), UiKit.PanelFill);
@@ -323,8 +581,18 @@ namespace DW1Remake.Game
             if (good) UiKit.Fill(new Rect(r.x + 3, r.y + 3, (r.width - 6) * Mathf.Clamp01(t), r.height - 6), high);
         }
 
+        StatusView _statusView; bool _statusTried;
+
         void DrawStatus()
         {
+            if (!_statusTried && Disc != null && Battle.StatFont != null) { _statusTried = true; try { _statusView = StatusView.Load(Disc, Battle.StatFont); } catch (Exception e) { Debug.LogWarning("[menu] status page: " + e.Message); } }
+            if (_statusView != null && PartnerInfo != null)
+            {
+                // renderDigiviceEntity: its own ordering table sorted into the page's (GsSortOt), so the page's words lie over the model
+                _digivice.Draw(Disc, PartnerInfo.Type, BuildPartnerModel);
+                _statusView.Draw(_s, PartnerInfo.Type, PartnerName, Species, (int)(Time.unscaledTime * 20f));      // renderDigimonStatsView
+                return;
+            }
             // profile
             UiKit.Fill(new Rect(52, 440, 1308, 4), UiKit.Frame);
             UiKit.Tag(new Rect(90, 148, 235, 50), "PROFILE");
@@ -375,23 +643,86 @@ namespace DW1Remake.Game
         static readonly int[] RowIcon = { BattleIcons.Fire, BattleIcons.Retreat, BattleIcons.Thunder, BattleIcons.Plant, BattleIcons.Water, BattleIcons.Gear, BattleIcons.Poop };
 
         int TechAt(int r, int c) { return c < RowCounts[r] ? RowStarts[r] + c : -1; }
-        bool Usable(int id) { return PartnerInfo != null && PartnerInfo.Learnable.Contains(id); }
+        bool Usable(int id) { return PartnerInfo != null && (PartnerInfo.Learnable.Contains(id) || id == 0x2C && PartnerInfo.Learnable.Contains(0x30) || id == 0x37 && PartnerInfo.Learnable.Contains(0x39)); }
         static string Range(Battle.Tech t) { return t.Self ? "Self" : t.Wide ? "W" : t.Melee ? "S" : "L"; }
 
-        void TickTech(int step, int side, bool action)
+        bool _techIn;      // the cursor is in the technique grid (MENU_STATE 6)
+        public Action<int> Sound;     // playSound(0, n)
+        void Snd(int n) { if (Sound != null) Sound(n); }
+
+        // the Techset keeps three slots (EQUIPPED_MOVES); an emptied slot stays empty (-1) and the others do not move up
+        void ThreeSlots() { while (_s.TechSet.Count < 3) _s.TechSet.Add(-1); }
+
+        // tickDigimonMenu, MENU_STATE 6: the box moves 18 / 15 pixels and stops at the edges (8 columns, 7 rows)
+        void TickTech(int step, int side, bool action, bool cancel)
         {
-            if (side < 0 && _tc == 0) { _tab = 0; return; }              // left of the first column: back to the Status tab
-            if (side != 0) _tc = Mathf.Clamp(_tc + side, 0, 7);
-            if (step != 0) _tr = (_tr + step + 7) % 7;
-            if (!action) return;
-            int id = TechAt(_tr, _tc);
-            if (id < 0 || !Usable(id) || !_s.Techs[id]) return;          // only mastered techniques can be put in the Techset
-            if (_s.TechSet.Contains(id)) _s.TechSet.Remove(id);
-            else if (_s.TechSet.Count < 3) _s.TechSet.Add(id);
+            if (cancel)
+            {
+                // the grid can be left only with at least one technique set and one of them with power
+                bool any = false, power = false;
+                foreach (int id in _s.TechSet) if (id >= 0) { any = true; if (Battle.MakeTech(id, false).Power != 0) power = true; }
+                if (any && power) _techIn = false;
+                Snd(4);
+                return;
+            }
+            if (action)
+            {
+                int id = TechAt(_tr, _tc);
+                ThreeSlots();
+                int slot = EquippedSlot(id);
+                if (slot >= 0) { _s.TechSet[slot] = -1; Snd(3); }      // getEquippedSlot: Cross on a set technique takes it out
+                else EquipMove(id);
+            }
+            int r = Mathf.Clamp(_tr + step, 0, 6), c = Mathf.Clamp(_tc + side, 0, 7);
+            if (r != _tr || c != _tc) Snd(2);
+            _tr = r; _tc = c;
+        }
+
+        int EquippedSlot(int id)
+        {
+            for (int i = 0; i < _s.TechSet.Count; i++)
+                if (_s.TechSet[i] >= 0 && (_s.TechSet[i] == id || id == 0x2C && _s.TechSet[i] == 0x30 || id == 0x37 && _s.TechSet[i] == 0x39)) return i;
+            return -1;
+        }
+
+        // equipMove: it must be learned (hasMove), in this Digimon's 16 techniques (44 counts as 48 and 55 as 57 for those that have the
+        // other one), and a slot must be free
+        void EquipMove(int id)
+        {
+            if (id < 0 || !_s.Techs[id] || PartnerInfo == null) { Snd(4); return; }
+            int use = -1;
+            foreach (int m in PartnerInfo.Learnable)
+            {
+                if (id == 0x2C && m == 0x30) { use = 0x30; break; }
+                if (id == 0x37 && m == 0x39) { use = 0x39; break; }
+                if (m == id) { use = id; break; }
+            }
+            if (use < 0) { Snd(4); return; }
+            int slot = _s.TechSet.IndexOf(-1);
+            if (slot < 0) { Snd(4); return; }
+            _s.TechSet[slot] = use;
+            Snd(3);
+        }
+
+        void DrawTechPage(int state, int col, int row)
+        {
+            if (!_techTried && Disc != null && Battle.StatFont != null) { _techTried = true; try { _techView = TechView.Load(Disc, Battle.StatFont); } catch (Exception e) { Debug.LogWarning("[menu] tech page: " + e.Message); } }
+            if (_techView == null || PartnerInfo == null) return;
+            ThreeSlots();
+            int[] equipped = { _s.TechSet[0], _s.TechSet[1], _s.TechSet[2], PartnerInfo.SignatureId };
+            _techView.Draw(equipped, id => id >= 0 && id < _s.Techs.Length && _s.Techs[id], PartnerInfo.RawMoves, state, col, row, (int)(Time.unscaledTime * 20f));   // renderDigimonMovesView
         }
 
         void DrawTech()
         {
+            if (!_techTried && Disc != null && Battle.StatFont != null) { _techTried = true; try { _techView = TechView.Load(Disc, Battle.StatFont); } catch (Exception e) { Debug.LogWarning("[menu] tech page: " + e.Message); } }
+            if (_techView != null && PartnerInfo != null)
+            {
+                ThreeSlots();
+                int[] equipped = { _s.TechSet[0], _s.TechSet[1], _s.TechSet[2], PartnerInfo.SignatureId };
+                _techView.Draw(equipped, id => id >= 0 && id < _s.Techs.Length && _s.Techs[id], PartnerInfo.RawMoves, _techIn ? 6 : 1, _tc, _tr, (int)(Time.unscaledTime * 20f));   // renderDigimonMovesView
+                return;
+            }
             UiKit.Text(new Rect(95, 118, 400, 60), "Techset", 54, UiKit.Yellow);
             string[] cols = { "POWER", "MP", "RANG", "SPEC" };
             float[] cx = { 830, 1010, 1130, 1250 };
@@ -399,7 +730,7 @@ namespace DW1Remake.Game
             for (int r = 0; r < 3; r++)
             {
                 float y = 215 + r * 75;
-                if (r < _s.TechSet.Count)
+                if (r < _s.TechSet.Count && _s.TechSet[r] >= 0)
                 {
                     int id = _s.TechSet[r]; var t = Battle.MakeTech(id, false);
                     UiKit.Text(new Rect(190, y, 650, 70), t.Name, 54, Color.white);
@@ -423,7 +754,7 @@ namespace DW1Remake.Game
                 {
                     var cell = new Rect(560 + c * 76, y, 64, 62);
                     int id = TechAt(r, c);
-                    bool usable = id >= 0 && Usable(id), mastered = usable && _s.Techs[id], current = id >= 0 && _s.TechSet.Contains(id);
+                    bool usable = id >= 0 && Usable(id), mastered = usable && _s.Techs[id], current = id >= 0 && EquippedSlot(id) >= 0;
                     UiKit.Fill(cell, id < 0 ? Color.black : new Color(0.05f, 0.08f, 0.1f));
                     UiKit.Fill(new Rect(cell.x + 3, cell.y + 3, cell.width - 6, cell.height - 6), current ? new Color(0.8f, 0.3f, 0.4f) : id < 0 ? Color.black : usable && !mastered ? new Color(0.3f, 0.42f, 0.48f) : new Color(0.25f, 0.27f, 0.28f));
                     if (id >= 0 && BIcons != null)
@@ -433,7 +764,7 @@ namespace DW1Remake.Game
                         GUI.DrawTextureWithTexCoords(new Rect(cell.x + 8, cell.y + 7, 48, 48), BIcons.Sheet, BIcons.Uv(RowIcon[r], 1, 0));
                         GUI.color = o;
                     }
-                    if (r == _tr && c == _tc)
+                    if (_techIn && r == _tr && c == _tc)
                     {
                         UiKit.Fill(new Rect(cell.x - 5, cell.y - 5, cell.width + 10, 5), gold); UiKit.Fill(new Rect(cell.x - 5, cell.yMax, cell.width + 10, 5), gold);
                         UiKit.Fill(new Rect(cell.x - 5, cell.y, 5, cell.height), gold); UiKit.Fill(new Rect(cell.xMax, cell.y, 5, cell.height), gold);
@@ -441,7 +772,7 @@ namespace DW1Remake.Game
                 }
             }
             int cur = TechAt(_tr, _tc);
-            if (cur >= 0 && Usable(cur))
+            if (cur >= 0)
             {
                 var t = Battle.MakeTech(cur, false);
                 float px = _tc < 4 ? 860 : 110;
@@ -461,20 +792,32 @@ namespace DW1Remake.Game
 
         void DrawPlayer()
         {
-            string[] labels = { "Player", "Chart", "Med.", "Card" };
-            float[] tx = { 75, 415, 745, 970 }, tw = { 310, 295, 195, 195 };
-            for (int i = 0; i < 4; i++) UiKit.Tab(new Rect(tx[i], 40, tw[i], 72), labels[i], _tab == i);
-            UiKit.Box(new Rect(47, 110, 1318, 895), UiKit.PanelFill);
-            switch (_tab)
-            {
-                case 0: DrawPlayerInfo(); break;
-                case 1: DrawChart(); break;
-                case 2: DrawMedals(); break;
-                default: DrawCards(); break;
-            }
+            var v = PlayerMenu;
+            if (v == null) return;
+            v.Draw(_s, DrawPlayerInfo);
         }
 
+        PlayerInfoView _playerInfo; bool _playerInfoTried;
+        readonly DigiviceModel _boyDigivice = new DigiviceModel();
+        public Func<GameObject> BuildBoyModel;          // a copy of the boy's model (the Player page shows it in the Digivice)
+
         void DrawPlayerInfo()
+        {
+            if (!_playerInfoTried && Disc != null && Battle.StatFont != null) { _playerInfoTried = true; try { _playerInfo = PlayerInfoView.Load(Disc, Battle.StatFont); } catch (Exception e) { Debug.LogWarning("[menu] player page: " + e.Message); } }
+            if (_playerInfo != null)
+            {
+                int raised = 0; foreach (bool r in _s.Raised) if (r) raised++;
+                // renderDigiviceEntity(the boy): drawn before the page, so the words lie over it
+                if (BuildBoyModel != null) _boyDigivice.Draw(Disc, 0, BuildBoyModel);
+                // renderPlayerInfoView: medals counted over hasMedal(0 .. 0x11)
+                int medals = 0; for (int j = 0; j < 0x12; j++) if (_s.GetFlag(0x16C + j)) medals++;
+                _playerInfo.Draw(_s, PlayerName, raised, medals);
+                return;
+            }
+            DrawPlayerInfoOld();
+        }
+
+        void DrawPlayerInfoOld()
         {
             UiKit.Fill(new Rect(52, 225, 1308, 4), UiKit.Frame);
             UiKit.Fill(new Rect(505, 228, 5, 770), UiKit.Frame);
@@ -497,136 +840,6 @@ namespace DW1Remake.Game
             for (int i = 0; i < 4; i++) UiKit.Value(new Rect(900 + i * 88, 785, 86, 90), "");
             UiKit.Text(new Rect(545, 885, 300, 70), "Medals", 56, UiKit.Yellow);
             UiKit.Value(new Rect(900, 885, 120, 68), "0", 44, TextAnchor.MiddleCenter);
-        }
-
-        // ---- the Digimon chart. Cells by stage in the order of the PS1 page (screenshot); the Champion order is also the order of the game's evolution items.
-        static readonly int[][] ChartTypes =
-        {
-            new[] { 1, 29, 15, 43 }, new[] { 2, 30, 16, 44 }, new[] { 3, 17, 31, 18, 45, 32, 46, 4, 57 },
-            new[] { 5, 47, 34, 7, 51, 24, 23, 53 }, new[] { 9, 38, 48, 50, 25, 35, 52 }, new[] { 21, 8, 20, 33, 58, 49, 11 }, new[] { 36, 6, 37, 19, 10, 22, 39 },
-            new[] { 12, 26, 41, 60, 27, 61, 28, 42 }, new[] { 40, 54, 59, 55, 13, 14, 56 }
-        };
-        // the picture in ETCDAT/SBOY.TIM and its colour set, by Digimon type (DW1-SydPatches DigimonData.cpp; the pictures agree with the PS1 chart screenshot)
-        static readonly int[] FaceOfType = { 0, 74, 75, 66, 67, 26, 27, 28, 29, 30, 31, 61, 6, 7, 8, 76, 77, 68, 69, 32, 33, 34, 35, 36, 37, 62, 9, 10, 11, 78, 79, 70, 71, 38, 39, 40, 41, 42, 43, 63, 12, 13, 14, 80, 81, 72, 73, 44, 45, 46, 47, 48, 49, 64, 15, 16, 17, 51, 50, 1, 2, 3 };
-        static readonly int[] ColourOfType = { 0, 0, 0, 0, 1, 1, 3, 1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 2, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 0, 1, 2, 0, 0, 0, 0, 3, 0, 0, 0, 1, 2, 2, 3, 3, 3, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 4, 3 };
-        static readonly float[] ChartX = { 155, 310, 465, 625, 725, 825, 925, 1085, 1185 };
-        int _cc = 2, _cr, _treeType = -1;
-
-        static float ChartY(int col, int row) { return col < 2 ? 155 + row * 172 : 155 + row * 86; }
-
-        void Face(int type, Rect cell)
-        {
-            UiKit.Square(cell);
-            if (Faces != null && type < FaceOfType.Length)
-                GUI.DrawTextureWithTexCoords(new Rect(cell.x + 2, cell.y + 2, cell.width - 4, cell.height - 4), Faces.SheetFor(ColourOfType[type]), Faces.Uv(FaceOfType[type], (int)(Time.time * 2f) % 2));
-        }
-
-        // returns false when the input should go to the tabs (left of the first column, right of the last)
-        bool TickChart(int step, int side, bool action)
-        {
-            if (_treeType >= 0) return true;
-            if (side < 0 && _cc == 0) return false;
-            if (side > 0 && _cc == ChartTypes.Length - 1) return false;
-            if (side != 0) { _cc += side; }
-            if (step != 0) _cr += step;
-            _cr = Mathf.Clamp(_cr, 0, ChartTypes[_cc].Length - 1);
-            if (action && _s.Raised[ChartTypes[_cc][_cr]]) _treeType = ChartTypes[_cc][_cr];
-            return true;
-        }
-
-        static void Line(Vector2 a, Vector2 b, Color c)
-        {
-            float len = (b - a).magnitude, deg = Mathf.Atan2(b.y - a.y, b.x - a.x) * Mathf.Rad2Deg;
-            var old = GUI.matrix;
-            GUIUtility.RotateAroundPivot(deg, a);
-            UiKit.Fill(new Rect(a.x, a.y - 5, len, 10), c);
-            GUI.matrix = old;
-        }
-
-        void DrawChart()
-        {
-            if (_treeType >= 0) { DrawTree(); return; }
-            Color[] c = { new Color(0.62f, 0.35f, 0.45f), new Color(0.40f, 0.17f, 0.34f), new Color(0.05f, 0.30f, 0.5f), new Color(0f, 0.5f, 0.25f), new Color(0.65f, 0.35f, 0.12f) };
-            float[] x = { 122, 278, 434, 592, 1050 }, w = { 148, 148, 148, 450, 240 };
-            for (int i = 0; i < 5; i++) UiKit.Fill(new Rect(x[i], 142, w[i], 720), c[i]);
-            for (int col = 0; col < ChartTypes.Length; col++)
-                for (int r = 0; r < ChartTypes[col].Length; r++)
-                {
-                    var cell = new Rect(ChartX[col], ChartY(col, r), 80, 82);
-                    if (_s.Raised[ChartTypes[col][r]]) Face(ChartTypes[col][r], cell); else UiKit.Square(cell);
-                }
-            var cur = new Rect(ChartX[_cc], ChartY(_cc, _cr), 80, 82);
-            var gold = new Color(1f, 0.95f, 0.3f);
-            UiKit.Fill(new Rect(cur.x - 6, cur.y - 6, 92, 6), gold); UiKit.Fill(new Rect(cur.x - 6, cur.yMax, 92, 6), gold);
-            UiKit.Fill(new Rect(cur.x - 6, cur.y, 6, 82), gold); UiKit.Fill(new Rect(cur.xMax, cur.y, 6, 82), gold);
-            UiKit.Text(new Rect(600, 890, 330, 70), "X  Select", 50, Color.white);
-            UiKit.Text(new Rect(950, 890, 330, 70), "^  Cancel", 50, Color.white);
-        }
-
-        // the evolution line of a Digimon: only the ones you have raised show
-        void DrawTree()
-        {
-            var info = Disc != null ? DigimonStatsCatalog.Get(Disc, _treeType) : null;
-            if (info == null) return;
-            UiKit.Text(new Rect(575, 120, 260, 80), "Tree", 58, UiKit.Yellow, TextAnchor.MiddleCenter);
-            var inner = new Color(0.2f, 0.3f, 0.36f);
-            UiKit.Fill(new Rect(152, 160, 330, 590), inner); UiKit.Fill(new Rect(607, 350, 205, 205), inner); UiKit.Fill(new Rect(935, 155, 330, 585), inner);
-            var me = new Vector2(708, 452);
-            var fromList = info.EvolvesFrom.FindAll(v => _s.Raised[v]);
-            for (int i = 0; i < fromList.Count; i++)
-            {
-                float y = 452 + (i - (fromList.Count - 1) / 2f) * 100f;
-                Line(new Vector2(280, y), new Vector2(670, 452), new Color(0.95f, 0.5f, 0.05f));
-                Face(fromList[i], new Rect(198, y - 41, 80, 82));
-            }
-            Color[] line = { new Color(1f, 0.75f, 0f), new Color(0f, 0.6f, 0f), new Color(0f, 0.6f, 0.7f), new Color(0f, 0.2f, 0.75f), new Color(0.7f, 0f, 0.65f), new Color(0.7f, 0.05f, 0.1f) };
-            Vector2[] spot = { new Vector2(1020, 175), new Vector2(1095, 285), new Vector2(1170, 395), new Vector2(1170, 505), new Vector2(1095, 615), new Vector2(1020, 720) };
-            for (int i = 0; i < info.EvolvesTo.Count && i < 6; i++)
-            {
-                if (!_s.Raised[info.EvolvesTo[i]]) continue;
-                Vector2 bend = new Vector2(spot[i].x - 130f, 452 + (i - 2.5f) * 12f);
-                Line(me + new Vector2(40, 0), bend, line[i]);
-                Line(bend, spot[i] - new Vector2(40, 0), line[i]);
-                Face(info.EvolvesTo[i], new Rect(spot[i].x - 40, spot[i].y - 41, 80, 82));
-            }
-            Face(_treeType, new Rect(me.x - 40, me.y - 41, 80, 82));
-            UiKit.Text(new Rect(200, 755, 460, 70), info.LevelName, 52, Color.white, TextAnchor.MiddleCenter);
-            UiKit.Text(new Rect(150, 840, 560, 70), info.Name, 52, Color.white, TextAnchor.MiddleCenter);
-        }
-
-        void DrawMedals()
-        {
-            UiKit.Text(new Rect(47, 125, 1318, 80), "Medals Chart", 56, UiKit.Yellow, TextAnchor.MiddleCenter);
-            UiKit.Fill(new Rect(52, 195, 1308, 4), UiKit.Frame);
-            UiKit.Fill(new Rect(1015, 198, 5, 400), UiKit.Frame);
-            UiKit.Fill(new Rect(52, 595, 1308, 4), UiKit.Frame);
-            for (int r = 0; r < 3; r++)
-                for (int c = 0; c < 5; c++)
-                {
-                    var rc = new Rect(160 + c * 168, 215 + r * 113, 80, 105);
-                    UiKit.Fill(new Rect(rc.x + 5, rc.y, 70, 30), new Color(0.7f, 0.1f, 0.15f));
-                    UiKit.Fill(new Rect(rc.x, rc.y + 35, 80, 65), new Color(0.07f, 0.07f, 0.09f));
-                }
-            UiKit.Value(new Rect(275, 630, 780, 70), "");
-            UiKit.Fill(new Rect(52, 905, 1308, 4), UiKit.Frame);
-            UiKit.Text(new Rect(555, 925, 400, 70), "X  Select", 50, Color.white);
-            UiKit.Text(new Rect(900, 925, 400, 70), "^  Cancel", 50, Color.white);
-        }
-
-        void DrawCards()
-        {
-            UiKit.Text(new Rect(47, 125, 1318, 80), "Card List", 56, UiKit.Yellow, TextAnchor.MiddleCenter);
-            for (int r = 0; r < 6; r++)
-                for (int c = 0; c < 11; c++)
-                {
-                    var cell = new Rect(130 + c * 106, 200 + r * 113, 85, 88);
-                    UiKit.Square(cell);
-                    int n = r * 11 + c;
-                    if (Faces != null && n < Portraits.Count && _s.Cards[n])
-                        GUI.DrawTextureWithTexCoords(new Rect(cell.x + 6, cell.y + 8, 73, 73), Faces.Sheet, Faces.Uv(n, ((int)(Time.time * 2f) + n) % 2));
-                }
-            UiKit.Text(new Rect(555, 880, 400, 70), "X  Select", 50, Color.white);
-            UiKit.Text(new Rect(900, 880, 400, 70), "^  Cancel", 50, Color.white);
         }
 
         // ================================================================ keys
@@ -705,6 +918,49 @@ namespace DW1Remake.Game
             var k = Keyboard.current; return k != null && (k.tabKey.wasPressedThisFrame || k.cKey.wasPressedThisFrame || k.escapeKey.wasPressedThisFrame || k.xKey.wasPressedThisFrame || k.iKey.wasPressedThisFrame);
 #elif ENABLE_LEGACY_INPUT_MANAGER
             return Input.GetKeyDown(KeyCode.Tab) || Input.GetKeyDown(KeyCode.C) || Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.X) || Input.GetKeyDown(KeyCode.I);
+#else
+            return false;
+#endif
+        }
+        // Triangle alone (Tab, C, Esc), for screens where Square has its own job (the Item Keeper)
+        public static bool TriangleOnly()
+        {
+#if ENABLE_INPUT_SYSTEM
+            var k = Keyboard.current; return k != null && (k.tabKey.wasPressedThisFrame || k.cKey.wasPressedThisFrame || k.escapeKey.wasPressedThisFrame);
+#elif ENABLE_LEGACY_INPUT_MANAGER
+            return Input.GetKeyDown(KeyCode.Tab) || Input.GetKeyDown(KeyCode.C) || Input.GetKeyDown(KeyCode.Escape);
+#else
+            return false;
+#endif
+        }
+        // Start = Enter
+        public static bool StartKey()
+        {
+#if ENABLE_INPUT_SYSTEM
+            var k = Keyboard.current; return k != null && (k.enterKey.wasPressedThisFrame || k.numpadEnterKey.wasPressedThisFrame);
+#elif ENABLE_LEGACY_INPUT_MANAGER
+            return Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter);
+#else
+            return false;
+#endif
+        }
+        // Square = X, Circle = Z
+        public static bool SquareKey()
+        {
+#if ENABLE_INPUT_SYSTEM
+            var k = Keyboard.current; return k != null && k.xKey.wasPressedThisFrame;
+#elif ENABLE_LEGACY_INPUT_MANAGER
+            return Input.GetKeyDown(KeyCode.X);
+#else
+            return false;
+#endif
+        }
+        public static bool CircleKey()
+        {
+#if ENABLE_INPUT_SYSTEM
+            var k = Keyboard.current; return k != null && k.zKey.wasPressedThisFrame;
+#elif ENABLE_LEGACY_INPUT_MANAGER
+            return Input.GetKeyDown(KeyCode.Z);
 #else
             return false;
 #endif

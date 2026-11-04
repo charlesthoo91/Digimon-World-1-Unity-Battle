@@ -89,9 +89,11 @@ namespace DW1Remake.Formats
             return list;
         }
 
-        static Color32 FromBgr555(int v)
+        Color32 FromBgr555(int v)
         {
             if (v == 0) return new Color32(0, 0, 0, 0); // PS1: pure 0 = transparent
+            // a semi-transparent primitive blends only the colours with the top (STP) bit set: layer 1 keeps the solid ones, layer 2 the blended ones
+            if (_layer == 1 && (v & 0x8000) != 0 || _layer == 2 && (v & 0x8000) == 0) return new Color32(0, 0, 0, 0);
             byte r = (byte)((v & 31) * 255 / 31);
             byte g = (byte)(((v >> 5) & 31) * 255 / 31);
             byte b = (byte)(((v >> 10) & 31) * 255 / 31);
@@ -99,6 +101,29 @@ namespace DW1Remake.Formats
         }
 
         int _shift;     // the PS1 can start a colour set part way along a row
+        int _layer;     // 0 all colours, 1 only those without the STP bit, 2 only those with it
+
+        /// <summary>One layer of the picture for a semi-transparent primitive: 1 = the solid colours, 2 = the colours the PS1 blends (STP bit set).</summary>
+        public Texture2D ToTextureLayer(int palette, int layer)
+        {
+            _layer = layer;
+            var t = ToTexture(palette);
+            _layer = 0;
+            return t;
+        }
+
+        /// <summary>True when some colour of this set has the STP bit, so a semi-transparent primitive has something to blend.</summary>
+        public bool HasStp(int palette)
+        {
+            if (!HasPalette) return false;
+            int n = BitsPerPixel == 4 ? 16 : 256;
+            for (int i = 0; i < n; i++)
+            {
+                int o = _clutOffset + (palette * _clutWidth + i) * 2;
+                if (o + 2 <= _src.Length && (U16(_src, o) & 0x8000) != 0) return true;
+            }
+            return false;
+        }
 
         /// <summary>The texture with its colours taken this many entries further along the colour table.</summary>
         public Texture2D ToTexture(int palette, int shift)
@@ -109,10 +134,18 @@ namespace DW1Remake.Formats
             return t;
         }
 
+        // colours a program loaded into this picture's colour table at run time (LoadImage of a CLUT row: the effects' BTL_loadClutColors)
+        readonly Dictionary<int, int> _clutOverride = new Dictionary<int, int>();
+        public void SetPaletteColor(int palette, int index, int bgr555) { _clutOverride[palette * 256 + index] = bgr555; }
+        /// <summary>Back to the file's own colours; true when there were changes (pictures made from it are then out of date).</summary>
+        public bool ClearPaletteOverrides() { bool had = _clutOverride.Count > 0; _clutOverride.Clear(); return had; }
+
         Color32 PaletteColor(int palette, int index)
         {
             index += _shift;
             if (!HasPalette) { byte g = (byte)(index * 255 / (BitsPerPixel == 4 ? 15 : 255)); return new Color32(g, g, g, 255); }
+            int over;
+            if (_clutOverride.Count > 0 && _clutOverride.TryGetValue(palette * 256 + index, out over)) return FromBgr555(over);
             int o = _clutOffset + (palette * _clutWidth + index) * 2;
             if (o + 2 > _src.Length) return new Color32(255, 0, 255, 255);
             return FromBgr555(U16(_src, o));

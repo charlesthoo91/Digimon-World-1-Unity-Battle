@@ -117,8 +117,47 @@ namespace DW1Remake.Formats
         /// <summary>True if this piece uses the map's own palette (so it changes with the time of day).</summary>
         public bool UsesMapPalette(int obj) { return Objects[obj].Clut == 0xFF; }
 
-        /// <summary>Pixels of one piece, bottom row first (Unity order). bg = the map palette in use (256 colours, BGR555).</summary>
-        public Color32[] BuildObject(int index, ushort[] bg)
+        /// <summary>
+        /// renderMapOverlays / buildMapOverlayPrim: a piece is semi-transparent unless its transparency is 4, and then the value is the blend mode (abr) of its texture page.
+        /// The PS1 blends only the colours with the STP bit; the others stay solid.
+        /// </summary>
+        public bool IsSemi(int obj) { return Objects[obj].Trans != 4; }
+
+        /// <summary>A whole 256 x 256 texture page as a 3D model packet sees it (the map's door models, loadDoors: their pictures are in the
+        /// map's own images). tpage / clut = the packet's raw words; bg = the map palette, used for CLUT row 480 (never loaded, loadMapImage1).
+        /// Bottom row first; layer as BuildObject.</summary>
+        public Color32[] PagePixels(int tpage, int clut, ushort[] bg, int layer = 0)
+        {
+            int tx = (tpage & 15) * 64, ty = ((tpage >> 4) & 1) * 256, mode = (tpage >> 7) & 3;
+            int cx = (clut & 63) * 16, cy = clut >> 6;
+            var px = new Color32[256 * 256];
+            for (int v = 0; v < 256; v++)
+                for (int u = 0; u < 256; u++)
+                {
+                    int vy = Math.Min(ty + v, VH - 1), c;
+                    if (mode == 0)
+                    {
+                        int nib = (_vram[vy * VW + Math.Min(tx + u / 4, VW - 1)] >> (4 * (u % 4))) & 15;
+                        c = _vram[Math.Min(cy, VH - 1) * VW + Math.Min(cx + nib, VW - 1)];
+                    }
+                    else if (mode == 1)
+                    {
+                        int w16 = _vram[vy * VW + Math.Min(tx + u / 2, VW - 1)];
+                        int idx = (u & 1) == 0 ? (w16 & 255) : (w16 >> 8);
+                        c = cy == 480 && bg != null ? bg[idx] : _vram[Math.Min(cy, VH - 1) * VW + Math.Min(cx + idx, VW - 1)];
+                    }
+                    else c = _vram[vy * VW + Math.Min(tx + u, VW - 1)];
+                    Color32 col;
+                    if (c == 0 || layer == 1 && (c & 0x8000) != 0 || layer == 2 && (c & 0x8000) == 0) col = new Color32(0, 0, 0, 0);
+                    else col = new Color32((byte)((c & 31) * 255 / 31), (byte)(((c >> 5) & 31) * 255 / 31), (byte)(((c >> 10) & 31) * 255 / 31), 255);
+                    px[(255 - v) * 256 + u] = col;
+                }
+            return px;
+        }
+
+        /// <summary>Pixels of one piece, bottom row first (Unity order). bg = the map palette in use (256 colours, BGR555).
+        /// layer 0 = every colour, 1 = only those without the STP bit, 2 = only those with it.</summary>
+        public Color32[] BuildObject(int index, ushort[] bg, int layer = 0)
         {
             var o = Objects[index];
             var px = new Color32[o.W * o.H];
@@ -141,7 +180,7 @@ namespace DW1Remake.Formats
                         c = o.Clut == 0xFF ? bg[idx] : _vram[Math.Min(468 + o.Clut, VH - 1) * VW + idx];
                     }
                     Color32 col;
-                    if (c == 0) col = new Color32(0, 0, 0, 0);          // fully transparent
+                    if (c == 0 || layer == 1 && (c & 0x8000) != 0 || layer == 2 && (c & 0x8000) == 0) col = new Color32(0, 0, 0, 0);          // fully transparent, or not in this layer
                     else col = new Color32((byte)((c & 31) * 255 / 31), (byte)(((c >> 5) & 31) * 255 / 31), (byte)(((c >> 10) & 31) * 255 / 31), 255);
                     px[(o.H - 1 - y) * o.W + x] = col;
                 }

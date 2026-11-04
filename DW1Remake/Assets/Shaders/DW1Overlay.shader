@@ -11,6 +11,7 @@ Shader "DW1Remake/Overlay"
         _Opacity ("Opacity (1 = solid; below 1 = semi-transparent like the PS1 shadows)", Float) = 1
         [HideInInspector] _SrcBlend ("Src blend", Float) = 1
         [HideInInspector] _DstBlend ("Dst blend", Float) = 0
+        [HideInInspector] _BlendOp ("Blend op", Float) = 0
         [HideInInspector] _ZWriteOn ("ZWrite", Float) = 1
     }
     SubShader
@@ -21,6 +22,7 @@ Shader "DW1Remake/Overlay"
             Name "Overlay"
             Cull Off
             Blend [_SrcBlend] [_DstBlend]
+            BlendOp [_BlendOp]
             ZWrite [_ZWriteOn]
 
             HLSLPROGRAM

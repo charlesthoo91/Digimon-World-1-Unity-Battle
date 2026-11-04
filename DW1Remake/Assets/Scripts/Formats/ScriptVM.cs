@@ -31,8 +31,15 @@ namespace DW1Remake.Formats
     }
 
     /// <summary>Story progress: the game's script variables (bytes) and flags (bits). A new game starts with everything 0.</summary>
+    /// <summary>One Competition Battle registration (registerBattleData, SavegamePayload.battleRegistrationData; 40 slots, the last one is
+    /// Machinedramon's from the game-clear save). Type 0 = empty. Moves = the partner's three chosen techniques (technique numbers here).</summary>
+    [Serializable]
+    public sealed class RegisteredDigimon { public int Type, Hp, Mp, Off, Def, Speed, Brain, Discipline; public string Name = ""; public int[] Moves = new int[3]; }
+
     public sealed class ScriptState
     {
+        public RegisteredDigimon[] Registry = NewRegistry();
+        public static RegisteredDigimon[] NewRegistry() { var r = new RegisteredDigimon[40]; for (int i = 0; i < r.Length; i++) r[i] = new RegisteredDigimon(); return r; }
         public byte[] Vars = new byte[256];
         public byte[] Flags = new byte[100];     // 800 flags
         // Partner values the scripts read and set (0x34 set, 0x35 add, 0x36 reduce). 0-3 = offense, defense, speed, brains; 4,5 = max HP, max MP; 6,7 = current HP, MP;
@@ -48,7 +55,15 @@ namespace DW1Remake.Formats
         public Action<int, int, int, int> OnBlockTiles;
         public int Money;                         // bits; 0x2A adds, 0x2B takes away (the opening takes 50000 from 0, so the game starts at 0)
         public byte[] Bag = new byte[128];        // how many of each item the player carries (item number = position in the game's item list)
+        public byte[] Stored = new byte[128];     // the Item Keeper's counts (script state smth[0x54 + item], tickItemKeeper)
         public int BagKinds() { int n = 0; foreach (var b in Bag) if (b > 0) n++; return n; }
+        /// <summary>giveItem(type, 0): whether n more of this item would fit, without adding them.</summary>
+        public bool CanAddItem(int id, int n = 1)
+        {
+            if (id < 0 || id >= Bag.Length || n <= 0) return false;
+            if (Bag[id] == 0 && ItemSlots > 0 && BagKinds() >= ItemSlots) return false;
+            return Bag[id] + n <= 99;
+        }
         public bool AddItem(int id, int n)
         {
             if (id < 0 || id >= Bag.Length || n <= 0) return false;
@@ -62,7 +77,7 @@ namespace DW1Remake.Formats
         public float PlayMinutes;                    // time played
         // names and numbers the game's text boxes insert (text codes 4-12)
         public string PlayerName = "A", PartnerName = "B";
-        public System.Func<int, string> SpeciesNameOf, ItemNameOf;   // Digimon / item names, read from the disc by the room
+        public System.Func<int, string> SpeciesNameOf, ItemNameOf, TechNameOf;   // Digimon / item / technique names, read from the disc by the room
         public System.Func<int, int> TimeValue;                      // arg 0x69 month, 0x6A day, 0x6B hour, 0x6C minute
         public string CodeText(int code, int arg, int speaker = 255)
         {
@@ -71,6 +86,7 @@ namespace DW1Remake.Formats
                 case 0x05: return PlayerName;    // the boy ("B, this isn't a dream" - Jijimon to the boy)
                 case 0x06: return PartnerName;   // the partner ("Take Agumon and explore", "Are you alright, Agumon" - checked in about 40 lines)
                 case 0x07: return SpeciesNameOf != null ? SpeciesNameOf(Vars[arg]) : "";
+                case 0x08: return TechNameOf != null ? TechNameOf(Vars[arg]) : "";   // MOVE_NAMES[variable] (Forget text of lostAllLives)
                 case 0x09: return ItemNameOf != null ? ItemNameOf(Vars[arg]) : "";
                 case 0x0A: return Money.ToString();
                 case 0x04: return TimeValue != null ? TimeValue(arg).ToString() : "0";
@@ -78,7 +94,39 @@ namespace DW1Remake.Formats
             }
         }
         public int ItemSlots;                     // 0x23: how many items the bag holds (10 at the start, 20/30 with each Dimensional Key Chain)
+        /// <summary>INVENTORY.types: the bag's slots in their order (0xFF = an empty slot); the counts stay in Bag. SyncSlots keeps the two in step.</summary>
+        public byte[] Slots = NewSlots();
+        static byte[] NewSlots() { var a = new byte[30]; for (int i = 0; i < a.Length; i++) a[i] = 0xFF; return a; }
+
+        /// <summary>A slot whose item ran out becomes empty (removeItem); an item in the bag without a slot takes the first empty one (giveItem).</summary>
+        public void SyncSlots()
+        {
+            int size = Math.Min(Slots.Length, ItemSlots > 0 ? ItemSlots : 10);
+            for (int i = 0; i < Slots.Length; i++) if (Slots[i] != 0xFF && (Slots[i] >= Bag.Length || Bag[Slots[i]] == 0)) Slots[i] = 0xFF;
+            for (int id = 0; id < Bag.Length; id++)
+            {
+                if (Bag[id] == 0 || Array.IndexOf(Slots, (byte)id) >= 0) continue;
+                for (int i = 0; i < size; i++) if (Slots[i] == 0xFF) { Slots[i] = (byte)id; break; }
+            }
+        }
+
         public bool[] Cards = new bool[256];      // cards collected (command 0x2F n gives card n)
+        public byte[] CardCount = new byte[256];  // getCardAmount: how many of each card, 0-9 (0x2F adds one, 0x30 takes one)
+        public int SectionOnExit = -1;            // 0x7B: the section to run after the next map change
+        public byte Var0Reset;                    // MAIN_D_80134FE7 (built-in 0x19 sets it): variable 0 gets it when a script ends, on a script map change and on 0x7B
+        // what the room tells the scripts (script_interp.c): the map, the partner's type, a Digimon's DIGIMON_DATA type (+28: 1 Data, 2 Vaccine, 3 Virus), the date
+        public Func<int> MapIdNow, PartnerTypeNow;
+        public Func<int, int> AttributeOf;
+        public Func<int[]> DateNow;                     // year, day (0-29), hour, minute
+        public Action<int, int, int, int> AdvanceDate;  // 0x37: to that date (skipHours when it is later)
+
+        // dateToSeconds / secondsToDate (script_value.c): minutes since year 0, a year = 30 days
+        public static int DateToMinutes(int y, int d, int h, int m) { return m + h * 60 + d * 24 * 60 + y * 30 * 24 * 60; }
+        public static void MinutesToDate(int t, out int y, out int d, out int h, out int m)
+        {
+            if (t >= 255 * 43200) t = 59 + 23 * 60 + 14 * 1440 + 25 * 43200;
+            m = t % 60; t /= 60; h = t % 24; t /= 24; d = t % 30; y = t / 30;
+        }
         public bool[] Techs = new bool[256];      // techniques the partner knows (0x2D teaches one)
         public bool[] Raised = new bool[180];     // Digimon types you have raised (the Chart page shows only these)
         public List<int> TechSet = new List<int>();   // the (up to 3) techniques picked on the Tech page; the battle uses these
@@ -140,10 +188,12 @@ namespace DW1Remake.Formats
     {
         public string Text;                  // text box
         public List<string> Options;         // a menu: the player must pick one (then call Choose)
+        public bool Selection;               // the options are the whole box (scriptShowSelection), no question text above them
         public int Speaker = 255;            // who talks (0xFD = the player, 0xFC = the partner, 255 = nobody, otherwise a map Digimon's script number)
         public int Cmd = -1;                 // cutscene command (0x4C face, 0x4D angle, 0x4E walk, 0x4F camera, 0x6C place, 0x56 animation, 0x67 wait, 0x4A wait for all)
         public int Actor, Target, Frames;    // Actor: 0xFD = the player, 0xFC = the partner, otherwise the map Digimon whose script number matches
         public float X, Z, Angle;            // game units / game angle (4096 = full turn)
+        public float Y;                      // game units (0x7D: the height of the point)
         public int Map = -1, Exit, Arrive = 255;   // map change (Arrive = script section to run on arrival, 255 = none)
     }
 
@@ -203,7 +253,7 @@ namespace DW1Remake.Formats
         readonly Stack<int[]> stack = new Stack<int[]>();
         byte[] d; int curId, p, steps;
         int speaker = 255;
-        int[] menuOffsets; List<string> menuOptions; int[] awaiting;
+        int[] menuOffsets; List<string> menuOptions; int[] awaiting; int cancelAt = -1;
         /// <summary>Digimon slots the script switched on (command 0x47: Digimon type, slot in the map's Digimon list, flag).</summary>
         public readonly List<int[]> Spawns = new List<int[]>();
 
@@ -214,6 +264,47 @@ namespace DW1Remake.Formats
             p = SectionStart(d, section);
         }
 
+        /// <summary>Text colour code n (string control 01 n) kept in decoded text as this character plus n; GameFont draws in that colour, Plain drops it.</summary>
+        public const char ColourMark = (char)0xE000;
+
+        /// <summary>The text without its colour codes (for text not drawn with the game font).</summary>
+        public static string Plain(string s)
+        {
+            if (s == null || !HasMark(s)) return s;
+            var sb = new StringBuilder();
+            foreach (char ch in s) if (ch < ColourMark || ch > ColourMark + 15) sb.Append(ch);
+            return sb.ToString();
+        }
+        static bool HasMark(string s) { foreach (char ch in s) if (ch >= ColourMark && ch <= ColourMark + 15) return true; return false; }
+
+        // the text of a 0x1A command starting at j; 'end' = just after it; colours: keep the 01 n codes (ColourMark + n)
+        static string Decode(byte[] d, int j, ScriptState st, int speaker, out int end, bool colours = false)
+        {
+            var sb = new StringBuilder();
+            while (j < d.Length)
+            {
+                int c = d[j];
+                if ((c >= 0x81 && c <= 0x9F) || (c >= 0xE0 && c <= 0xFC)) { if (j + 1 >= d.Length) break; sb.Append(MapScripts.Pair(c << 8 | d[j + 1])); j += 2; }
+                else if (c == 0x0D) { sb.Append('\n'); j += 2; }
+                else if (c == 0x01) { if (colours) sb.Append((char)(ColourMark + (d[j + 1] & 15))); j += 2; }      // setTextColor
+                else if (c == 0x00) { j += 2; break; }
+                else if (c < 0x20) { sb.Append(st.CodeText(c, d[j + 1], speaker)); j += 2; } // a value the game fills in (names, numbers, time...)
+                else j++;
+            }
+            end = j;
+            return sb.ToString().Trim('\n', ' ');
+        }
+
+        /// <summary>resolveMapHeadEntry: text idx of script 0's section (a table of u16 offsets, 4 bytes apart), as showMapHeadTextbox shows it.</summary>
+        public static string MapHeadText(MapScripts scripts, ScriptState st, int section, int idx, int speaker, bool colours = false)
+        {
+            byte[] s = scripts.GetScriptBytes(MapScripts.DgZero);
+            int at = SectionStart(s, section);
+            if (at < 0) return null;
+            int off = U16(s, at + idx * 4 + 2), end;
+            return off + 2 < s.Length ? Decode(s, off + 2, st, speaker, out end, colours) : null;
+        }
+
         byte[] Get(int id) { byte[] b; if (!cache.TryGetValue(id, out b)) { b = _scripts.GetScriptBytes(id); cache[id] = b; } return b; }
         void Note(string m) { if (log != null) log.Add(m); }
         int Long(int o) { return d[o] | d[o + 1] << 8 | d[o + 2] << 16 | d[o + 3] << 24; }
@@ -221,9 +312,17 @@ namespace DW1Remake.Formats
         /// <summary>After a menu action: the player picked option i (0 based).</summary>
         public void Choose(int i)
         {
+            cancelAt = -1;
             if (awaiting == null) return;
             if (i < 0) i = 0; if (i >= awaiting.Length) i = awaiting.Length - 1;
             p = awaiting[i]; awaiting = null;
+        }
+
+        /// <summary>tickSelectionDialogue, Circle with flag 0x31 off: no option is taken, the script goes on after the selection.</summary>
+        public void CancelChoice()
+        {
+            if (awaiting == null || cancelAt < 0) return;
+            p = cancelAt; awaiting = null; cancelAt = -1;
         }
 
         /// <summary>The next thing the script wants (text box, menu, map change), or null when it has finished.</summary>
@@ -300,7 +399,9 @@ namespace DW1Remake.Formats
                                 switch (c & 7)
                                 {
                                     case 0: s0 = Compare(mode, st.GetStat(thing), thing == 9 ? (short)U16(d, q + 2) : U16(d, q + 2)); q += 4; break;   // partner value (happiness can be below 0)
-                                    case 2: s0 = mode == 1 ? !st.Techs[thing] : st.Techs[thing]; q += 2; break;   // technique known
+                                    case 1: s0 = Compare(mode, st.CardCount[thing], U16(d, q + 2)); q += 4; break;   // scriptCompareCard: how many of a card
+                                    case 2: s0 = mode != 0 ? !st.Techs[thing] : st.Techs[thing]; q += 2; break;   // scriptCompareMove: technique known (non-zero = not)
+                                    case 3: s0 = mode != 0 ? (st.Para.Condition & thing) == 0 : (st.Para.Condition & thing) != 0; q += 2; break;   // scriptCompareCondition: a condition bit
                                     case 4: s0 = Compare(mode, thing < st.Bag.Length ? st.Bag[thing] : 0, U16(d, q + 2)); q += 4; break;       // how many of an item
                                     case 5: s0 = Compare(mode, st.Money, Long(q + 2)); q += 6; break;   // Bits
                                     default: s0 = false; q += 2; Note("game-state condition " + (c & 7) + " treated as false"); break;
@@ -323,21 +424,18 @@ namespace DW1Remake.Formats
                     case 0x1B: speaker = d[p + 1]; p += 2; continue;
                     case 0x1A:
                     {
-                        var sb = new StringBuilder();
-                        int j = p + 2;
-                        while (j < d.Length)
-                        {
-                            int c = d[j];
-                            if ((c >= 0x81 && c <= 0x9F) || (c >= 0xE0 && c <= 0xFC)) { if (j + 1 >= d.Length) break; sb.Append(MapScripts.Pair(c << 8 | d[j + 1])); j += 2; }
-                            else if (c == 0x0D) { sb.Append('\n'); j += 2; }
-                            else if (c == 0x01) j += 2;                       // colour
-                            else if (c == 0x00) { j += 2; break; }
-                            else if (c < 0x20) { sb.Append(st.CodeText(c, d[j + 1], speaker)); j += 2; } // a value the game fills in (names, numbers, time...)
-                            else j++;
-                        }
+                        int j;
+                        string text = Decode(d, p + 2, st, speaker, out j, true);
                         p = j;
-                        string text = sb.ToString().Trim('\n', ' ');
-                        if (menuOffsets != null && menuOptions == null) { menuOptions = new List<string>(text.Split('\n')); continue; }
+                        // scriptShowSelection (command 0x10): the text right after the offsets is the list of options, shown at once as the selection box.
+                        // Circle (when flag 0x31 is off) goes on 2 bytes after it (endPointer: past the 12 00 most selections have there)
+                        if (menuOffsets != null)
+                        {
+                            var opts = new List<string>(text.Split('\n'));
+                            while (opts.Count < menuOffsets.Length) opts.Add("?");
+                            awaiting = menuOffsets; menuOffsets = null; menuOptions = null; cancelAt = j + 2;
+                            return new ScriptAction { Options = opts, Speaker = speaker, Selection = true };
+                        }
                         if (text.Length > 0) return new ScriptAction { Text = text, Speaker = speaker };
                         continue;
                     }
@@ -359,14 +457,68 @@ namespace DW1Remake.Formats
                     case 0x29: st.RemoveItem(d[p + 2], d[p + 3]); p += 4; continue;                  // take item
                     case 0x2A: st.Money += Long(p + 2); p += 6; continue;
                     case 0x2B: st.Money = Math.Max(0, st.Money - Long(p + 2)); p += 6; continue;
-                    case 0x2F: st.Cards[d[p + 1]] = true; p += 2; continue;   // a card for the Card List
+                    case 0x2F: if (st.CardCount[d[p + 1]] < 9) st.CardCount[d[p + 1]]++; st.Cards[d[p + 1]] = true; p += 2; continue;   // a card for the Card List (up to 9)
+                    case 0x30: if (st.CardCount[d[p + 1]] > 0) st.CardCount[d[p + 1]]--; st.Cards[d[p + 1]] = st.CardCount[d[p + 1]] > 0; p += 2; continue;   // take a card
+                    case 0x31: st.Stats[14] = (ushort)Math.Min(9999, U16(d, p + 2)); p += 4; continue;                   // merit (prosperity points): set
+                    case 0x32: st.Stats[14] = (ushort)Math.Min(9999, st.Stats[14] + U16(d, p + 2)); p += 4; continue;    // add
+                    case 0x33: st.Stats[14] = 0; p += 4; continue;          // "reduce": the game stores minus the value and then clamps it at 0
+                    case 0x21: st.Vars[d[p + 1]] = (byte)(st.MapIdNow != null ? st.MapIdNow() : 0); p += 2; continue;            // STORE_MAP_ID
+                    case 0x22: st.Vars[d[p + 1]] = (byte)(st.PartnerTypeNow != null ? st.PartnerTypeNow() : 0); p += 2; continue; // STORE_DIGIMON_TYPE
+                    case 0x3F: st.Vars[d[p + 3]] = (byte)(st.AttributeOf != null ? st.AttributeOf(st.Vars[d[p + 2]]) : 0); p += 4; continue;   // STORE_DIGIMON_VALUE: DIGIMON_DATA[var].type
+                    case 0x25:      // STORE_DATE: year, day, hour, minute into four variables
+                    {
+                        var dt = st.DateNow != null ? st.DateNow() : new[] { 0, 0, 0, 0 };
+                        for (int i = 0; i < 4; i++) st.Vars[(d[p + 1] + i) & 0xFF] = (byte)dt[i];
+                        p += 2; continue;
+                    }
+                    case 0x2C:      // COMPARE_DATE: the date in 4 variables against a fixed date; sets or clears a flag
+                    {
+                        int v = d[p + 1], flag = U16(d, p + 2), mode = d[p + 4];
+                        int now = ScriptState.DateToMinutes(st.Vars[v], st.Vars[(v + 1) & 0xFF], st.Vars[(v + 2) & 0xFF], st.Vars[(v + 3) & 0xFF]);
+                        int at = ScriptState.DateToMinutes(d[p + 5], d[p + 6], d[p + 7], d[p + 8]);
+                        st.SetFlag(flag, Compare(mode, now, at));
+                        p += 10; continue;
+                    }
+                    case 0x37:      // ADVANCE_TO_DATE_AT: the clock goes to the date in 4 variables
+                    {
+                        int v = d[p + 1];
+                        if (st.AdvanceDate != null) st.AdvanceDate(st.Vars[v], st.Vars[(v + 1) & 0xFF], st.Vars[(v + 2) & 0xFF], st.Vars[(v + 3) & 0xFF]);
+                        p += 2; continue;
+                    }
+                    case 0x38: case 0x39:      // ADD_MINUTES_TO_DATE_AT (0x39 takes them away, not below 0)
+                    {
+                        int v = d[p + 1], n = Long(p + 2);
+                        int t = ScriptState.DateToMinutes(st.Vars[v], st.Vars[(v + 1) & 0xFF], st.Vars[(v + 2) & 0xFF], st.Vars[(v + 3) & 0xFF]);
+                        t = op == 0x38 ? t + n : Math.Max(0, t - n);
+                        int y, dd, h, m; ScriptState.MinutesToDate(t, out y, out dd, out h, out m);
+                        st.Vars[v] = (byte)y; st.Vars[(v + 1) & 0xFF] = (byte)dd; st.Vars[(v + 2) & 0xFF] = (byte)h; st.Vars[(v + 3) & 0xFF] = (byte)m;
+                        p += 6; continue;
+                    }
+                    case 0x7B: st.SectionOnExit = d[p + 1]; st.Vars[0] = st.Var0Reset; p += 2; continue;      // SECTION_ON_EXIT, then writePStat(0, MAIN_D_80134FE7)
+                    case 0x6A: { var a = new ScriptAction { Cmd = 0x6A, Actor = d[p + 2], Frames = d[p + 3] }; p += 4; return a; }   // SET_AUTOTALK: actor, 1 = it talks when the boy touches it
+                    case 0x57: { var a = new ScriptAction { Cmd = 0x57, Actor = d[p + 2], Frames = d[p + 3] }; p += 4; return a; }   // SET_OBJ_VISIBILITY: map piece, flag (1 = hidden)
+                    // ROTATE_3D_OBJECT: door slot, _, signed direction (SCRIPT_MOVEMENT[11], tickRotateDoor)
+                    case 0x70: { var a = new ScriptAction { Cmd = 0x70, Actor = d[p + 1], Frames = (sbyte)d[p + 3] }; p += 4; return a; }
+                    // MOVE_OBJECT_TO: slot, map piece, (speed, unused), signed steps, _, x, y on the painted map (SCRIPT_MOVEMENT[12 + slot], tickMoveObjectTo)
+                    case 0x71: { var a = new ScriptAction { Cmd = 0x71, Actor = d[p + 1], Target = d[p + 2], Frames = (sbyte)d[p + 4], X = S16(d, p + 6), Z = S16(d, p + 8) }; p += 10; return a; }
+                    case 0x76: { p += 2; return new ScriptAction { Cmd = 0x76 }; }                                                   // SPAWN_BOULDER
+                    case 0x77: { var a = new ScriptAction { Cmd = 0x77, X = S16(d, p + 2), Z = S16(d, p + 4) }; p += 6; return a; }   // MOVE_BOULDER, then the script stops for this frame
+                    case 0x78: { p += 2; return new ScriptAction { Cmd = 0x78 }; }                                                   // DESPAWN_BOULDER
+                    // SPAWN_SPRITE_AT_LOCATION: count, x, y, z, first map piece
+                    case 0x7D: { var a = new ScriptAction { Cmd = 0x7D, Frames = d[p + 1], X = S16(d, p + 2), Y = S16(d, p + 4), Z = S16(d, p + 6), Target = S16(d, p + 8) }; p += 10; return a; }
+                    // SPAWN_SPRITE_AT_ENTITY: actor, its body part (model node), map piece
+                    case 0x7E: { var a = new ScriptAction { Cmd = 0x7E, Actor = d[p + 1], Frames = (sbyte)d[p + 2], Target = d[p + 3] }; p += 4; return a; }
+                    case 0x54: { var a = new ScriptAction { Cmd = 0x54, Actor = d[p + 1] }; p += 2; return a; }                      // RESET_ENTITY_ORIGIN
+                    // scriptInstructionFBtoFF 0xFB: _, u16 script, u16 map (CURRENT_SCRIPT_ID, CURRENT_SCREEN_ID), then loadMap; the room does it
+                    case 0xFB: { var a = new ScriptAction { Cmd = 0xFB, Actor = U16(d, p + 2), Frames = U16(d, p + 4) }; p += 6; return a; }
                     case 0x2D: st.Techs[d[p + 1]] = true; p += 2; continue;                          // teach a technique
                     case 0x34: st.SetStat(d[p + 1], U16(d, p + 2)); p += 4; continue;
                     case 0x35: st.AddStat(d[p + 1], U16(d, p + 2)); p += 4; continue;
                     case 0x36: st.ReduceStat(d[p + 1], U16(d, p + 2)); p += 4; continue;
                     case 0x1F: st.Vars[d[p + 2]] = (byte)Math.Min(255, st.Vars[d[p + 2]] + d[p + 3]); p += 4; continue;
                     case 0x20: st.Vars[d[p + 2]] = (byte)Math.Max(0, st.Vars[d[p + 2]] - d[p + 3]); p += 4; continue;
-                    case 0x47: Spawns.Add(new int[] { d[p + 1], d[p + 2], d[p + 3] }); p += 4; continue;
+                    // scriptSetDigimon: type, slot, autotalk; kept for the map setup, and returned so a running script can switch the Digimon on
+                    case 0x47: { Spawns.Add(new int[] { d[p + 1], d[p + 2], d[p + 3] }); var a = new ScriptAction { Cmd = 0x47, Actor = d[p + 1], Target = d[p + 2], Frames = d[p + 3] }; p += 4; return a; }
                     case 0x49: { var a = new ScriptAction { Cmd = op, Frames = d[p + 1] }; p += 2; return a; }   // callDigimonRoutine
                     case 0x64: { var a = new ScriptAction { Cmd = op, Actor = st.Vars[0xFE], Frames = d[p + 1] }; p += 2; return a; }   // var 254 = the actor (set just before)
                     // 0x27 closes the text window (it just follows the lines), 0x66 starts the fight: variables 250 (0xFA) = 1 for a scripted fight (no running away),
@@ -378,7 +530,7 @@ namespace DW1Remake.Formats
                     case 0x4D: { var a = new ScriptAction { Cmd = op, Actor = d[p + 1], Angle = U16(d, p + 2) }; p += 4; return a; }
                     case 0x4E: { var a = new ScriptAction { Cmd = op, Actor = d[p + 1], X = S16(d, p + 2), Z = S16(d, p + 4) }; p += 8; return a; }
                     case 0x4F: { var a = new ScriptAction { Cmd = op, Frames = d[p + 1], X = S16(d, p + 2), Z = S16(d, p + 4) }; p += 6; return a; }
-                    case 0x6C: { var a = new ScriptAction { Cmd = op, Actor = d[p + 1], X = S16(d, p + 2), Z = S16(d, p + 4) }; p += 8; return a; }
+                    case 0x6C: { var a = new ScriptAction { Cmd = op, Actor = d[p + 1], X = S16(d, p + 2), Z = S16(d, p + 4), Frames = d[p + 6] }; p += 8; return a; }   // ENTITY_MOVE_TO: id, x, z, speed (frames)
                     case 0x50: { var a = new ScriptAction { Cmd = op, Actor = d[p + 2], Frames = d[p + 3] }; p += 4; return a; }              // camera to an actor
                     case 0x51: case 0x53: { var a = new ScriptAction { Cmd = op, Actor = d[p + 1], Target = d[p + 3] }; p += 4; return a; }   // walk to an actor (0x53 with the camera)
                     case 0x52: { var a = new ScriptAction { Cmd = op, Actor = d[p + 1], X = S16(d, p + 2), Z = S16(d, p + 4) }; p += 8; return a; }   // walk, the camera goes along

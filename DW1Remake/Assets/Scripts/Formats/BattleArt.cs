@@ -15,7 +15,9 @@ namespace DW1Remake.Formats
 
         readonly Texture2D[] _hud = new Texture2D[16], _cmd = new Texture2D[16];
         TimImage _hudTim, _cmdTim, _condTim;
-        readonly Texture2D[] _cond = new Texture2D[16];
+        readonly Texture2D[] _cond = new Texture2D[16], _sys = new Texture2D[16];
+        TimImage _sysTim, _clockTim;
+        readonly Texture2D[] _clock = new Texture2D[16];
         Texture2D _cursor, _lifeFill;
         Color32[] _lifeGrey;
         int _lifeWidth = -1;
@@ -30,6 +32,8 @@ namespace DW1Remake.Formats
             var a = new BattleArt();
             byte[] etc = disc.ReadFile("/ETCDAT/ETCTIM.BIN");
             if (!TimImage.TryParse(etc, 0, out a._hudTim) || !TimImage.TryParse(etc, 8736, out a._cmdTim) || !TimImage.TryParse(etc, 23808, out a._condTim)) return null;
+            TimImage.TryParse(etc, 32544, out a._clockTim);
+            if (disc.Exists("/ETCDAT/SYSTEM_W.TIM")) TimImage.TryParse(disc.ReadFile("/ETCDAT/SYSTEM_W.TIM"), 0, out a._sysTim);
             byte[] b = disc.ReadFile("/BTL_REL.BIN");
             System.Func<uint, int> at = v => (int)(v - OverlayBase);
             a.WordX = new short[BattleWordPieces]; a.WordY = new short[BattleWordPieces];
@@ -46,7 +50,8 @@ namespace DW1Remake.Formats
                 a.Bars[i, 1] = b[o + 2]; a.Bars[i, 2] = b[o + 3] - 128; a.Bars[i, 3] = b[o + 4]; a.Bars[i, 4] = b[o + 5];
                 a.Bars[i, 5] = System.BitConverter.ToInt16(b, o + 6); a.Bars[i, 6] = System.BitConverter.ToInt16(b, o + 8);
             }
-            a._cursor = a._cmdTim.ToTexture(1, 10);    // the cursor uses the colour set 10 entries further on
+            // BTL_renderCommandMenu: setClut(282, 497); a colour-set address keeps x only in steps of 16 (getClut), so it is row 1 at x 272 with no shift
+            a._cursor = a._cmdTim.ToTexture(1);
             return a;
         }
 
@@ -70,11 +75,96 @@ namespace DW1Remake.Formats
             Draw(_cond[row], u, v - 128f, w, h, x, y, dw, dh);
         }
 
+        readonly Texture2D[,] _condLayer = new Texture2D[16, 3];
+        readonly Material[,] _condMat = new Material[16, 4];
+
+        /// <summary>Condition, drawn as a semi-transparent PS1 sprite: colours without the STP bit solid, the STP ones with blend mode abr
+        /// (0 half, 1 added, 2 subtracted, 3 a quarter added; shader DW1Remake/GuiBlend). abr below 0 = all solid.</summary>
+        public void ConditionPs(int row, int abr, float u, float v, float w, float h, float x, float y, float dw, float dh)
+        {
+            if (abr < 0) { Condition(row, u, v, w, h, x, y, dw, dh); return; }
+            if (_condLayer[row, 1] == null) { _condLayer[row, 1] = _condTim.ToTextureLayer(row, 1); _condLayer[row, 2] = _condTim.ToTextureLayer(row, 2); }
+            Draw(_condLayer[row, 1], u, v - 128f, w, h, x, y, dw, dh);
+            if (Event.current.type != EventType.Repaint) return;
+            var m = _condMat[row, abr & 3];
+            if (m == null)
+            {
+                var sh = Shader.Find("DW1Remake/GuiBlend");
+                if (sh == null) return;
+                m = new Material(sh) { mainTexture = _condLayer[row, 2] };
+                MmdModel.SetPsxBlend(m, abr & 3);
+                _condMat[row, abr & 3] = m;
+            }
+            var t = _condLayer[row, 2];
+            var uv = new Rect(u / 256f, 1f - (v - 128f + h) / t.height, w / 256f, h / t.height);
+            Graphics.DrawTexture(new Rect(MiddleX + x * Scale, MiddleY + y * Scale, dw * Scale, dh * Scale), t, uv, 0, 0, 0, 0, m);
+        }
+
+        /// <summary>From VRAM page (320,0) v 128+ = ETCDAT/SYSTEM_W.TIM (VRAM 320,128); row = colour y - 488.</summary>
+        public void Sys(int row, float u, float v, float w, float h, float x, float y)
+        {
+            if (_sysTim == null) return;
+            if (_sys[row] == null) _sys[row] = _sysTim.ToTexture(row);
+            Draw(_sys[row], u, v - 128f, w, h, x, y, w, h);
+        }
+
+        /// <summary>From the clock sheet (ETCTIM.BIN at 32544, VRAM 896,448); row = colour y - 496, v as the game has it (192 up).</summary>
+        public void Clock(int row, float u, float v, float w, float h, float x, float y)
+        {
+            if (_clockTim == null) return;
+            if (_clock[row] == null) _clock[row] = _clockTim.ToTexture(row);
+            Draw(_clock[row], u, v - 192f, w, h, x, y, w, h);
+        }
+
+        /// <summary>A POLY_FT4 from the clock sheet with corner texels (u0, v0) - (u1, v1) (u1 < u0 mirrors it), stretched over w x h at (x, y).</summary>
+        public void ClockQuad(int row, int u0, int v0, int u1, int v1, float x, float y, float w, float h)
+        {
+            if (_clockTim == null) return;
+            if (_clock[row] == null) _clock[row] = _clockTim.ToTexture(row);
+            var t = _clock[row];
+            float top = v0 - 192f, bottom = v1 - 192f;
+            var uv = new Rect(u0 / 256f, 1f - bottom / t.height, (u1 - u0) / 256f, (bottom - top) / t.height);
+            GUI.DrawTextureWithTexCoords(new Rect(MiddleX + x * Scale, MiddleY + y * Scale, w * Scale, h * Scale), t, uv);
+        }
+
+        /// <summary>The minute hand (CLOCK_SPRITE): 8 x 16 at 120, 192 of the clock sheet, colour row 3, turning about its point 3, 13 which sits at x, y.</summary>
+        public void ClockHand(float x, float y, float degrees)
+        {
+            if (_clockTim == null) return;
+            var c = new Vector3(MiddleX + x * Scale, MiddleY + y * Scale, 0f);
+            Matrix4x4 m = GUI.matrix;
+            GUI.matrix = m * Matrix4x4.TRS(c, Quaternion.Euler(0, 0, degrees), Vector3.one) * Matrix4x4.Translate(-c);
+            Clock(3, 120, 192, 8, 16, x - 3, y - 13);
+            GUI.matrix = m;
+        }
+
         /// <summary>From the orders sheet; row = colour y - 496.</summary>
         public void Cmd(int row, float u, float v, float w, float h, float x, float y)
         {
             if (_cmd[row] == null) _cmd[row] = _cmdTim.ToTexture(row);
             Draw(_cmd[row], u, v, w, h, x, y, w, h);
+        }
+
+        readonly Texture2D[,] _cmdLayer = new Texture2D[16, 3];
+        Material _cmdHalf;
+
+        /// <summary>From the orders sheet as a semi-transparent primitive with blend mode 0 (half): colours without the STP bit solid, the STP ones blended.</summary>
+        public void CmdHalf(int row, float u, float v, float w, float h, float x, float y)
+        {
+            if (_cmdLayer[row, 1] == null) { _cmdLayer[row, 1] = _cmdTim.ToTextureLayer(row, 1); _cmdLayer[row, 2] = _cmdTim.ToTextureLayer(row, 2); }
+            Draw(_cmdLayer[row, 1], u, v, w, h, x, y, w, h);
+            if (Event.current.type != EventType.Repaint) return;
+            if (_cmdHalf == null)
+            {
+                var sh = Shader.Find("DW1Remake/GuiBlend");
+                if (sh == null) return;
+                _cmdHalf = new Material(sh);
+                MmdModel.SetPsxBlend(_cmdHalf, 0);
+            }
+            var t = _cmdLayer[row, 2];
+            _cmdHalf.mainTexture = t;
+            var uv = new Rect(u / 256f, 1f - (v + h) / t.height, w / 256f, h / t.height);
+            Graphics.DrawTexture(new Rect(MiddleX + x * Scale, MiddleY + y * Scale, w * Scale, h * Scale), t, uv, 0, 0, 0, 0, _cmdHalf);
         }
 
         public void Cursor(float x, float y) { Draw(_cursor, 61, 32, 22, 22, x, y, 22, 22); }

@@ -769,7 +769,8 @@ namespace DW1Remake.Game
         }
 
         /// <summary>The gains of a finished session, in the order HP, MP, Off, Def, Speed, Brains, and the hour that passes. kind: 0 HP, 1 Off, 2 Speed, 3 Def, 4 MP, 5 Brains.</summary>
-        public void Train(int kind, int[] g, bool manual)
+        /// <param name="bonus">the slot machine's payout (5, 20, 40, 100); 10 without it: every gain x bonus / 10 (TRN_award*TrainingGains, argument c)</param>
+        public void Train(int kind, int[] g, bool manual, int bonus = 10)
         {
             for (int i = 0; i < 6; i++) g[i] = 0;
             int m, tired;
@@ -783,6 +784,7 @@ namespace DW1Remake.Game
                 case 4: m = TrainMultiplier(1, manual); g[1] = Boosted(80, m, 0x20); g[3] = Boosted(2, m, 2); tired = 7; break;
                 default: m = TrainMultiplier(1, manual); g[1] = Boosted(10, m, 0x20); g[5] = Boosted(8, m, 8); tired = 6; break;
             }
+            for (int i = 0; i < 6; i++) g[i] = g[i] * bonus / 10;
             if (P.Tiredness == 100) for (int i = 0; i < 6; i++) if (g[i] > 0) g[i] = 1;
             AdvanceTrainingTime(tired, 1, 1);
         }
