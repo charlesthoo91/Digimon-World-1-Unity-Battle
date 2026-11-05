@@ -1258,14 +1258,17 @@ namespace DW1Remake.Game
         }
         bool _battleWait;
 
-        // walking into a wild Digimon (follow mode 12) starts a fight
+        // checkMapInteraction / NPCEntityTickOverworld: touching a map Digimon runs its script on its own only when its autotalk (0x47's third
+        // byte, 0x6A) is 1; with 0 it needs Cross (TryTalk). A wild one's fight comes from its script (0x66), never from the touch itself.
+        // Ours before: every wild Digimon (follow mode 12) ran its script on touch, so TUNN07_3's DemiMeramon (autotalk 0, script 5 only talks)
+        // said "Hey, how are you?" again and again (user 2026-11-05)
         void TryStartBattle()
         {
             if (_battle == null || _partner == null || !_partner.gameObject.activeInHierarchy || _intro) return;
             foreach (var n in _npcs)
             {
                 if (n.T == null || !n.T.gameObject.activeInHierarchy) continue;
-                if (!Hostile(n) && n.AutoTalk != 1) continue;
+                if (n.AutoTalk != 1) continue;
                 Vector3 d = n.T.position - _player.position; d.y = 0;
                 // its own script runs at once: lines, then the fight (command 0x66)
                 if (!Touching(n)) continue;                 // entityCheckEntityCollision: the moment the two touch
