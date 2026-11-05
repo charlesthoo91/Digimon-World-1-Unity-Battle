@@ -351,6 +351,7 @@ namespace DW1Remake.Game
             public Vector3 Home; public bool Chasing;
             public int AutoTalk;        // NPC_ENTITIES.autotalk (0x47's third byte, 0x6A): 1 = its script runs the moment the boy touches it
             public int Record;          // its record in the map file: ENTITY_TABLE[2 + Record]
+            public bool Stopped;        // MapDigimonEntity.stopAnim: it spoke in the running script, its AI waits for the script to end
         }
         readonly List<Npc> _npcs = new List<Npc>();
         string _playerName = "", _partnerName = "";
@@ -904,7 +905,7 @@ namespace DW1Remake.Game
         {
             var log = new List<string>();
             _runner = new ScriptRunner(_scripts, _state, _scripts.ScriptIdForMap(_mapId), section, log);
-            _runnerSection = section;
+            _runnerSection = section; _bump = null;
             _talkingTo = null; _scriptAny = false; _line = null; _choiceOpts = null;
             AdvanceScript();
             if (_runner != null && _anim != null) _anim.SetSlot(IdleSlot);
@@ -919,13 +920,34 @@ namespace DW1Remake.Game
             if (_scripts == null || !_scripts.Available || _mapId < 0) return false;
             var log = new List<string>();
             _runner = new ScriptRunner(_scripts, _state, _scripts.ScriptIdForMap(_mapId), section, log);
-            _runnerSection = section;
+            _runnerSection = section; _bump = null;
             _talkingTo = who; _scriptAny = false; _line = null; _choiceOpts = null;
             if (_anim != null) _anim.SetSlot(IdleSlot);
             AdvanceScript();
             if (_runner != null) FreezeCamera();
             foreach (var l in log) Debug.Log("[script section " + section + " in " + _mapNames[_mapId] + "] " + l);
             return _scriptAny || _runner != null;
+        }
+
+        // setDialogueOwner -> scriptPauseGame(owner): a map Digimon that takes the dialogue box stops thinking for the rest of the script
+        // (setMovementEnabled(id, 1): stopAnim, clearMapAITable: no target, no look-at, its route from the first section); the end of the
+        // script lets them all go (setMovementEnabled(-1, 0)). Its script walks and animations still work. GIAS07: Patamon stops running
+        // its route once it has cried "HELP ME!" (user 2026-11-05: ours went on hopping round during the talk)
+        int _dialogueOwner = 0xFF;
+
+        void SetDialogueOwner(int owner)
+        {
+            if (owner == _dialogueOwner) return;
+            _dialogueOwner = owner;
+            if (owner >= 0xC8) return;
+            foreach (var n in _npcs)
+                if (n.Data.Script == owner) { n.Stopped = true; n.HasTarget = false; n.Chasing = false; n.Section = 0; }
+        }
+
+        void ReleaseSpeakers()
+        {
+            _dialogueOwner = 0xFF;
+            foreach (var n in _npcs) n.Stopped = false;
         }
 
         // moves the running script to its next text box, menu or map change
@@ -938,14 +960,15 @@ namespace DW1Remake.Game
                 if (a == null)
                 {
                     _state.Vars[0] = _state.Var0Reset; _runner = null; _runnerSection = -1; _line = null; _choiceOpts = null; _talkingTo = null; EndCutscene();
+                    ReleaseSpeakers();
                     // section 0xFE has ended: the arrival section follows
                     if (_thenSection != 255) { int s = _thenSection; _thenSection = 255; StartScript(s, null); return; }
                     if (_intro) FinishIntro();
                     return;
                 }
                 if (a.Cmd >= 0) { if (ExecCmd(a)) return; continue; }
-                if (a.Text != null) { _line = a.Text; _speaker = a.Speaker; _choiceOpts = null; _scriptAny = true; return; }
-                if (a.Options != null) { if (a.Selection) { _speaker = a.Speaker; _line = null; } _choiceOpts = a.Options; _choiceSel = 0; _scriptAny = true; return; }
+                if (a.Text != null) { _line = a.Text; _speaker = a.Speaker; SetDialogueOwner(a.Speaker); _choiceOpts = null; _scriptAny = true; return; }
+                if (a.Options != null) { if (a.Selection) { _speaker = a.Speaker; SetDialogueOwner(a.Speaker); _line = null; } _choiceOpts = a.Options; _choiceSel = 0; _scriptAny = true; return; }
                 if (a.Map >= 0 && DoChangeMap(a)) { _scriptAny = true; _runner = null; _line = null; _choiceOpts = null; _talkingTo = null; return; }
             }
         }
@@ -1003,7 +1026,7 @@ namespace DW1Remake.Game
         void ClearNpcs()
         {
             foreach (var n in _npcs) if (n.T != null) Destroy(n.T.gameObject);
-            _npcs.Clear(); _runner = null; _line = null; _choiceOpts = null; _talkingTo = null;
+            _npcs.Clear(); _runner = null; _line = null; _choiceOpts = null; _talkingTo = null; _dialogueOwner = 0xFF; _bump = null;
             _movers.Clear(); _camOn = false; _wait = 0f; _waitAll = false; _animated.Clear();
         }
 
@@ -1120,6 +1143,8 @@ namespace DW1Remake.Game
                     n.T.position += front.normalized * n.Anim.TakeBodyMove();
                 }
                 if (n == _talkingTo || n == _battleNpc) continue;
+                // NPCEntityTickOverworld with stopAnim set (and no script animation): it only goes back to animation 0
+                if (n.Stopped) { if (!n.Scripted && n.AiAnim != IdleSlot) NpcAnim(n, IdleSlot); continue; }
                 if (ChaseScripted(n)) continue;
                 if (TrackBoy(n)) continue;
                 if (n.Data.FollowMode == 16 && Hostile(n)) { if (n.Anim != null && n.Anim.Slot != IdleSlot) n.Anim.SetSlot(IdleSlot); continue; }   // it only ever runs at you, it never strolls
@@ -1191,11 +1216,12 @@ namespace DW1Remake.Game
         // talk to the closest friendly Digimon in front of you
         void TryTalk()
         {
-            // checkMapInteraction: Cross while the boy touches a map Digimon (the boxes of their radii) runs its script
+            // checkMapInteraction: Cross while the boy's step runs into a map Digimon (the boxes of their radii) runs its script; standing still
+            // finds no one (entityCheckCollision tests the place his animation moves him to)
             Npc best = null; float bd = float.MaxValue;
             foreach (var n in _npcs)
             {
-                if (n.T == null || !n.T.gameObject.activeInHierarchy || !Touching(n)) continue;
+                if (n.T == null || !n.T.gameObject.activeInHierarchy || (n != _bump && !NpcPushing(n))) continue;
                 float d = Vector3.Distance(n.T.position, _player.position);
                 if (d < bd) { bd = d; best = n; }
             }
@@ -1271,7 +1297,7 @@ namespace DW1Remake.Game
                 if (n.AutoTalk != 1) continue;
                 Vector3 d = n.T.position - _player.position; d.y = 0;
                 // its own script runs at once: lines, then the fight (command 0x66)
-                if (!Touching(n)) continue;                 // entityCheckEntityCollision: the moment the two touch
+                if (n != _bump && !NpcPushing(n)) continue;      // entityCheckCollision: his step runs into it, or its step runs into him
                 if (_anim != null) _anim.SetSlot(IdleSlot);
                 if (n.Anim != null && !n.Scripted) n.Anim.SetSlot(IdleSlot);
                 if (n.Data.Script > 0 && StartScript(n.Data.Script, n)) { Vector3 look = _player.position - n.T.position; look.y = 0; if (look.sqrMagnitude > 0.01f) n.T.rotation = FaceRot(look); return; }
@@ -1284,12 +1310,14 @@ namespace DW1Remake.Game
 
         const int ChaseSlot = 4;    // the run
 
-        // the game's collision boxes: squares of each one's radius round the two of them
-        bool Touching(Npc n)
+        // the game's collision boxes (entityCheckEntityCollision): squares of each one's radius (DIGIMON_DATA +0x18) round the two of them
+        bool Touching(Npc n) { return TouchingAt(n, _player.position); }
+
+        bool TouchingAt(Npc n, Vector3 boy)
         {
-            var boy = DigimonStatsCatalog.Get(_disc, 0); var it = DigimonStatsCatalog.Get(_disc, n.Data.Type);
-            float reach = ((boy != null ? boy.Radius : 0) + (it != null ? it.Radius : 0)) * Unit;
-            return Mathf.Abs(n.T.position.x - _player.position.x) < reach && Mathf.Abs(n.T.position.z - _player.position.z) < reach;
+            var b = DigimonStatsCatalog.Get(_disc, 0); var it = DigimonStatsCatalog.Get(_disc, n.Data.Type);
+            float reach = ((b != null ? b.Radius : 0) + (it != null ? it.Radius : 0)) * Unit;
+            return Mathf.Abs(n.T.position.x - boy.x) < reach && Mathf.Abs(n.T.position.z - boy.z) < reach;
         }
 
         // the scripted opponent (follow mode 16, the first Agumon) runs after you on its map until you fight it: the story cannot go on without that fight
@@ -2388,14 +2416,24 @@ namespace DW1Remake.Game
                 dir.Normalize();
                 TickTamerWay();
                 Vector3 step = dir * (_anim != null ? _anim.TakeForward() : WalkSpeed * Time.deltaTime);
-                Vector3 pos = _player.position;
+                Vector3 pos = _player.position, was = pos;
                 // checkMapInteraction: the boy's collision test leaves his partner out, so he walks through it
                 if (Free(pos, pos + new Vector3(step.x, 0, 0))) pos.x += step.x;
                 if (Free(pos, pos + new Vector3(0, 0, step.z))) pos.z += step.z;
+                if (step.sqrMagnitude > 0f)
+                {
+                    // entityCheckCollision: the step is tried (entityMoveForward) and tested against every map Digimon's box; a step into one is not
+                    // taken (animFlag 2) and that Digimon is the one touched. So the boy never stands inside a box, and once he stops pushing
+                    // there is no touch: a talk-on-touch Digimon does not start again by itself (GIAS09's Leomon, user 2026-11-05)
+                    Npc hit = BumpInto(was, pos);
+                    if (hit != null) pos = was;
+                    _bump = hit;
+                }
                 _player.position = pos;
                 var target = Quaternion.LookRotation(-dir) * Quaternion.Euler(0, FacingOffset, 0);
                 _player.rotation = Quaternion.RotateTowards(_player.rotation, target, TurnSpeed * Time.deltaTime);
             }
+            else _bump = null;      // standing: the idle animation moves him nowhere, so the test at his own place finds nothing
             if (_anim != null)
             {
                 int want = !moving ? IdleSlot : GameMenus.WalkHeld() ? WalkSlot : PlayerRunSlot;    // the boy runs; holding R1 (E) makes him walk
@@ -2403,6 +2441,32 @@ namespace DW1Remake.Game
             }
 
             UpdatePartner(dir);
+        }
+
+        Npc _bump;      // the map Digimon the boy's last step ran into (entityCheckCollision's answer)
+
+        // the first active map Digimon whose box the step from 'from' to 'to' runs into. Fix kept (Glitch FAQ C4, user 2026-11-04): a boy who is already
+        // inside a box (a Digimon walked onto him) may step anywhere that does not take him closer to it, and that is no touch
+        Npc BumpInto(Vector3 from, Vector3 to)
+        {
+            foreach (var n in _npcs)
+            {
+                if (n.T == null || !n.T.gameObject.activeInHierarchy || !TouchingAt(n, to)) continue;
+                if (TouchingAt(n, from))
+                {
+                    Vector3 a = from - n.T.position, b = to - n.T.position; a.y = 0f; b.y = 0f;
+                    if (b.sqrMagnitude >= a.sqrMagnitude) continue;
+                }
+                return n;
+            }
+            return null;
+        }
+
+        // NPCEntityTickOverworld: a map Digimon whose own step runs into the boy (entityCheckCollision answers 0, the tamer) touches him too
+        bool NpcPushing(Npc n)
+        {
+            if (n.Stopped || n.Anim == null || !Touching(n)) return false;
+            return n.Anim.Slot == WalkSlot || n.Anim.Slot == RunSlot || n.Anim.Slot == ChaseSlot;
         }
 
         // STILL OURS (user's decision 2026-11-05): while a map's 0xFE setup script only waits (0x67, no text, no choice, nothing of the boy or
