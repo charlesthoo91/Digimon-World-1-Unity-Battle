@@ -904,6 +904,7 @@ namespace DW1Remake.Game
         {
             var log = new List<string>();
             _runner = new ScriptRunner(_scripts, _state, _scripts.ScriptIdForMap(_mapId), section, log);
+            _runnerSection = section;
             _talkingTo = null; _scriptAny = false; _line = null; _choiceOpts = null;
             AdvanceScript();
             if (_runner != null && _anim != null) _anim.SetSlot(IdleSlot);
@@ -936,7 +937,7 @@ namespace DW1Remake.Game
                 // the script ended (IS_SCRIPT_PAUSED): writePStat(0, MAIN_D_80134FE7)
                 if (a == null)
                 {
-                    _state.Vars[0] = _state.Var0Reset; _runner = null; _line = null; _choiceOpts = null; _talkingTo = null; EndCutscene();
+                    _state.Vars[0] = _state.Var0Reset; _runner = null; _runnerSection = -1; _line = null; _choiceOpts = null; _talkingTo = null; EndCutscene();
                     // section 0xFE has ended: the arrival section follows
                     if (_thenSection != 255) { int s = _thenSection; _thenSection = 255; StartScript(s, null); return; }
                     if (_intro) FinishIntro();
@@ -1440,7 +1441,8 @@ namespace DW1Remake.Game
             if (_audio != null && (_battle.Won || _battle.Fled)) _audio.RestoreBgm();
             _care.AfterBattle(_battle.Won ? PartnerCare.WonBattle : _battle.Fled ? PartnerCare.FledBattle : PartnerCare.Lost);
             if (_battle.Fled && _state.Stats[16] < 9999) _state.Stats[16]++;   // battles fled
-            if (_partnerAnim != null) _partnerAnim.SetSlot(IdleSlot);
+            // a lost fight ends with the partner held down in 0x2B (BTL_isBattleFinished: the death countdown); nothing stands it up before MURD
+            if (_partnerAnim != null && (_battle.Won || _battle.Fled)) _partnerAnim.SetSlot(IdleSlot);
             _camBack = 0f; _camOffsetPx = Vector2.zero;      // the camera glides back to the boy: createCameraMovement(tamer, 20), a straight move of 20 frames
             _way.Clear();
             if (_anim != null) _anim.SetSlot(IdleSlot);
@@ -2629,7 +2631,7 @@ namespace DW1Remake.Game
         {
             _changing = true;
             if (_anim != null) _anim.SetSlot(IdleSlot);
-            // instant: under a full white screen (the life-lost scene changes map with no fade of its own)
+            // instant: under the life-lost scene's full-screen black (MURD_renderFullscreenFade 0xFF), which changes map with no fade of its own
             // a fade already under way (Run's fadeToBlack) goes on from where it is
             if (!instant) for (float t = _fade; t < 1f; t += Time.deltaTime / Mathf.Max(0.01f, FadeSeconds)) { _fade = t; yield return null; }
             _fade = instant ? 0f : 1f;

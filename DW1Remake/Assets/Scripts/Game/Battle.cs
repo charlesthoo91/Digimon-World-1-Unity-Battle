@@ -148,7 +148,7 @@ namespace DW1Remake.Game
         public Func<int> Tiredness;                     // PARTNER_PARA.tiredness, for the injury roll (handleBattleInjury)
         public Func<bool> Injured;                      // PARTNER_PARA.condition & 0x20
         public Action SetInjured;
-        int _endStep; bool _skip, _anyHit;
+        int _endStep; bool _skip, _anyHit, _endPress;
         readonly List<KeyValuePair<int, Vector3>> _drops = new List<KeyValuePair<int, Vector3>>();
         readonly List<int> _dropIds = new List<int>(); readonly List<string> _dropBy = new List<string>();
         string[] _endStr = new string[16];              // BTL_REL / exe strings of the battle end text
@@ -396,7 +396,7 @@ namespace DW1Remake.Game
                         // handleBattleEndBox: the end text is built, the stats box grows out of the partner and the Bits box out of the boy
                         if (_endStep < 0)
                         {
-                            _endStep = 0; _skip = false;
+                            _endStep = 0; _skip = false; _endPress = false;
                             BuildEndText(_dropIds, _dropBy);
                             if (EndView != null)
                             {
@@ -405,9 +405,10 @@ namespace DW1Remake.Game
                                 EndView.OpenBox(EndView.Bits, new RectInt(-88, 18, 176, EndView.HasText ? 66 : 31), boy, 0, 2);
                             }
                         }
-                        bool press = EndPress();
+                        // a press waits for the next game frame: most Unity frames have no 20 fps tick, and a press seen on one of those was lost
+                        if (EndPress()) _endPress = true;
                         _countAcc += dt;
-                        while (_countAcc >= Frame && _phase == Phase.Win) { _countAcc -= Frame; TickEnd(press); press = false; }
+                        while (_countAcc >= Frame && _phase == Phase.Win) { _countAcc -= Frame; TickEnd(_endPress); _endPress = false; }
                     }
                     break;
                 case Phase.Leave:

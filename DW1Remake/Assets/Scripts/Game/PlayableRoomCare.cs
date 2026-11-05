@@ -54,6 +54,7 @@ namespace DW1Remake.Game
         {
             _line = null; _choiceOpts = null;
             _runner = new ScriptRunner(_scripts, _state, MapScripts.DgZero, section, new List<string>());
+            _runnerSection = -1;        // DG.SCN entry 0, never a map's setup section
             AdvanceScript();
         }
 
@@ -462,7 +463,10 @@ namespace DW1Remake.Game
                 case 0: Run(ToiletVisit(), false); break;
                 case 2: Run(EvolveScene(_state.Vars[5]), true); break;
                 case 10: Run(EvolveScene(_state.Vars[0xFE]), true); break;
-                case 3: case 7: case 9: Run(LifeLost(), true); break;
+                // callDigimonRoutine: 3 is partner state 8 (it comes to the boy first); 7 and 9 set partner state 12, which does nothing, and only
+                // stop a walk or run (animation 2-4 -> 0): a partner that fell in the fight stays down (user's PS1 clip 2026-11-05)
+                case 3: Run(LifeLost(true), true); break;
+                case 7: case 9: Run(LifeLost(false), true); break;
                 case 4: Run(Rebirth(), true); break;
                 case 6: Run(EndingScene(false), true); break;           // tamerTickEnding (ENDI)
                 case 8: Run(MachinedramonSpawn(), true); break;         // tamerTickMachinedramonSpawn (EAB)
@@ -515,15 +519,23 @@ namespace DW1Remake.Game
 
         // MURD_tick / MURD_tickScene (MURD_REL): frames 0-35 an iris closes on the partner (once the partner is bigger than the hole it is
         // drawn over the black); at 35 everything but the partner goes (map layer off, the others hidden, music off) and the lives box opens;
-        // at 95 a white flash rises (0 to 0xA0 by 135), the lives box closes and the screen holds white while the death map loads (map 0xCD
-        // once flag 0xDC or 0xD6 is on or variable 1 >= 50, else 0xDA, exit 1); 145-185 the white fades. With no lives left the game goes
+        // at 95 a full-screen quad subtracted from the picture rises (0 to 0xA0 by 135), the lives box closes and the screen holds black while the
+        // death map loads (map 0xCD once flag 0xDC or 0xD6 is on or variable 1 >= 50, else 0xDA, exit 1); 145-185 the map comes up from black. With no lives left the game goes
         // on to DOOA (not ported: we go to the same map and its no-lives section).
-        IEnumerator LifeLost()
+        IEnumerator LifeLost(bool comesToBoy)
         {
             var p = _state.Para;
             bool natural = p.IsNaturalDeath;
-            if (!Close(3.5f)) yield return ComeToBoy();
-            if (_partnerAnim != null && _partnerAnim.HasSlot(1)) _partnerAnim.SetSlot(1);
+            if (comesToBoy)
+            {
+                if (!Close(3.5f)) yield return ComeToBoy();
+                if (_partnerAnim != null && _partnerAnim.HasSlot(1)) _partnerAnim.SetSlot(1);
+            }
+            else
+            {
+                if (_anim != null && (_anim.Slot == 2 || _anim.Slot == 3)) _anim.SetSlot(0);
+                if (_partnerAnim != null && _partnerAnim.Slot > 1 && _partnerAnim.Slot < 5) _partnerAnim.SetSlot(0);
+            }
             bool late = _state.GetFlag(0xDC) || _state.GetFlag(0xD6) || _state.Vars[1] >= 50;
             int section = natural ? 71 : _state.Life == 0 ? 73 : 72, lives = _state.Life;
             var info = DigimonStatsCatalog.Get(_disc, PartnerType);
@@ -550,22 +562,25 @@ namespace DW1Remake.Game
                 yield return DeathScene(section, late);
                 yield break;
             }
-            // phase 3: the white rises (added to the picture, 0 to 0xA0 where 0x80 is full)
-            while (timer() < 0x87) { _white = Mathf.Clamp01(PsLerp(0, 0xA0, 0x5F, 0x87, timer()) / 128f); yield return null; }
+            // phase 3: MURD_renderFullscreenFade, 0 to 0xA0. Its page is blend 2, so it is taken off the picture: the lives box and the partner
+            // sink into the black (user's PS1 clip 2026-11-05); ours drew it as white added
+            while (timer() < 0x87) { _murdFade = PsLerp(0, 0xA0, 0x5F, 0x87, timer()); yield return null; }
             _lifeShow = -1;                 // MURD_removeLivesBox: removeStaticUIBox, gone at once
             if (_lifeBox != null) _lifeBox.Remove();
-            _white = 1f;                    // phases 4-6: 0xFF
+            _murdFade = 0xFF;               // phases 4-6: 0xFF, black
             HideWorld(false);
             _runner = null; _line = null; _syncBit = true;
             DoChangeMap(new ScriptAction { Map = late ? 0xCD : 0xDA, Exit = 1, Arrive = 255 }, true);
             while (_changing) yield return null;
             if (_state.Stats[6] == 0) { _state.Stats[6] = (ushort)Mathf.Max(1, _state.Stats[4] / 5); _state.Stats[7] = (ushort)(_state.Stats[5] / 5); }
             while (timer() < 0x91) yield return null;
-            // phase 7: the white fades
-            while (timer() < 0xB9) { _white = Mathf.Clamp01(PsLerp(0xA0, 0, 0x91, 0xB9, timer()) / 128f); yield return null; }
-            _white = 0f;
+            // phase 7: 0xA0 to 0, the death map comes up out of the black
+            while (timer() < 0xB9) { _murdFade = PsLerp(0xA0, 0, 0x91, 0xB9, timer()); yield return null; }
+            _murdFade = 0;
             StartScript(section, null);
         }
+
+        int _murdFade;      // MURD_renderFullscreenFade's colour (0 = none)
 
         // ---- the iris (MURD_renderIris, MURD_isDigimonLargerThanIris)
         bool _irisOn; float _irisX, _irisY, _irisR; Texture2D _irisTex; bool _irisTried;
@@ -831,7 +846,10 @@ namespace DW1Remake.Game
             art.Clock(1, 203, 216, 6, 6, x + HourX[hour], HourY[hour] - 88);
             GUI.EndGroup();
             UiKit.End();
-            // our digital time under the dial: a UI box (the game's frame) with HH:MM in the game's font; it slides with the dial
+            // our digital time under the dial: a UI box (the game's frame) with HH:MM in the game's font; it slides with the dial. The dial is cut off
+            // at the picture's edge but the box is not, so it went on showing in the black bar while the dial was out (scripts, fights, scenes):
+            // it is shown only while it is inside the picture, i.e. while game time runs and the dial is in
+            if (x + 9 < -160) { if (_clockPlate != null) _clockPlate.Remove(); return; }
             if (_clockPlate == null) _clockPlate = FrameBox.Load(_disc, Battle.StatFont, 5);
             if (_clockPlate != null) _clockPlate.ShowText(new RectInt(x + 9, -46, 30, 10), hour.ToString("00") + ":" + _care.Minute.ToString("00"));
         }
@@ -878,6 +896,7 @@ namespace DW1Remake.Game
                 GUI.color = Color.white;
             }
             if (_lifeBox != null && _lifeBox.Showing) _lifeBox.Draw(DrawLives);
+            DrawSubtractFade(_murdFade);        // ordering-table place 0: over the lives box too
             if (_eggBox != null && _eggBox.Showing) _eggBox.Draw();
         }
 

@@ -99,9 +99,13 @@ namespace DW1Remake.Game
         }
 
         // EAB_renderFlash: a full-screen POLY_FT4 of SPOT256's corner texels (u 0, v 0x80 of page 832,256), colour c, subtracted (blend 2)
-        void DrawEabFlash()
+        void DrawEabFlash() { DrawSubtractFade(_eabFlash); }
+
+        // the full-screen POLY_FT4 of SPOT256's corner texels (u 0, v 0x80 of page 832,256), colour c (0x80 = the texels as they are), subtracted
+        // (blend 2): EAB_renderFlash, MURD_renderFullscreenFade
+        void DrawSubtractFade(int c)
         {
-            if (_eabFlash <= 0) return;
+            if (c <= 0 || Event.current.type != EventType.Repaint) return;
             if (!_spotRead)
             {
                 _spotRead = true;
@@ -115,7 +119,7 @@ namespace DW1Remake.Game
                 }
             }
             if (_eabFlashTex == null) { _eabFlashTex = new Texture2D(1, 1, TextureFormat.RGBA32, false); }
-            float k = _eabFlash / 128f;
+            float k = c / 128f;
             _eabFlashTex.SetPixel(0, 0, new Color(Mathf.Min(1f, _spotTexel.r * k), Mathf.Min(1f, _spotTexel.g * k), Mathf.Min(1f, _spotTexel.b * k), 1f));
             _eabFlashTex.Apply();
             if (_eabFlashMat == null) { var sh = Shader.Find("DW1Remake/GuiBlend"); if (sh == null) return; _eabFlashMat = new Material(sh); MmdModel.SetPsxBlend(_eabFlashMat, 2); }
