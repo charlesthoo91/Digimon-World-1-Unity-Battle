@@ -1845,7 +1845,10 @@ namespace DW1Remake.Game
             var sh = Shader.Find("DW1Remake/Overlay");
             if (sh == null) return null;
             var o = _overlay.Objects[obj];
-            var tex = new Texture2D(Mathf.Max(1, o.W), Mathf.Max(1, o.H), TextureFormat.RGBA32, false);
+            // a piece 0 wide or 0 high covers no pixels on the PS1 (its sprite draws nothing); ours made a 1 x 1 texture for an empty picture and
+            // SetPixels32 threw, which stopped the whole map from loading (GIAS07 north, user 2026-11-05)
+            if (o.W <= 0 || o.H <= 0) return null;
+            var tex = new Texture2D(o.W, o.H, TextureFormat.RGBA32, false);
             tex.filterMode = FilterMode.Bilinear;
             tex.wrapMode = TextureWrapMode.Clamp;
             tex.SetPixels32(_overlay.BuildObject(obj, _map.GetPalette(_curPalette), layer));
@@ -1911,7 +1914,8 @@ namespace DW1Remake.Game
 
                 bool semi = _overlay.IsSemi(f0);
                 var mat = GetOverlayMaterial(f0, semi ? 1 : 0);
-                if (mat == null) return;
+                if (mat == null && Shader.Find("DW1Remake/Overlay") == null) return;
+                bool empty = mat == null;       // an empty piece keeps its place (scripts and animations name pieces by number) but draws nothing
                 var go = new GameObject("Piece");
                 go.transform.SetParent(_overlayRoot.transform, false);
                 go.AddComponent<MeshFilter>().sharedMesh = _quadMesh;
@@ -1927,8 +1931,8 @@ namespace DW1Remake.Game
                 br.sharedMaterial = GetOverlayMaterial(f0, 2);
                 br.shadowCastingMode = ShadowCastingMode.Off;
                 br.receiveShadows = false;
-                br.enabled = semi && !blankFirst;
-                mr.enabled = !blankFirst;
+                br.enabled = semi && !blankFirst && !empty;
+                mr.enabled = !blankFirst && !empty;
                 PlaceOverlay(go.transform, inst, ob, dm);
                 _ovPieces[ii] = go;
                 go.SetActive(inst.Flag != 1);       // flag 1 = hidden (renderMapOverlays); scripts switch it (0x57)
@@ -1971,7 +1975,7 @@ namespace DW1Remake.Game
             if (f < 0 || f >= _overlay.Objects.Length) { a.R.enabled = false; a.Blend.enabled = false; return; }
             bool semi = _overlay.IsSemi(f);
             var mat = GetOverlayMaterial(f, semi ? 1 : 0);
-            if (mat == null) return;
+            if (mat == null) { a.R.enabled = false; a.Blend.enabled = false; return; }     // an empty frame: nothing drawn
             a.R.enabled = true;
             a.R.sharedMaterial = mat;
             a.Blend.enabled = semi;
