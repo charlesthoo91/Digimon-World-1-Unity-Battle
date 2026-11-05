@@ -377,17 +377,12 @@ namespace DW1Remake.Game
 
         public System.Func<bool> ThrowBusy;
 
-        static bool CanApply(int id) { return id >= 0 && id <= 7; }
+        // which items a fight takes is the bag's colour test alone (getItemOptionColor, item colour 1 or 2)
+        static bool CanApply(int id) { return id >= 0 && id < 128; }
 
-        /// <summary>The item's effect in a fight, when the thrown item reaches the partner. Only the recovery items are wired up so far (ids 0-7; amounts from their names).</summary>
-        public void ApplyItem(int id)
-        {
-            int[] hp = { 500, 1500, 5000, 9999 };
-            int[] mp = { 500, 1500, 5000 };
-            if (id >= 0 && id <= 3) _s.AddStat(6, hp[id]);
-            else if (id >= 4 && id <= 6) _s.AddStat(7, mp[id - 4]);
-            else if (id == 7) { _s.AddStat(6, 1500); _s.AddStat(7, 1500); }
-        }
+        /// <summary>tickThrownItem: the item reaches the partner, ITEM_FUNCTIONS[item] runs (the room hands it the care rules).</summary>
+        public Action<int> ItemFunction;
+        public void ApplyItem(int id) { if (ItemFunction != null) ItemFunction(id); }
 
         // ================================================================ drawing
         public Func<GameObject> BuildPartnerModel;      // a new copy of the partner's model (the Status page shows it)
@@ -820,6 +815,46 @@ namespace DW1Remake.Game
 #endif
         }
 
+        // processInput with setInputRepeatMask: a held button in the mask fires when pressed, again on the 7th game frame it is held,
+        // then every 2nd (INPUT_REPEAT_COUNTER 6 -> 7 -> 8 -> 6). Ticked once a frame by the room (TickRepeat), read by the menus that set the mask.
+        sealed class KeyRepeat
+        {
+            int _frames = -1; float _acc;
+            public bool Fired;
+            public void Tick(bool held)
+            {
+                Fired = false;
+                if (!held) { _frames = -1; return; }
+                if (_frames < 0) { _frames = 0; _acc = 0f; Fired = true; return; }
+                _acc += Time.unscaledDeltaTime;
+                while (_acc >= 0.05f) { _acc -= 0.05f; _frames++; if (_frames >= 7 && (_frames - 7) % 2 == 0) Fired = true; }
+            }
+        }
+        static readonly KeyRepeat _repUp = new KeyRepeat(), _repDown = new KeyRepeat(), _repCross = new KeyRepeat(), _repCircle = new KeyRepeat();
+        public static void TickRepeat() { _repUp.Tick(KeyHeld(0)); _repDown.Tick(KeyHeld(1)); _repCross.Tick(KeyHeld(2)); _repCircle.Tick(CircleHeld()); }
+        /// <summary>Up / down with the repeat (-1 up, 1 down).</summary>
+        public static int RepeatStep() { return _repUp.Fired ? -1 : _repDown.Fired ? 1 : 0; }
+        public static bool CrossRepeat { get { return _repCross.Fired; } }
+        public static bool CircleRepeat { get { return _repCircle.Fired; } }
+
+        // 0 up (Up / W), 1 down (Down / S), 2 Cross (Space)
+        static bool KeyHeld(int which)
+        {
+#if ENABLE_INPUT_SYSTEM
+            var k = Keyboard.current;
+            if (k == null) return false;
+            if (which == 0) return k.upArrowKey.isPressed || k.wKey.isPressed;
+            if (which == 1) return k.downArrowKey.isPressed || k.sKey.isPressed;
+            return k.spaceKey.isPressed;
+#elif ENABLE_LEGACY_INPUT_MANAGER
+            if (which == 0) return Input.GetKey(KeyCode.UpArrow) || Input.GetKey(KeyCode.W);
+            if (which == 1) return Input.GetKey(KeyCode.DownArrow) || Input.GetKey(KeyCode.S);
+            return Input.GetKey(KeyCode.Space);
+#else
+            return false;
+#endif
+        }
+
         /// <summary>Circle held (Z): ten at a time in the shop's amount box (ALT_BUTTON).</summary>
         public static bool CircleHeld()
         {
@@ -827,6 +862,18 @@ namespace DW1Remake.Game
             var k = Keyboard.current; return k != null && k.zKey.isPressed;
 #elif ENABLE_LEGACY_INPUT_MANAGER
             return Input.GetKey(KeyCode.Z);
+#else
+            return false;
+#endif
+        }
+
+        /// <summary>Cross alone (Space), this frame.</summary>
+        public static bool CrossPressed()
+        {
+#if ENABLE_INPUT_SYSTEM
+            var k = Keyboard.current; return k != null && k.spaceKey.wasPressedThisFrame;
+#elif ENABLE_LEGACY_INPUT_MANAGER
+            return Input.GetKeyDown(KeyCode.Space);
 #else
             return false;
 #endif

@@ -49,6 +49,15 @@ namespace DW1Remake.Game
             Clear();
         }
 
+        /// <summary>A box of its own place and flags (setupNewGameDialogueBox: (-130, -78, 262, 59), flags 0x81, out of Jijimon).</summary>
+        public void SetupAt(RectInt rect, int flags, RectInt origin)
+        {
+            CloseNow(Box);
+            Owner = 0xFE;
+            Open(Box, rect, origin, flags);
+            Clear();
+        }
+
         /// <summary>closeAllTextboxes / closeBox at the end of a script: gone at once.</summary>
         public void Shut() { CloseNow(Box); Owner = -1; Clear(); }
 

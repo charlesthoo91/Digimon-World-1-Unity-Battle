@@ -143,6 +143,15 @@ namespace DW1Remake.Game
         public System.Action<int> Sfx;           // playSound(0, n)
         public EffectPlayer Effects;
         public System.Action OnStopMusic;
+        public BattleEndView EndView;                   // the boxes after a won fight (the room loads it)
+        public int MapId = -1;                          // CURRENT_SCREEN: on map 0x8F nothing drops
+        public Func<int> Tiredness;                     // PARTNER_PARA.tiredness, for the injury roll (handleBattleInjury)
+        public Func<bool> Injured;                      // PARTNER_PARA.condition & 0x20
+        public Action SetInjured;
+        int _endStep; bool _skip, _anyHit;
+        readonly List<KeyValuePair<int, Vector3>> _drops = new List<KeyValuePair<int, Vector3>>();
+        readonly List<int> _dropIds = new List<int>(); readonly List<string> _dropBy = new List<string>();
+        string[] _endStr = new string[16];              // BTL_REL / exe strings of the battle end text
         public System.Action<int, Vector3> OnDrop;     // spawnDroppedItems (battle_ui.c, with the result boxes): the item lies on the ground at once
         void Snd(int n) { if (Sfx != null) Sfx(n); }
         int _bits, _enemyBits, _startHp, _used, _blocks, _bigHits;
@@ -151,7 +160,6 @@ namespace DW1Remake.Game
         /// <summary>The item the enemy dropped (-1 none) and where it fell: the room puts it on the ground there (spawnDroppedItems).</summary>
         public int DropItem = -1; public Vector3 DropAt;
         public Func<int, string> ItemName;      // the room tells the names
-        string _log = ""; float _logUntil;
         static Texture2D _disc; static Material _shotMat;
 
         public System.Action OnOpenBag;         // the room opens the bag (items work in battle: Triangle)
@@ -221,7 +229,7 @@ namespace DW1Remake.Game
             _enemyBits = enemyData.Bits;
             Enemy.FleeTo = FleeOf(enemyData, enemy);
             SetupTechs(Enemy, enemyInfo, enemyData);
-            _seen.Clear(); _learned = null; _dropped = null; _dropName = null; DropItem = -1; _dropTyped = 0f;
+            _seen.Clear(); _learned = null; _dropped = null; _dropName = null; DropItem = -1; _endStep = -1; _anyHit = false; _drops.Clear();
             foreach (var f in new[] { Partner, Enemy })
             {
                 f.FinishMax = 3000 - f.Spd;
@@ -240,7 +248,7 @@ namespace DW1Remake.Game
             _player = player; _playerA = playerAnim;
             Snd(0x10);
             Active = true; Won = false; Fled = false; _phase = Phase.Notice; _time = 0f; _phaseStart = 0f; _running = false; _bannerUntil = 0f;
-            _swings.Clear(); _pops.Clear(); _throws.Clear(); _runners.Clear(); ClearShots(); _log = ""; _startHp = Partner.Hp;
+            _swings.Clear(); _pops.Clear(); _throws.Clear(); _runners.Clear(); ClearShots(); _startHp = Partner.Hp;
             Partner.Scale = partner.localScale; Enemy.Scale = enemy.localScale;
             enemy.rotation = _face(partner.position - enemy.position);
             Stand(Partner);
@@ -267,7 +275,6 @@ namespace DW1Remake.Game
             _orders.Add(CallOrder);
         }
 
-        void Log(string s) { _log = s; _logUntil = _time + 2.5f; }
 
         bool MoveTo(Transform t, DigimonAnimator a, Vector3 goal, float speed, float dt)
         {
@@ -386,10 +393,21 @@ namespace DW1Remake.Game
                     }
                     if (_cheered)
                     {
-                        bool counting = _bitsLeft > 0 || HasLeft();
-                        if (counting && (action || cancel)) SkipCounting();
-                        else if (!counting && (action || cancel)) StartLeave();
-                        else { _countAcc += dt; while (_countAcc >= Frame) { _countAcc -= Frame; CountFrame(); } }
+                        // handleBattleEndBox: the end text is built, the stats box grows out of the partner and the Bits box out of the boy
+                        if (_endStep < 0)
+                        {
+                            _endStep = 0; _skip = false;
+                            BuildEndText(_dropIds, _dropBy);
+                            if (EndView != null)
+                            {
+                                RectInt partner = BoneSquare(Partner.T, Partner.A), boy = BoneSquare(_player, _playerA);
+                                EndView.OpenBox(EndView.Stats, new RectInt(-88, -78, 176, 96), partner, 0, 2);
+                                EndView.OpenBox(EndView.Bits, new RectInt(-88, 18, 176, EndView.HasText ? 66 : 31), boy, 0, 2);
+                            }
+                        }
+                        bool press = EndPress();
+                        _countAcc += dt;
+                        while (_countAcc >= Frame && _phase == Phase.Win) { _countAcc -= Frame; TickEnd(press); press = false; }
                     }
                     break;
                 case Phase.Leave:
@@ -408,21 +426,6 @@ namespace DW1Remake.Game
         bool HasLeft() { foreach (int v in _left) if (v > 0) return true; return false; }
 
         // the result boxes (battle_ui.c): after 100 frames one stat point a frame, then one Bit a frame, each with sound 0x16; 0x17 when the Bits are done
-        void CountFrame()
-        {
-            if (_statWait > 0) { _statWait--; return; }
-            for (int i = 0; i < 6; i++)
-                if (_left[i] > 0) { Snd(0x16); _left[i]--; _shown[i]++; return; }
-            if (_bitsLeft > 0) { Snd(0x16); if (--_bitsLeft == 0) Snd(0x17); }
-        }
-
-        void SkipCounting()     // Cross or Triangle: everything lands at once
-        {
-            for (int i = 0; i < 6; i++) { _shown[i] += _left[i]; _left[i] = 0; }
-            if (_bitsLeft > 0) { _bitsLeft = 0; Snd(0x17); }
-            _statWait = 0;
-        }
-
         /// <summary>A second or third enemy of a scripted fight.</summary>
         public void AddEnemy(Transform t, DigimonAnimator a, string name, DigimonStats info, MapDigimon data)
         {
@@ -1191,7 +1194,8 @@ namespace DW1Remake.Game
             }
         }
 
-        void Miss(Fighter target) { _pops.Add(new Pop { Text = "MISS", Pos = target.T.position + Vector3.up * 1.2f, Col = new Color(0.8f, 0.85f, 1f) }); }
+        // a miss shows nothing (the game has no miss text)
+        void Miss(Fighter target) { }
 
         // the game's damage (code 0x8005BEBC). Element scale: the technique's element against each of the target's three types, 10 = normal.
         // Technique: (power + power x (Off - Def) / 500) x scale / 30, the difference kept within 500. Finishing move: (Off + power) x scale / 30, then the charge.
@@ -1313,6 +1317,7 @@ namespace DW1Remake.Game
             float v = Damage(a, d, tech, boost);
             if (a != d && Blocks(a, d, tech)) { Block(a, d, tech, v, hitAt); return; }
             int dmg = Mathf.Max(1, Mathf.RoundToInt(v));
+            _anyHit = true;      // HAS_TAKEN_DAMAGE: any landed technique hit in the fight
             d.Hp = Mathf.Max(0, d.Hp - dmg);
             if (d == Enemy) _barFrames = 0;
             if (d == Partner && dmg * 100 / Partner.MaxHp >= 20) _bigHits++;
@@ -1339,7 +1344,6 @@ namespace DW1Remake.Game
                 if (tech.Status == 4 && d.Flat == 0) { d.Flat = 224 + _rng.Next(81); d.T.localScale = new Vector3(d.Scale.x, d.Scale.y * 0.3f, d.Scale.z); }
                 if (tech.Status == 3) { d.NextAct = Mathf.Max(d.NextAct, _time + (200 + _rng.Next(41)) / 20f); d.StunUntil = d.NextAct; }
                 if (tech.Status == 2 && d.ConfuseFrames == 0) d.ConfuseFrames = 200 + _rng.Next(101);
-                _pops.Add(new Pop { Text = tech.Spec, Pos = d.T.position + Vector3.up * 1.6f, Col = new Color(1f, 0.95f, 0.4f) });
             }
             Sync();
         }
@@ -1463,13 +1467,19 @@ namespace DW1Remake.Game
                 Snd(0x15);
                 _bits = _enemyBits;
                 _bitsLeft = _bits; _statWait = 100; _countAcc = 0f; _fanfare = false; _cheered = false;
-                _dropped = null;
-                if (Enemy.Info != null && _rng.Next(100) < Enemy.Info.DropChance && Enemy.Info.DropItem != 0xFF)    // the enemy's item, at its chance
+                _dropped = null; _endStep = -1;
+                // battleStatsGainsAndDrops: each enemy drops its item at its chance (none on map 0x8F); spawnDroppedItems puts them down when the
+                // boxes go, where the enemy fell
+                _drops.Clear(); _dropIds.Clear(); _dropBy.Clear();
+                foreach (var f in Enemies())
                 {
-                    DropItem = Enemy.Info.DropItem; DropAt = Enemy.T.position;      // it lies where the enemy fell until the boy picks it up
-                    _dropName = Enemy.Name;
-                    _dropped = ItemName != null ? ItemName(Enemy.Info.DropItem) : "";
-                    if (OnDrop != null) OnDrop(DropItem, DropAt);
+                    if (f.Info == null || MapId == 0x8F) continue;
+                    if (f.Info.DropChance > _rng.Next(100) && f.Info.DropItem != 0xFF)
+                    {
+                        _drops.Add(new KeyValuePair<int, Vector3>(f.Info.DropItem, f.T.position));
+                        _dropIds.Add(f.Info.DropItem); _dropBy.Add(f.Info.Name ?? f.Name);
+                        DropItem = f.Info.DropItem; DropAt = f.T.position;
+                    }
                 }
                 TryLearn();
                 int[] idx = { 4, 5, 0, 1, 2, 3 };
@@ -1522,11 +1532,7 @@ namespace DW1Remake.Game
             if (_phase == Phase.Notice && cam != null) AngerIcon(cam);
             if (_phase == Phase.Banner) Banner();
             if (_phase != Phase.Notice) Hud();
-            if (_phase == Phase.Fight)
-            {
-                if (_time < _logUntil) Outlined(new Rect(50, 880, 1300, 70), _log, 46, Color.white);
-            }
-            if (_phase == Phase.Win && _cheered) ResultWindow();
+            if (EndView != null && EndView.Showing) EndView.Draw(() => DrawStatsBox(Art, -88, -78, 176, _shown, _left, Raised(), false), BitsContent, FinalContent);
             if (_phase == Phase.Fight && _cdTimer >= 0 && cam != null) DrawCountdown(cam);
             if (cam != null && (_phase == Phase.Fight || _phase == Phase.Win)) EnemyBar(cam);
             if (cam != null && _phase == Phase.Fight && _shoutFrame >= 0 && _player != null) DrawShout(cam);
@@ -1564,6 +1570,109 @@ namespace DW1Remake.Game
             Func<uint, string> str = a => { int p = (int)(a - load + 0x800), j = p; while (exe[j] != 0) j++; return System.Text.Encoding.ASCII.GetString(exe, p, j - p); };
             for (int i = 0; i < 6; i++) _statNames[i] = str(0x80124C0C + (uint)(i * 12));
             _bitsLabel = str(0x801344D4);
+            // BTL_STR_*: the battle end text pieces (BTL_REL 0x80072EF8...; the exe 0x80134740...)
+            Func<uint, string> bstr = a => { int p = (int)(a - 0x80052AE0), j = p; while (btl[j] != 0) j++; return System.Text.Encoding.ASCII.GetString(btl, p, j - p); };
+            uint[] b = { 0x80072EF8, 0x80072F18, 0x80072F2C, 0x80072F44, 0x80072F58, 0x80072F70, 0x80072F90, 0x80072FA4, 0x80072FBC, 0x80072FD8, 0x80072FE4 };
+            for (int i = 0; i < b.Length; i++) _endStr[i] = bstr(b[i]);
+            uint[] e = { 0x80134740, 0x80134744, 0x8013474C, 0x80134750, 0x80134754, 0x80134758, 0x8013475C };
+            _endExtra = new string[e.Length];
+            for (int i = 0; i < e.Length; i++) _endExtra[i] = str(e[i]);
+        }
+        string[] _endExtra = new string[7];     // #C7, #C1#W, 20, 15, 10, 5, %!#W
+        const int ListensTo = 0, Dropped = 1, WasInjured = 2, SetTechnique = 3, PutUpWithIt = 4, MoveAway = 5, KeepItDown = 6, GoAllTheWay = 7, MpBonus = 8, ReducedBy = 9, Learned = 10;
+
+        // handleBattleEndBox's text, in its order: every enemy's dropped item, the injury, a new command learned (Brains 100 / 200 / 300 / 400 / 500
+        // crossed), the MP bonus (700 / 800 / 900 / 999 crossed), the technique learned (battleMoveLearning)
+        void BuildEndText(List<int> dropped, List<string> droppedBy)
+        {
+            var v = EndView; if (v == null) return;
+            v.InitText();
+            string yellow = _endExtra[0], whiteWait = _endExtra[1];
+            for (int i = 0; i < dropped.Count; i++) v.Append(yellow + droppedBy[i] + _endStr[Dropped] + (ItemName != null ? ItemName(dropped[i]) : "") + whiteWait, 2);
+            if (Injured != null && !Injured())
+            {
+                if (_anyHit && Tiredness != null && SetInjured != null)
+                {
+                    int ratio = 100 * _s.Stats[6] / Mathf.Max(1, _s.Stats[4]);
+                    if (_rng.Next(100) < Tiredness() - ratio) SetInjured();
+                }
+                if (Injured()) v.Append(yellow + Partner.Name + _endStr[WasInjured], 2);
+            }
+            int old = _before[5], total = old + _gain[5];
+            if (total >= 100)
+            {
+                if (total >= 500) { if (old < 500) v.Append(_endStr[SetTechnique] + _endStr[ListensTo], 2); }
+                else if (total >= 400) { if (old < 400) v.Append(_endStr[PutUpWithIt] + _endStr[ListensTo], 2); }
+                else if (total >= 300) { if (old < 300) v.Append(_endStr[MoveAway] + _endStr[ListensTo], 3); }
+                else if (total >= 200) { if (old < 200) v.Append(_endStr[KeepItDown] + _endStr[ListensTo], 2); }
+                else if (old < 100) v.Append(_endStr[GoAllTheWay] + _endStr[ListensTo], 2);
+            }
+            if (total >= 700)
+            {
+                string pct = "";
+                if (total >= 999) { if (old < 999) pct = _endExtra[2]; }
+                else if (total >= 900) { if (old < 900) pct = _endExtra[3]; }
+                else if (total >= 800) { if (old < 800) pct = _endExtra[4]; }
+                else if (old < 700) pct = _endExtra[5];
+                if (pct.Length > 0) v.Append(_endStr[MpBonus] + _endStr[ReducedBy] + pct + _endExtra[6], 4);
+            }
+            if (_learned != null) v.Append(yellow + _learned + _endStr[Learned], 2);
+        }
+
+        // POLLED_INPUT == CONFIRM_BUTTON or CANCEL_BUTTON, newly
+        static bool EndPress() { return GameMenus.CrossPressed() || GameMenus.TriangleOnly(); }
+
+        // handleBattleEndBox, one game frame: 0 the stats and Bits boxes grow; 1 the stats count after 100 frames (Cross / Triangle: all at once);
+        // 2 the final balance box grows; 3 the Bits count; 4 the end text; then the drops land, the boxes go and the enemies leave
+        void TickEnd(bool press)
+        {
+            var v = EndView;
+            if (v == null) { StartLeave(); return; }
+            switch (_endStep)
+            {
+                case 0:
+                    if (v.Stats.State == 1 && v.Bits.State == 1) { if (v.HasText) { v.DrawStep(true); v.DrawStep(true); } _endStep = 1; }
+                    break;
+                case 1:
+                    if (press) _skip = true;
+                    if (_skip) { for (int i = 0; i < 6; i++) { _shown[i] += _left[i]; _left[i] = 0; } _statWait = 0; }
+                    else CountStat();
+                    if (!HasLeft() && _statWait == 0)
+                    {
+                        var b = v.Bits;
+                        v.OpenBox(v.Final, new RectInt(-88, -13, 176, 31), b.Origin, 1, 0);
+                        _endStep = 2;
+                    }
+                    break;
+                case 2:
+                    if (v.Final.State == 1) _endStep = 3;
+                    break;
+                case 3:
+                    if (press) _skip = true;
+                    if (_bitsLeft == 0) { _skip = false; _endStep = 4; break; }
+                    if (_skip) _bitsLeft = 0; else { Snd(0x16); _bitsLeft--; }
+                    if (_bitsLeft == 0) Snd(0x17);
+                    break;
+                case 4:
+                    v.TickText(press);
+                    if (v.TextFinished)
+                    {
+                        foreach (var d in _drops) if (OnDrop != null) OnDrop(d.Key, d.Value);
+                        _drops.Clear();
+                        v.CloseAll();
+                        _endStep = 5;
+                        StartLeave();
+                    }
+                    break;
+            }
+        }
+
+        // renderPostBattleStatsBox counts one point a frame once POST_BATTLE_STATS_TIMER (100) has run out
+        void CountStat()
+        {
+            if (_statWait > 0) { _statWait--; return; }
+            for (int i = 0; i < 6; i++)
+                if (_left[i] > 0) { Snd(0x16); _left[i]--; _shown[i]++; return; }
         }
 
         static Vector2 Ps1Of(Camera cam, Vector3 world)
@@ -2011,11 +2120,11 @@ namespace DW1Remake.Game
             for (int i = 0; i < s.Length; i++) PsText(s[i].ToString(), x + (n - s.Length + i) * 8, y, c);
         }
 
-        public static void DrawStatsBox(BattleArt art, float bx, float by, float bw, int[] values, int[] gains, bool[] raised)
+        public static void DrawStatsBox(BattleArt art, float bx, float by, float bw, int[] values, int[] gains, bool[] raised, bool frame = true)
         {
             string[] names = _statNames;
             Func<float, float> px = v => 707.5f + v * 4.42f, py = v => 530f + v * 4.42f;
-            UiKit.Box(new Rect(px(bx), py(by), bw * 4.42f, 96 * 4.42f), UiKit.DialogFill);
+            if (frame) UiKit.Box(new Rect(px(bx), py(by), bw * 4.42f, 96 * 4.42f), UiKit.DialogFill);
             UiKit.Fill(new Rect(px(bx + 122), py(by + 2), 4.42f, 91 * 4.42f), new Color32(0x90, 0xD9, 0xFA, 255));
             UiKit.Fill(new Rect(px(bx + 123), py(by + 2), 4.42f, 91 * 4.42f), new Color32(2, 2, 2, 255));
             for (int i = 0; i < 6; i++)
@@ -2035,59 +2144,33 @@ namespace DW1Remake.Game
             }
         }
 
-        float _dropTyped;
-
-        // BTL_appendItemDroppedText (BTL_REL strings): "#C7" name "#R#C1dropped #C7" item "#C1#W": the name in colour 7 on the first row, "dropped " in
-        // colour 1 and the item in colour 7 on the second; BTL_drawBattleEndText types one letter a frame into the area (-78, 54, 156, 24)
-        void DropText()
-        {
-            if (StatFont == null) return;
-            if (Event.current.type == EventType.Repaint) _dropTyped += Time.deltaTime * 20f;
-            int n = (int)_dropTyped;
-            string a = _dropName ?? "", b1 = "dropped ", b2 = _dropped ?? "";
-            Color yellow = StatFont.Colour(7), white = StatFont.Colour(1);
-            ClipText(a.Substring(0, Mathf.Min(a.Length, n)), -78, 54, 156, yellow);
-            n -= a.Length;
-            if (n <= 0) return;
-            string s1 = b1.Substring(0, Mathf.Min(b1.Length, n));
-            ClipText(s1, -78, 66, 156, white);
-            n -= b1.Length;
-            if (n <= 0) return;
-            int w = StatFont.Measure(b1);
-            ClipText(b2.Substring(0, Mathf.Min(b2.Length, n)), -78 + w, 66, 156 - w, yellow);
-        }
 
         // renderString of a 'w'-wide slice: letters past the width are not shown
         static void ClipText(string s, float x, float y, int w, Color c) { PsText(ClipTo(s, w), x, y, c); }
 
-        void ResultWindow()
+        bool[] Raised() { var r = new bool[6]; for (int i = 0; i < 6; i++) r[i] = _gain[i] > 0; return r; }
+
+        // renderBitBox: "Bits" (renderString colour 4) at (-78, 28), the Bits still to come (renderNumber colour 2, 5 places) at (-18, 28)
+        void BitsContent()
         {
-            // createPostBattleStatsBox: (-88, -78, 176, 96)
-            var raised = new bool[6];
-            for (int i = 0; i < 6; i++) raised[i] = _gain[i] > 0;
-            DrawStatsBox(Art, -88, -78, 176, _shown, _left, raised);
-            Func<float, float> px = v => 707.5f + v * 4.42f, py = v => 530f + v * 4.42f;
-            // createBitsBox: (-88, 18, 176, 31), 66 high when there is text under it; renderBitBox: "Bits" at (-78, 28), the gain (5 digits, colour 2) at -18
-            bool text = _dropped != null;
-            UiKit.Box(new Rect(px(-88), py(18), 176 * 4.42f, (text ? 66 : 31) * 4.42f), UiKit.DialogFill);
             PsText(_bitsLabel, -78, 28, Tinted(0xC8, 0xB4, 0x32));
-            if (_bitsLeft > 0) PsNumber(_bitsLeft, 5, -18, 28, Tinted(0x69, 0xC2, 0xC2));      // renderNumber colour 2 (blue set from green)
-            if (text)       // a line at y 50, then BTL_appendItemDroppedText in the text area (-78, 54, 156, 24)
-            {
-                UiKit.Fill(new Rect(px(-86), py(50), 170 * 4.42f, 4.42f), new Color32(0x8E, 0x8E, 0x8E, 255));
-                UiKit.Fill(new Rect(px(-85), py(51), 170 * 4.42f, 4.42f), new Color32(0x12, 0x12, 0x12, 255));
-                DropText();
-            }
-            // createFinalBalanceBox, once every stat has counted up: (-88, -13, 176, 31); the label at x + 10 and the money (6 digits) at x + 58
-            bool counted = true;
-            for (int i = 0; i < 6; i++) if (_left[i] > 0) counted = false;
-            if (counted)
-            {
-                UiKit.Box(new Rect(px(-88), py(-13), 176 * 4.42f, 31 * 4.42f), UiKit.DialogFill);
-                PsText(_bitsLabel, -78, -3, Tinted(0x80, 0x80, 0x80));                          // renderFinalBalance: renderString colour 0
-                PsNumber(_s.Money + _bits - _bitsLeft, 6, -30, -3, Tinted(0x80, 0x80, 0x80));
-            }
-            if (_learned != null) Outlined(new Rect(0, 50, 1415, 80), _learned + " learned!", 56, UiKit.Yellow, TextAnchor.MiddleCenter);
+            PsNumber(_bitsLeft, 5, -18, 28, Tinted(0x69, 0xC2, 0xC2));
+        }
+
+        // renderFinalBalance: the label (colour 0) at x + 10 and the money (renderNumber colour 0, 6 places) at x + 58, y + 10
+        void FinalContent()
+        {
+            PsText(_bitsLabel, -78, -3, Tinted(0x80, 0x80, 0x80));
+            PsNumber(_s.Money + _bits - _bitsLeft, 6, -30, -3, Tinted(0x80, 0x80, 0x80));
+        }
+
+        // getEntityScreenPos(entity, 1) - 5: the 10 x 10 square these boxes grow out of
+        RectInt BoneSquare(Transform t, DigimonAnimator a)
+        {
+            Camera cam = _view != null ? _view : Camera.main;
+            var n = a != null ? a.Node(1) : null;
+            Vector2 p = cam != null && t != null ? Ps1Of(cam, n != null ? n.position : t.position) : Vector2.zero;
+            return new RectInt((int)p.x - 5, (int)p.y - 5, 10, 10);
         }
     }
 }

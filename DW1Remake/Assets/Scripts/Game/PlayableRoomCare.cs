@@ -13,10 +13,13 @@ namespace DW1Remake.Game
     {
         bool _pBusy, _pFrozen, _syncBit = true;   // _pBusy: a partner state other than normal; _pFrozen: game time stopped too; _syncBit: SOME_SCRIPT_SYNC_BIT
         const int SickSection = 1246, ToiletSection = 1250;
-        static readonly int[] Babies = { 1, 15, 29, 43 };   // REINCARNATE_BABY_TYPE
+        int[] _babies;
+        EggBoxView _eggBox;
+        // REINCARNATE_BABY_TYPE (exe 0x80134BAC, 4 shorts): the Digimon each egg hatches into
+        int[] Babies { get { if (_babies == null) { byte[] exe = _disc.ReadFile("/SLUS_010.32"); uint load = System.BitConverter.ToUInt32(exe, 0x18); _babies = new int[4]; for (int i = 0; i < 4; i++) _babies[i] = System.BitConverter.ToInt16(exe, (int)(0x80134BAC - load + 0x800) + 2 * i); } return _babies; } }
         bool _eggOpen; int _eggSlot;
         float _bubbleStart; int _bubbleType = -1, _lastBubble = -1, _emotionLeft = 1;
-        int _lifeShow = -1; float _lifeShowAt; Texture2D _lifeTex;
+        int _lifeShow = -1; float _lifeShowAt; Texture2D _lifeTex; FrameBox _lifeBox;
         float _flash;
         readonly List<Vector4> _sparks = new List<Vector4>();   // x, y, z, time left
 
@@ -535,17 +538,22 @@ namespace DW1Remake.Game
             if (_partner != null) _partner.gameObject.SetActive(true);
             if (_audio != null) _audio.StopMusic();
             _lifeShow = lives; _lifeShowAt = Time.time;
+            // MURD_createLivesBox: UI box 3 (colour 0, features 2) out of a 16 x 12 square on the partner's feet (worldPosToScreenPos)
+            if (_lifeBox == null) { _lifeBox = FrameBox.Load(_disc, Battle.StatFont, 3); if (_lifeBox != null) _lifeBox.Sound = Snd; }
+            if (_lifeBox != null) _lifeBox.OpenBox(new RectInt(-95, -50, 190, 44), PartnerFeetSquare(), 0, 2);
             while (timer() < 0x5F) yield return null;
             if (lives == 0)
             {
-                // MURD_animateLivesBoxOut, then DOOA_tick: the death scene goes on from frame 35 (PlayableRoomDeath)
+                // MURD_animateLivesBoxOut (it shrinks back into the partner), then DOOA_tick: the death scene goes on from frame 35 (PlayableRoomDeath)
+                if (_lifeBox != null) _lifeBox.ShrinkTo(PartnerFeetSquare());
                 _lifeShow = -1;
                 yield return DeathScene(section, late);
                 yield break;
             }
             // phase 3: the white rises (added to the picture, 0 to 0xA0 where 0x80 is full)
             while (timer() < 0x87) { _white = Mathf.Clamp01(PsLerp(0, 0xA0, 0x5F, 0x87, timer()) / 128f); yield return null; }
-            _lifeShow = -1;                 // MURD_removeLivesBox
+            _lifeShow = -1;                 // MURD_removeLivesBox: removeStaticUIBox, gone at once
+            if (_lifeBox != null) _lifeBox.Remove();
             _white = 1f;                    // phases 4-6: 0xFF
             HideWorld(false);
             _runner = null; _line = null; _syncBit = true;
@@ -800,16 +808,17 @@ namespace DW1Remake.Game
         static readonly int[] ClockU = { 128, 160, 128, 160, 160, 128, 160, 128 }, ClockV = { 192, 192, 208, 192, 208, 224, 208, 224 };
         static readonly int[] HourX = { 20, 23, 26, 31, 34, 36, 36, 36, 34, 31, 26, 23, 20, 17, 14, 9, 6, 4, 4, 4, 6, 9, 14, 17 };
         static readonly int[] HourY = { 5, 6, 6, 8, 12, 15, 19, 23, 26, 30, 32, 32, 33, 32, 32, 30, 26, 23, 19, 15, 12, 8, 6, 6 };
-        int _clockX = -135; float _clockAcc;
+        int _clockX = -135; float _clockAcc; FrameBox _clockPlate;
 
         // renderGameClock: the dial, its sky window, the two icons, the hour dot and the minute hand; it slides out 50 a frame while game time stands still (positions are PS1 pixels from the middle)
         void DrawClock()
         {
             var art = _battle != null ? _battle.Art : null;
-            if (art == null || _care == null || _partner == null || _setup != null && _setup.Active || Event.current.type != EventType.Repaint) return;
+            if (art == null || _care == null || _partner == null || _setup != null && _setup.Active) { if (_clockPlate != null) _clockPlate.Remove(); return; }
+            if (Event.current.type != EventType.Repaint) return;
             _clockAcc += Time.deltaTime;
             while (_clockAcc >= 0.05f) { _clockAcc -= 0.05f; _clockX = Mathf.Clamp(_clockX + (GameTimeRuns ? 50 : -50), -220, -135); }
-            if (_menus != null && _menus.Active || _battle.Active) return;
+            if (_menus != null && _menus.Active || _battle.Active) { if (_clockPlate != null) _clockPlate.Remove(); return; }
             int hour = _care.Hour, x = _clockX;
             int night = hour >= 6 && hour < 17 ? 0 : 1, frame = (_care.Frame % 16) / 4;
             UiKit.Begin();
@@ -820,12 +829,11 @@ namespace DW1Remake.Game
             art.Clock(0, 208, 215, 48, 40, x, -88);
             art.ClockHand(x + 23, -66, _care.Minute * 6f);
             art.Clock(1, 203, 216, 6, 6, x + HourX[hour], HourY[hour] - 88);
-            // a digital clock under the dial (ours: the game has none)
-            float cx = 707.5f + (x - 2) * 4.42f, cy = 530f + (-88 + 40 + 3) * 4.42f;
-            UiKit.Box(new Rect(cx + 40, cy, 200, 62), UiKit.DialogFill, 4f);
-            UiKit.Text(new Rect(cx + 40, cy, 200, 62), hour.ToString("00") + ":" + _care.Minute.ToString("00"), 46, Color.white, TextAnchor.MiddleCenter);
             GUI.EndGroup();
             UiKit.End();
+            // our digital time under the dial: a UI box (the game's frame) with HH:MM in the game's font; it slides with the dial
+            if (_clockPlate == null) _clockPlate = FrameBox.Load(_disc, Battle.StatFont, 5);
+            if (_clockPlate != null) _clockPlate.ShowText(new RectInt(x + 9, -46, 30, 10), hour.ToString("00") + ":" + _care.Minute.ToString("00"));
         }
 
         void DrawCareOverlay()
@@ -869,14 +877,17 @@ namespace DW1Remake.Game
                 GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), Texture2D.whiteTexture);
                 GUI.color = Color.white;
             }
-            if (_lifeShow >= 0)
+            if (_lifeBox != null && _lifeBox.Showing) _lifeBox.Draw(DrawLives);
+            if (_eggBox != null && _eggBox.Showing) _eggBox.Draw();
+        }
+
+        // MURD_renderLivesBox, inside the box (-95, -50, 190, 44): ETCHI/LIFE.TIM, the word at u 48 (64 x 24) at (-85, -40), lives 24 x 24 at
+        // x = 34 i - 11: full (u 0) for the lives left, the one just lost full for 10 frames, blinking every 2 frames until 30, then empty (u 24)
+        void DrawLives()
+        {
             {
-                // MURD_renderLivesBox: box (-95, -50, 190, 44); ETCHI/LIFE.TIM: the word at u 48 (64 x 24) at (-85, -40), lives 24 x 24 at x = 34 i - 11:
-                // full (u 0) for the lives left, the one just lost full for 10 frames, blinking every 2 frames until 30, then empty (u 24)
                 if (_lifeTex == null && _disc.Exists("/ETCHI/LIFE.TIM")) { TimImage lt; if (TimImage.TryParse(_disc.ReadFile("/ETCHI/LIFE.TIM"), 0, out lt)) _lifeTex = lt.ToTexture(0); }
-                UiKit.Begin();
                 System.Func<float, float> px = v => 707.5f + v * 4.42f, py = v => 530f + v * 4.42f;
-                UiKit.Box(new Rect(px(-95), py(-50), 190 * 4.42f, 44 * 4.42f), UiKit.DialogFill);
                 if (_lifeTex != null)
                 {
                     float tw = _lifeTex.width, th = _lifeTex.height;
@@ -889,16 +900,15 @@ namespace DW1Remake.Game
                         spr(full ? 0 : 24, 24, i * 34 - 11, -40);
                     }
                 }
-                UiKit.End();
             }
-            if (_eggOpen)
-            {
-                UiKit.Begin();
-                UiKit.Box(new Rect(330, 440, 755, 180), UiKit.PanelFill);
-                for (int i = 0; i < 4; i++)
-                    UiKit.Text(new Rect(350 + i * 180, 480, 170, 90), DigimonStatsCatalog.Get(_disc, Babies[i]).Name, 34, i == _eggSlot ? UiKit.Yellow : Color.white, TextAnchor.MiddleCenter);
-                UiKit.End();
-            }
+        }
+
+        // the 16 x 12 square round the partner's feet on screen (worldPosToScreenPos, minus (8, 6))
+        RectInt PartnerFeetSquare()
+        {
+            if (_partner == null) return new RectInt(-8, -6, 16, 12);
+            Vector2 p = Ps1Point(_partner.position);
+            return new RectInt((int)p.x - 8, (int)p.y - 6, 16, 12);
         }
 
         static float ToPs1X(float screenX) { Rect p = UiKit.Picture; return ((screenX - p.x) / p.width - 0.5f) * 320f; }

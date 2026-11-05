@@ -35,7 +35,9 @@ namespace DW1Remake.Game
             Vector3 spot = hasSpot ? new Vector3(TrainSpot[kind, side] * Unit, _partner.position.y, TrainSpot[kind, side + 1] * Unit) : _partner.position;
             if (_anim != null && _anim.HasSlot(10)) _anim.SetSlot(10);
             bool slots = _state.Vars[0xF6] == 1;     // the bonus try: TRN_startSlotSessionIfEnabled, on when variable 0xF6 is 1
-            if (slots) StartSlot(SlotStat[kind]);
+            RectInt spotSquare = hasSpot ? SpotSquare(spot) : new RectInt(-8, -8, 16, 16);      // TRN_getTrainingSpotScreenPos (else SLOTS_UI_END)
+            _spotSquare = spotSquare;
+            if (slots) StartSlot(SlotStat[kind], spotSquare);
             float slotAcc = 0f;
             var walk = WalkTo(spot, RunSlot);
             while (walk.MoveNext()) { if (slots) TickSlotFrames(ref slotAcc); yield return walk.Current; }
@@ -62,6 +64,9 @@ namespace DW1Remake.Game
             // When all is added the box closes 20 frames later.
             System.Array.Copy(_trainGain, _trainTotal, 6);
             _trainShow = true;
+            // TRN_createPostTrainingStatsBox: UI box 1, (-94, -78, 188, 96), out of the partner's bone 1 (10 x 10)
+            if (_statsBox == null) _statsBox = FrameBox.Load(_disc, Battle.StatFont, 1);
+            if (_statsBox != null) _statsBox.OpenBox(new RectInt(-94, -78, 188, 96), PartnerBoneSquare(), 0, 2);
             int wait = 100; float acc = 0f;
             while (System.Array.Exists(_trainGain, g => g > 0))
             {
@@ -83,6 +88,7 @@ namespace DW1Remake.Game
             Debug.Log("[training] stats after " + string.Join("/", System.Array.ConvertAll(order, o => _state.Stats[o].ToString())));
             yield return new WaitForSeconds(20f / 20f);
             _trainShow = false;
+            if (_statsBox != null) _statsBox.ShrinkTo(null);      // TRN_closeUIBox(1): removeAnimatedUIBox(1, NULL)
             _player.rotation = boyFacing;
             if (_care.LearnFromTraining(_trn, kind)) Say(DigimonStatsCatalogName(_care.LastLearned) + " mastered!");
             yield return WalkTo(_player.position, RunSlot);
@@ -106,8 +112,17 @@ namespace DW1Remake.Game
         int Reel(int i, int c) { return _trn[ReelTable + i * 13 + c]; }
 
         // TRN_createSlotMachineBox
-        void StartSlot(int stat)
+        RectInt PartnerBoneSquare() { Vector2 q = BoneScreen(_partner, _partnerAnim); return new RectInt((int)q.x - 5, (int)q.y - 5, 10, 10); }
+        RectInt _spotSquare;
+        FrameBox _slotBox, _statsBox;
+
+        // x - (0xA8 - 0xA0), y - (0x7E - 0x78) from the spot's screen position, a 16 x 16 square
+        RectInt SpotSquare(Vector3 world) { Vector2 q = Ps1Point(world); return new RectInt((int)q.x - 8, (int)q.y - 6, 16, 16); }
+
+        void StartSlot(int stat, RectInt from)
         {
+            if (_slotBox == null) _slotBox = FrameBox.Load(_disc, Battle.StatFont, 3);
+            if (_slotBox != null) _slotBox.OpenBox(new RectInt(-82, -87, 164, 90), from, 0, 2);      // createAnimatedUIBox(3, 0, 2, SLOTS_UI_START, ...)
             if (_trn == null) _trn = _disc.ReadFile("/TRN_REL.BIN");
             var rng = new System.Random();
             _slot = new SlotMachine { Stat = stat, Assist = _trn[AssistTable + rng.Next(10)] };
@@ -195,6 +210,8 @@ namespace DW1Remake.Game
                     p.Timer++;
                     break;
                 case 6:
+                    // removeAnimatedUIBox(3, spot square), closeBox(0)
+                    if (_slotBox != null) _slotBox.ShrinkTo(_spotSquare);
                     p.Result = p.Payout;
                     break;
             }
@@ -261,7 +278,6 @@ namespace DW1Remake.Game
             var p = _slot;
             UiKit.Begin();
             Func<float, float> px = v => 707.5f + v * 4.42f, py = v => 530f + v * 4.42f;
-            UiKit.Box(new Rect(px(-82), py(-87), 164 * 4.42f, 90 * 4.42f), UiKit.DialogFill);
             float tw = _slotTex.width, th = _slotTex.height;
             for (int i = 0; i < 3; i++)
             {
@@ -293,13 +309,18 @@ namespace DW1Remake.Game
         // blue arrow at x + 130 and the gain (3 digits) at x + 142, a line at x + 122. Game font not decoded: names and digits are our text, in the game's colours.
         void DrawTraining()
         {
-            DrawSlot();
-            if (!_trainShow) return;
+            if (_slotBox != null && _slotBox.Showing) _slotBox.Draw(DrawSlot);
+            if (_statsBox == null || !_statsBox.Showing) return;
+            _statsBox.Draw(DrawTrainingStats);
+        }
+
+        void DrawTrainingStats()
+        {
             UiKit.Begin();
             int[] order = { 4, 5, 0, 1, 2, 3 };
             var values = new int[6]; var raised = new bool[6];
             for (int i = 0; i < 6; i++) { values[i] = _state.Stats[order[i]]; raised[i] = _trainTotal[i] > 0; }
-            Battle.DrawStatsBox(_battle != null ? _battle.Art : null, -94, -78, 188, values, _trainTotal, raised);
+            Battle.DrawStatsBox(_battle != null ? _battle.Art : null, -94, -78, 188, values, _trainTotal, raised, false);
             UiKit.End();
         }
     }

@@ -378,11 +378,21 @@ namespace DW1Remake.Game
             return false;
         }
 
+        /// <summary>HEALING_VALUES (exe 0x8013435C, four shorts), read by the room from the player's disc.</summary>
+        public static int[] HealingValues = new int[4];
+
         /// <summary>ITEM_FUNCTIONS[item], then partnerHandleFoodFeed. True when the partner cheers (animation 11).</summary>
         public bool UseItem(int item)
         {
-            if (item <= 3) { int[] v = { 500, 1500, 5000, 9999 }; if (_s.Stats[6] != 0) HealBy(v[item], 0); }
-            else if (item <= 6) { int[] v = { 500, 1500, 5000 }; if (_s.Stats[6] != 0) HealBy(0, v[item - 4]); }
+            ItemFunction(item);
+            return FoodFeed(item);
+        }
+
+        /// <summary>ITEM_FUNCTIONS[item] alone: what a thrown item does when it reaches the partner in a fight (tickThrownItem).</summary>
+        public void ItemFunction(int item)
+        {
+            if (item <= 3) { if (_s.Stats[6] != 0) HealBy(HealingValues[item], 0); }                       // handleHPHealingItem
+            else if (item <= 6) { if (_s.Stats[6] != 0) HealBy(0, HealingValues[item - 4]); }             // handleMPHealingItem
             else if (item == 7 || item == 9) { if (_s.Stats[6] != 0) HealBy(1500, 1500); }
             else if (item == 11) HealBy(_s.Stats[4] / 2, 0);
             else if (item == 12) HealBy(9999, 0);
@@ -391,7 +401,6 @@ namespace DW1Remake.Game
             else if (item >= 0x16 && item <= 0x20) Chip(item);
             else if ((item >= 0x26 && item <= 0x46) || item == 0x79 || item == 0x7A) Food(item);
             else if ((item >= 0x47 && item < 0x73) || item >= 0x7D) EvoItem(item);
-            return FoodFeed(item);
         }
 
         bool MedicineHealing(int injuryChance, int sicknessChance)

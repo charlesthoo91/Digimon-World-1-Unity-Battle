@@ -115,8 +115,8 @@ namespace DW1Remake.Game
         // createAnimatedUIBox(1, 0, 2, (-130, 42, 262, 59), the boy's 10 x 10 square)
         RectInt BoySquare()
         {
-            Vector2 p = Ps1Point(_player.position + Vector3.up * 0.8f);
-            return new RectInt((int)p.x - 5, (int)p.y - 5, 10, 10);
+            Vector2 p = BoneScreen(_player, _anim);     // setupBoxOrigin(0xFD)
+            return new RectInt((int)p.x, (int)p.y, 10, 10);
         }
 
         void OpenPickupBox(PickupBox v)

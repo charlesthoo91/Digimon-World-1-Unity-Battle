@@ -24,7 +24,7 @@ namespace DW1Remake.Game
             {
                 case 0x20:                                                                       // initializeNamingBuffer(variable 254), then newGameStateMachine
                     _line = null; _choiceOpts = null; _routineOn = true;
-                    _setup = new CharacterSetup(_scripts, _state, _menus, _disc) { Art = _battle != null ? _battle.Art : null, DrawBackground = false };
+                    _setup = new CharacterSetup(_scripts, _state, _menus, _disc) { Art = _battle != null ? _battle.Art : null, DrawBackground = false, JijimonSquare = JijimonSquare };
                     _setup.OnDone = () => { _routineOn = false; AdvanceScript(); };
                     _setup.StartNaming(_state.Vars[0xFE]);
                     wait = true; return true;

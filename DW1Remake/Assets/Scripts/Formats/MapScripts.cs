@@ -115,7 +115,7 @@ namespace DW1Remake.Formats
                 case 0x8197: return "@";
                 case 0x8181: return "=";
             }
-            return "?";
+            return ((char)w).ToString();       // anything else (the button symbols 0x819B, 0x81A0, 0x81A2...) as its code: GameFont draws it from the game's glyphs
         }
 
         /// <summary>

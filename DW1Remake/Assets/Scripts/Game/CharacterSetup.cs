@@ -11,6 +11,41 @@ namespace DW1Remake.Game
     /// Built-in 0x20 opens the naming box alone (flags 2: rename the boy, 3: rename the partner). The letter pages, labels, cursor
     /// pieces and box positions come from the exe; the cursor is drawn from the clock sheet (VRAM 896,448, colour row 508).
     /// </summary>
+    /// <summary>The naming box's two UI boxes (setupNameSelectorBox (-145, -91) 290 x 138 and setupNameDisplayBox (-145, 60) 149 x 42), flags
+    /// 0xC1 in the new game or 0xE1 when a script opens them, both growing out of Jijimon; what is inside is drawn by CharacterSetup.</summary>
+    public sealed class NamingBoxes : UiBoxPage
+    {
+        public readonly UiBox Selector = new UiBox { Id = 1 }, Display = new UiBox { Id = 2 };
+        float _acc;
+        public static NamingBoxes Load(DiscImage disc, GameFont font)
+        {
+            if (disc == null || !disc.Exists("/SLUS_010.32")) return null;
+            var v = new NamingBoxes(); v.Init(disc, font); return v;
+        }
+        public bool Showing { get { return Selector.State != 0 || Display.State != 0; } }
+        public void OpenBoth(int flags, RectInt origin)
+        {
+            Open(Selector, new RectInt(-145, -91, 290, 138), origin, flags);
+            Open(Display, new RectInt(-145, 60, 149, 42), origin, flags);
+        }
+        public void CloseBoth() { Close(Selector); Close(Display); }
+        public void Draw(System.Action selector, System.Action display)
+        {
+            if (!Showing) return;
+            if (Event.current.type == EventType.Repaint)
+            {
+                _acc += Time.unscaledDeltaTime;
+                while (_acc >= 0.05f) { _acc -= 0.05f; Step(Selector); Step(Display); }
+            }
+            Begin();
+            DrawBox(Selector, () => Add(6 - Selector.Id, selector));
+            DrawBox(Display, () => Add(6 - Display.Id, display));
+            UiKit.Begin();
+            Flush();
+            UiKit.End();
+        }
+    }
+
     public sealed class CharacterSetup
     {
         const int Section = 0x4D6;
@@ -30,6 +65,10 @@ namespace DW1Remake.Game
         public System.Action OnDone;
         public bool DrawBackground = true;   // false when a 3D stage with its own black background is showing
         public BattleArt Art;                // the clock sheet (cursor pieces)
+        public System.Func<RectInt?> JijimonSquare;   // getEntityScreenPos of the Digimon of type 0x75 (bone 1): the boxes grow out of it
+        readonly DiscImage _disc;
+        DialogueBox _dlg;
+        NamingBoxes _boxes;
 
         int _state, _next, _mode;            // SCRIPT_STATE_2, SCRIPT_NEXT_STATE_2, SCRIPT_TEXTBOX_MODE (1 text, 2 selection)
         string _speaker = "", _body = "";
@@ -44,7 +83,7 @@ namespace DW1Remake.Game
 
         public CharacterSetup(MapScripts scripts, ScriptState state, GameMenus menus, DiscImage disc)
         {
-            _scripts = scripts; _st = state; _m = menus;
+            _scripts = scripts; _st = state; _m = menus; _disc = disc;
             if (disc != null && disc.Exists("/SLUS_010.32")) { _exe = disc.ReadFile("/SLUS_010.32"); _load = System.BitConverter.ToUInt32(_exe, 0x18); }
         }
 
@@ -102,21 +141,38 @@ namespace DW1Remake.Game
         // showNewGameDialogue / showNewGameSelection: showMapHeadTextbox(text, 0xFE, 0, 0x4D6); the selection's last two lines are the choices
         void Dialogue(int text, int next)
         {
-            string t = ScriptRunner.MapHeadText(_scripts, _st, Section, text, 0xFF) ?? "";
-            int nl = t.IndexOf('\n');
-            _speaker = nl >= 0 ? t.Substring(0, nl).Trim() : ""; _body = nl >= 0 ? t.Substring(nl + 1).Trim() : t.Trim();
+            string t = ScriptRunner.MapHeadText(_scripts, _st, Section, text, 0xFF, true) ?? "";
             _opts = null; _talking = true;
+            if (Box() != null) _dlg.Show(0xFF, null, t, 0);
             _state = 1; _next = next; _mode = 1;
         }
 
         void Selection(int text, int next)
         {
-            var lines = new List<string>((ScriptRunner.MapHeadText(_scripts, _st, Section, text, 0xFF) ?? "").Split('\n'));
+            string t = ScriptRunner.MapHeadText(_scripts, _st, Section, text, 0xFF, true) ?? "";
+            var lines = new List<string>(t.Split('\n'));
             int q = Mathf.Max(0, lines.Count - 2);
-            _speaker = string.Join(" ", lines.GetRange(0, q).ToArray()).Trim(); _body = "";
             _opts = lines.GetRange(q, lines.Count - q); _sel = 0; _talking = true;
+            if (Box() != null) { _dlg.Show(0xFF, null, t, 2); _dlg.Current = 0; }
             _state = 1; _next = next; _mode = 2;
         }
+
+        DialogueBox Box()
+        {
+            if (_dlg == null && _disc != null && Battle.StatFont != null) { _dlg = DialogueBox.Load(_disc, Battle.StatFont); if (_dlg != null) _dlg.Sound = Sfx; }
+            return _dlg;
+        }
+
+        NamingBoxes Boxes()
+        {
+            if (_boxes == null && _disc != null) { _boxes = NamingBoxes.Load(_disc, Battle.StatFont); if (_boxes != null) _boxes.Sound = Sfx; }
+            return _boxes;
+        }
+
+        RectInt Jijimon() { var r = JijimonSquare != null ? JijimonSquare() : null; return r ?? new RectInt(0, 0, 10, 10); }
+
+        // setupNewGameDialogueBox: box 0 at (-130, -78) 262 x 59, flags 0x81, out of Jijimon's 10 x 10 square
+        void NewGameBox() { if (Box() != null) _dlg.SetupAt(new RectInt(-130, -78, 262, 59), 0x81, Jijimon()); }
 
         void Step()
         {
@@ -125,6 +181,7 @@ namespace DW1Remake.Game
                 case 0:
                     _st.SetFlag(49, true);
                     _st.PlayerName = Str(ButtonsStr + 7);      // DIGIMON_NAME(0) = &MAIN_D_80134600[7]
+                    NewGameBox();
                     Dialogue(0x10, 2); break;
                 case 2: Dialogue(0x11, 3); break;
                 case 3: Selection(0x12, 4); break;
@@ -138,19 +195,23 @@ namespace DW1Remake.Game
                 case 0x0B: Selection(0x18, 8); break;
                 case 0x11: Dialogue(0x19, 0x12); break;
                 case 0x12: Dialogue(0x1A, 0x13); break;
-                case 0x13: _talking = false; _state = 0x14; break;
+                case 0x13: _talking = false; if (_dlg != null) _dlg.Shut(); _state = 0x14; break;      // closeBox(0)
                 case 0x14:
                     _selector = 0;                                // setupNameSelectorBox: SHOP_AMOUNT = NAMING_START_PAGE (0)
                     _letter = Length() ; if (_letter == 6) _letter--;      // setupNameDisplayBox
                     _naming = true; _state = 1; _mode = 0;
+                    if (Boxes() != null) _boxes.OpenBoth((_flags & 2) == 0 ? 0xC1 : 0xE1, Jijimon());
                     break;
                 case 0x15:
                     _naming = false;
                     if ((_flags & 1) == 0) _st.PlayerName = BufferText(); else _st.PartnerName = BufferText();
+                    if (_boxes != null) _boxes.CloseBoth();
                     _state = 0x16;
                     break;
                 case 0x16:
-                    if ((_flags & 2) != 0) { Finish(); return; }
+                    // opened by a script: done once the selector box has shrunk away
+                    if ((_flags & 2) != 0) { if (_boxes == null || _boxes.Selector.State == 0) Finish(); return; }
+                    NewGameBox();
                     if ((_flags & 1) == 0) Dialogue(0x1B, 0x17); else Dialogue(0x1E, 0x1B);
                     break;
                 case 0x17: Selection(0x1C, 0x18); break;
@@ -161,7 +222,7 @@ namespace DW1Remake.Game
                 case 0x1C: Dialogue(0x1F, 0x1E); break;
                 case 0x1D: _state = 0x13; break;
                 case 0x1E: Dialogue(0x20, 0x1F); break;
-                case 0x1F: _talking = false; _st.SetFlag(49, false); Finish(); return;
+                case 0x1F: _talking = false; if (_dlg != null) _dlg.Shut(); _st.SetFlag(49, false); Finish(); return;
             }
         }
 
@@ -217,12 +278,18 @@ namespace DW1Remake.Game
             if (!Active) return;
             if (_state == 1)
             {
-                if (_naming) { TickNaming(step, side, action, cancel); return; }
+                if (_naming)
+                {
+                    if (_boxes == null || (_boxes.Selector.State == 1 && _boxes.Display.State == 1)) TickNaming(step, side, action, cancel);
+                    return;
+                }
+                if (_dlg != null && _dlg.Box.State != 1) return;
                 // tickScriptDialogueBox: mode 1 goes on with Cross; mode 2 to the next state + the choice
-                if (_mode == 2 && _opts != null && _opts.Count > 0 && step != 0) { _sel = (_sel + step + _opts.Count) % _opts.Count; Sfx(2); }
+                if (_mode == 2 && _opts != null && _opts.Count > 0 && step != 0) { _sel = (_sel + step + _opts.Count) % _opts.Count; Sfx(2); if (_dlg != null) _dlg.Current = _sel; }
                 if (action) { Sfx(3); _state = _mode == 2 ? _next + _sel : _next; }
                 return;
             }
+            if (_state == 0x16 && (_flags & 2) != 0) { Step(); return; }
             for (int guard = 0; guard < 8 && Active && _state != 1; guard++) Step();
         }
 
@@ -324,9 +391,10 @@ namespace DW1Remake.Game
             if (!Active) return;
             if (DrawBackground) UiKit.Fill(new Rect(0, 0, Screen.width, Screen.height), Color.black);
             UiKit.Begin();
-            if (_naming) DrawNaming();
-            else if (_talking) DrawChat();
             UiKit.End();
+            if (_boxes != null && _boxes.Showing) _boxes.Draw(DrawSelectorBox, DrawDisplayBox);
+            if (_talking && _dlg != null) _dlg.Draw();
+            else if (_talking) { UiKit.Begin(); DrawChat(); UiKit.End(); }
         }
 
         // setupNewGameDialogueBox: the box (-130, -78, 262, 59); the box style and text drawing are ours (as the room's dialogue box)
@@ -364,14 +432,12 @@ namespace DW1Remake.Game
             if (font != null) font.Draw(((char)code).ToString(), CX(psx), CY(psy), 4.42f, c);
         }
 
-        void DrawNaming()
+        // renderNamingBox, inside the selector box (-145, -91, 290, 138)
+        void DrawSelectorBox()
         {
             var font = Battle.StatFont;
             Color ink = font != null ? font.Ink : Color.white;
-            // setupNameSelectorBox (-145, -91, 290, 138) and setupNameDisplayBox (-145, 60, 149, 42)
-            const int bx = -145, by = -91, dx = -145, dy = 60;
-            UiKit.Box(new Rect(CX(bx), CY(by), 290 * 4.42f, 138 * 4.42f), UiKit.DialogFill, 4f);
-            UiKit.Box(new Rect(CX(dx), CY(dy), 149 * 4.42f, 42 * 4.42f), UiKit.DialogFill, 4f);
+            const int bx = -145, by = -91;
             // renderNamingBox: the labels (NAMING_CTRL_BOXES x, y, width) cut from the line "<colour 7>Name<colour 1>BackOK"
             string title = Str(TitleStr), buttons = Str(ButtonsStr);
             string line = title + buttons;
@@ -394,6 +460,14 @@ namespace DW1Remake.Game
                     for (int k = 0; k < 5; k++)
                         Glyph(Letter(page, r, k), bx + GridX + page * 0x70 + k * 18, by + 6 + r * 14, ink);
             DrawSelector(bx, by);
+        }
+
+        // renderNameDisplayBox, inside the display box (-145, 60, 149, 42)
+        void DrawDisplayBox()
+        {
+            var font = Battle.StatFont;
+            Color ink = font != null ? font.Ink : Color.white;
+            const int dx = -145, dy = 60;
             // renderNameDisplayBox (US): the name, in fixed-width cells, at x + 7, y + 6 (the US prompt is empty), and the underscore
             for (int i = 0; i < 6 && _buf[i] != 0; i++) Glyph(_buf[i], dx + 7 + Str(PromptTamer).Length * 12 + i * 12, dy + 6, ink);
             // renderNamingUnderscore: three lines (0x020202, 0x10C0C0, 0x020202) under the current letter
