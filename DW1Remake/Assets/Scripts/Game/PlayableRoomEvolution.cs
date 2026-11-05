@@ -169,11 +169,46 @@ namespace DW1Remake.Game
             }
         }
 
+        // LINE_F2 / GsSortLine: a line on the PS1 is one pixel of its 320 x 240 picture wide, whatever the screen (user's PS1 clip 2026-11-05: solid,
+        // bright lines). Unity's lines are one screen pixel, so each one is drawn as a strip one PS1 pixel wide at its own depth, facing the camera.
+        readonly Dictionary<Mesh, Mesh> _thickLines = new Dictionary<Mesh, Mesh>();
+
         void DrawLines(Mesh mesh, Color c)
         {
             if (_lineMat == null) { var sh = Shader.Find("Universal Render Pipeline/Unlit"); if (sh == null) return; _lineMat = new Material(sh); }
+            Mesh strip;
+            if (!_thickLines.TryGetValue(mesh, out strip)) { strip = new Mesh(); _thickLines[mesh] = strip; }
+            if (!ThickLines(mesh, strip)) return;
             _evoMp.Clear(); _evoMp.SetColor("_BaseColor", c);
-            Graphics.DrawMesh(mesh, Matrix4x4.identity, _lineMat, 0, null, 0, _evoMp);
+            Graphics.DrawMesh(strip, Matrix4x4.identity, _lineMat, 0, null, 0, _evoMp);
+        }
+
+        bool ThickLines(Mesh lines, Mesh strip)
+        {
+            if (_cam == null) return false;
+            var v = lines.vertices; var idx = lines.GetIndices(0);
+            var sv = new List<Vector3>(idx.Length * 2); var st = new List<int>(idx.Length * 6);
+            Vector3 eye = _cam.transform.position, fwd = _cam.transform.forward;
+            float px = 2f * Mathf.Tan(_cam.fieldOfView * 0.5f * Mathf.Deg2Rad) / 240f;      // one PS1 pixel at depth 1
+            for (int i = 0; i + 1 < idx.Length; i += 2)
+            {
+                Vector3 a = v[idx[i]], b = v[idx[i + 1]];
+                Vector3 side = Vector3.Cross(b - a, (a + b) * 0.5f - eye);
+                if (side.sqrMagnitude < 1e-12f) continue;
+                side.Normalize();
+                float za = Vector3.Dot(a - eye, fwd), zb = Vector3.Dot(b - eye, fwd);
+                if (za <= 0f && zb <= 0f) continue;
+                float wa = Mathf.Max(0.001f, za) * px * 0.5f, wb = Mathf.Max(0.001f, zb) * px * 0.5f;
+                int n = sv.Count;
+                sv.Add(a - side * wa); sv.Add(a + side * wa); sv.Add(b + side * wb); sv.Add(b - side * wb);
+                // both windings, so it shows whichever way it faces
+                st.Add(n); st.Add(n + 1); st.Add(n + 2); st.Add(n); st.Add(n + 2); st.Add(n + 3);
+                st.Add(n); st.Add(n + 2); st.Add(n + 1); st.Add(n); st.Add(n + 3); st.Add(n + 2);
+            }
+            strip.Clear();
+            if (sv.Count > 65000) strip.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+            strip.SetVertices(sv); strip.SetTriangles(st, 0); strip.RecalculateBounds();
+            return st.Count > 0;
         }
 
         // EVL_buildShardSet: the part's vertices in the world at this moment, and for each face the mean of its first three normals turned by the bone
@@ -219,15 +254,7 @@ namespace DW1Remake.Game
         // by up to 80; picture at VRAM page (768,256) u 0x30-0x5F v 0xA0-0xA7 = ETCDAT/DEFEFF.TIM rows 32-39, colour set 1; grey 10-137 at random, added.
         void DrawStreaks()
         {
-            var fx = _battle != null ? _battle.Effects : null;
-            if (_defEff == null)
-            {
-                TimImage def;
-                if (_disc.Exists("/ETCDAT/DEFEFF.TIM") && TimImage.TryParse(_disc.ReadFile("/ETCDAT/DEFEFF.TIM"), 0, out def)) _defEff = def.ToTexture(1);
-                if (_defEff == null) return;
-            }
-            var addMat = fx != null ? fx.AddMaterial : null;
-            if (addMat == null || _partnerAnim == null) return;
+            if (_partnerAnim == null) return;
             foreach (var s in _streaks)
             {
                 var nb = _partnerAnim.Node(s.Bone); var n1 = _partnerAnim.Node(1);
@@ -238,17 +265,34 @@ namespace DW1Remake.Game
                 Vector3 b = a + d * sc / lenSq;
                 Vector3 c = b + new Vector3(Random.Range(-0x50, 0x51), Random.Range(-0x50, 0x51), Random.Range(-0x50, 0x51));
                 if (s.Mesh == null) s.Mesh = new Mesh();
-                s.Mesh.Clear();
-                s.Mesh.vertices = new[] { ToUnity(c), ToUnity(a), ToUnity(b) };
-                float w = _defEff.width, h = _defEff.height;
-                s.Mesh.uv = new[] { new Vector2(0x5F / w, 1f - 32f / h), new Vector2(0x5F / w, 1f - 39f / h), new Vector2(0x30 / w, 1f - 32f / h) };
-                s.Mesh.triangles = new[] { 0, 1, 2 };
-                s.Mesh.RecalculateBounds();
-                float g = (Random.Range(0, 128) + 10) / 128f;
-                _evoMp.Clear(); _evoMp.SetTexture("_MainTex", _defEff); _evoMp.SetColor("_Color", new Color(g, g, g, 1f));
-                _evoMp.SetVector("_Rect", new Vector4(0f, 0f, 1f, 1f));
-                Graphics.DrawMesh(s.Mesh, Matrix4x4.identity, addMat, 0, null, 0, _evoMp);
+                if (!DrawStreakTri(s.Mesh, c, a, b)) return;
             }
+        }
+
+        // one spark streak triangle (EVL_renderSparkStreak, DOO2_renderSparkStreak): POLY_FT3 at page (768,256) abr 1 (added), colour set (192,489) = DEFEFF.TIM
+        // palette 1, uv (0x5F,0xA0) (0x5F,0xA7) (0x30,0xA0) = picture rows 32-39, grey (rand % 128) + 10; corners in game units. False when it cannot draw.
+        bool DrawStreakTri(Mesh mesh, Vector3 g0, Vector3 g1, Vector3 g2)
+        {
+            if (_defEff == null)
+            {
+                TimImage def;
+                if (_disc.Exists("/ETCDAT/DEFEFF.TIM") && TimImage.TryParse(_disc.ReadFile("/ETCDAT/DEFEFF.TIM"), 0, out def)) _defEff = def.ToTexture(1);
+                if (_defEff == null) return false;
+            }
+            var fx = _battle != null ? _battle.Effects : null;
+            var addMat = fx != null ? fx.AddMaterial : null;
+            if (addMat == null) return false;
+            mesh.Clear();
+            mesh.vertices = new[] { ToUnity(g0), ToUnity(g1), ToUnity(g2) };
+            float w = _defEff.width, h = _defEff.height;
+            mesh.uv = new[] { new Vector2(0x5F / w, 1f - 32f / h), new Vector2(0x5F / w, 1f - 39f / h), new Vector2(0x30 / w, 1f - 32f / h) };
+            mesh.triangles = new[] { 0, 1, 2 };
+            mesh.RecalculateBounds();
+            float g = (Random.Range(0, 128) + 10) / 128f;
+            _evoMp.Clear(); _evoMp.SetTexture("_MainTex", _defEff); _evoMp.SetColor("_Color", new Color(g, g, g, 1f));
+            _evoMp.SetVector("_Rect", new Vector4(0f, 0f, 1f, 1f));
+            Graphics.DrawMesh(mesh, Matrix4x4.identity, addMat, 0, null, 0, _evoMp);
+            return true;
         }
 
         // EVL_renderParticle: a square of lines flat at the partner's first place, half side lerp(8, 2500) over 86 frames, colour fading to 0
@@ -286,6 +330,16 @@ namespace DW1Remake.Game
                 px[i] = new Color32((byte)(r << 3), (byte)(g << 3), (byte)(b << 3), o.a);
             }
             _evoTex.SetPixels32(px); _evoTex.Apply();
+        }
+
+        bool _evoFront;     // the evolution's fade (state 0): the partner is drawn over the black
+
+        /// <summary>OnGUI, after the black: the partner's own picture over it while the evolution fades the rest out.</summary>
+        void DrawEvoFront()
+        {
+            if (!_evoFront || !_front || _frontRt == null) return;
+            SyncFrontCamera();
+            if (Event.current.type == EventType.Repaint) GUI.DrawTexture(UiKit.Picture, _frontRt, ScaleMode.StretchToFill, true);
         }
 
         void SetPartnerTint(Color c)
@@ -336,10 +390,14 @@ namespace DW1Remake.Game
                 {
                     acc -= 0.05f;
                     if (_partnerAnim != null && _partnerAnim.Slot == 12 && !_partnerAnim.Busy && _partnerAnim.HasSlot(1)) _partnerAnim.SetSlot(1);
-                    if (frame < 0x20) _fade = frame / 32f;                              // state 0
+                    // state 0: fadeoutCLUT1/2 and EVL_fadeClutBank0/1 darken the map's colour tables and those at (0,488), (32,488), (224,488):
+                    // the map, the boy and the others go black, the partner's own colour table is not one of them, so it keeps its colours
+                    // (user's PS1 clip 2026-11-05). Ours: the black over the picture, and the partner drawn on top of it from its own layer.
+                    if (frame < 0x20) { _fade = frame / 32f; if (!_evoFront) { _evoFront = true; IrisFront(true); } }
                     if (frame == 0x20)
                     {
-                        _fade = 0f; HideWorld(true); SetPartnerTint(Color.black);
+                        _fade = 0f; HideWorld(true);
+                        _evoFront = false; IrisFront(false);
                         _evoCam = true; _evoEye = savedEye; _evoLook = savedLook; _evoFov = camFov; _evoShift = camShift;
                     }
                     // EVL_updateEvoCamera (state 1, up to 106) and the turning camera of state 2 (from 165)
@@ -406,7 +464,7 @@ namespace DW1Remake.Game
                             EvoCameraVectors((camAngle + GameHeading(_partner)) & 0xFFF, Mathf.Max(rad, hei) * 5 + 0x4B0, hei, out look, out eye);
                             _evoLook = look; _evoEye = eye;
                         }
-                        if (frame == 0xD6 && _audio != null) _audio.Play(8, 5);
+                        if (frame == 0xD6 && _audio != null) { _audio.StopSound(); _audio.Play(8, 5); }
                         if (frame >= 0xD7 && frame < 0x11C && (frame & 1) == 0 && fx != null && _partnerAnim != null && _partnerAnim.Node(1) != null)
                         {
                             int c = PsLerp(0x32, 0x78, 0xD6, 0x11C, frame);

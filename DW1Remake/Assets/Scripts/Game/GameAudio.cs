@@ -175,6 +175,10 @@ namespace DW1Remake.Game
             if (font != ActiveFont || track != ActiveTrack) { ActiveFont = font; ActiveTrack = track; PlayMusic(font, track); }
         }
 
+        /// <summary>stopSound (sound.c): SsUtAllKeyOff, then every sound voice (10-23) still on is keyed off. Ours: every sound effect still playing stops
+        /// (the scenes that call it have already stopped the music).</summary>
+        public void StopSound() { foreach (var s in _fx) if (s != null) s.Stop(); }
+
         public void StopMusic() { _wanted = -1; _playingKey = -1; _intro.Stop(); _loop.Stop(); }
 
         /// <summary>playMusic: font 1-33 in FAALL.VHB, a track in its song table. Songs are made over a few frames, then kept.</summary>

@@ -3031,6 +3031,7 @@ namespace DW1Remake.Game
                 GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), Texture2D.whiteTexture);
                 GUI.color = old;
             }
+            DrawEvoFront();
             DrawSysScreen();        // the sleep menu shows on the black screen
         }
     }

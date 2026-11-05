@@ -688,6 +688,9 @@ namespace DW1Remake.Game
             return RotY(FacingOf(a)) * pose;
         }
 
+        /// <summary>ApplyMatrixSV with RotMatrixZYX(rx, ry, rz), as the particle code builds it (game units and angles).</summary>
+        public static Vector3 RotateZYX(int rx, int ry, int rz, Vector3 v) { return (RotZ(rz) * RotY(ry) * RotX(rx)).MultiplyVector(v); }
+
         static Matrix4x4 RotX(int a) { float c = Mathf.Cos(a * Turn), s = Mathf.Sin(a * Turn); var m = Matrix4x4.identity; m[1, 1] = c; m[1, 2] = -s; m[2, 1] = s; m[2, 2] = c; return m; }
         static Matrix4x4 RotY(int a) { float c = Mathf.Cos(a * Turn), s = Mathf.Sin(a * Turn); var m = Matrix4x4.identity; m[0, 0] = c; m[0, 2] = s; m[2, 0] = -s; m[2, 2] = c; return m; }
         static Matrix4x4 RotZ(int a) { float c = Mathf.Cos(a * Turn), s = Mathf.Sin(a * Turn); var m = Matrix4x4.identity; m[0, 0] = c; m[0, 1] = -s; m[1, 0] = s; m[1, 1] = c; return m; }
@@ -1160,7 +1163,8 @@ namespace DW1Remake.Game
             float pixel = 2f * dist * Mathf.Tan(cam.fieldOfView * 0.5f * Mathf.Deg2Rad) / 240f;
             int pulse = ((PsSin512(PsLerp(0, 0x1EB, 0, 0x17, t)) * 300) >> 12) + 1;
             float half = PsLerp(f.S0, f.S1, 0, f.Max, t) * 10f * 63f / 1024f * Unit + (pulse * 63f / 1024f + 1f) * pixel;
-            float u = abs == 0 ? 0x40 : 0;
+            // renderEFEFlash: uBase = the table at exe 0x8013421C [mode & 3] = 0x40, 0, 0, 0, so mode 0x20 takes mode 0's picture
+            float u = (abs & 3) == 0 ? 0x40 : 0;
             if (f.Front && _matFront == null) { _matFront = new Material(_mat); _matFront.SetFloat("_ZTest", (float)UnityEngine.Rendering.CompareFunction.Always); }
             Material mat = f.Front ? _matFront : null;
             if (abs == 0x20)

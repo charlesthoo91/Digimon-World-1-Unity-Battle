@@ -367,6 +367,9 @@ namespace DW1Remake.Game
                         CutsceneCamera(oldView, height, 0, 0x64, 0x63);
                     }
                     if (frame == 0x69 && _audio != null) _audio.Play(8, 0);
+                    if (frame == 0x8C && _audio != null) _audio.StopSound();
+                    // phase 4: the sequence ends the frame after 0x1B7 with stopSound
+                    if (frame == 0x1B8 && _audio != null) _audio.StopSound();
                     if (frame >= 0x69 && frame < 0x8D)
                     {
                         int w = frame - 0x69;
@@ -376,7 +379,7 @@ namespace DW1Remake.Game
                     if (frame == 0xBF)
                     {
                         targetY = -(height + 100);
-                        if (_audio != null) _audio.Play(8, 1);
+                        if (_audio != null) { _audio.StopSound(); _audio.Play(8, 1); }
                     }
                     if (frame >= 0xBF && frame < 0xD1)
                     {
@@ -406,7 +409,11 @@ namespace DW1Remake.Game
                         // a flash each frame sinking from above where it jumped to the ground (mode 0, 8 frames, scale 0 - 0x14)
                         float y = PsLerp((int)targetY, 0, 0xD1, 0x135, frame);
                         var col = new Vector3(Random.Range(0, 100) + 60, Random.Range(0, 100) + 60, Random.Range(0, 100) + 60);
-                        fx.AddFlash(0, ToUnity(new Vector3(0f, y, 0f)), 8, 0, 0x14, col, new Vector3(0x14, 0x14, 0x14));
+                        // setEFEFlashOffset(x = _sin(lerp(0, 0x600)) x 10 / 4096): pushed sideways on the screen by x x viewport / depth, i.e. x game
+                        // units across the picture at its own depth, so the column of flashes sways three times as it sinks
+                        int sway = PsSin512(PsLerp(0, 0x600, 0xD1, 0x135, frame)) * 10 / 4096;
+                        Vector3 at = ToUnity(new Vector3(0f, y, 0f)) + (_cam != null ? _cam.transform.right : Vector3.right) * sway * Unit;
+                        fx.AddFlash(0, at, 8, 0, 0x14, col, new Vector3(0x14, 0x14, 0x14));
                     }
                     if (frame == 0x135) { _shardFlicker = true; if (_audio != null) _audio.Play(8, 3); }
                     if (frame >= 0x135 && frame < 0x17B) CutsceneCamera(oldView, height, 0x149, 0x17B, 0x2C4 - frame);
@@ -430,6 +437,27 @@ namespace DW1Remake.Game
         }
 
         // DOOA_getSequenceState / DOOA_tickRebirth (script routine 4)
+        int _rebirthStreaks;
+        readonly List<Mesh> _rebirthMeshes = new List<Mesh>();
+
+        // DOOA_renderRebirth: fadeLevel spark streaks (DOO2_renderSparkStreak) out of the partner's place 100 units up: (0, 0, customRandom(400, 500))
+        // turned by RotMatrixZYX(rand % customRandom(-170, 1024), rand, 0); the third corner is that end shaken by up to 50 on each axis
+        void DrawRebirthStreaks()
+        {
+            if (_rebirthStreaks <= 0 || _partner == null) return;
+            Vector3 o = ToGameV(_partner.position) + new Vector3(0f, -100f, 0f);
+            for (int i = 0; i < _rebirthStreaks; i++)
+            {
+                int range = Random.Range(-170, 1025);
+                int rx = range != 0 ? Random.Range(0, 0x8000) % range : 0;       // C's %: the sign of the left side (rand is never negative)
+                int ry = Random.Range(0, 0x8000);
+                Vector3 a = o + EffectPlayer.RotateZYX(rx, ry, 0, new Vector3(0f, 0f, Random.Range(400, 501)));
+                Vector3 b = a + new Vector3(Random.Range(-50, 51), Random.Range(-50, 51), Random.Range(-50, 51));
+                while (_rebirthMeshes.Count <= i) _rebirthMeshes.Add(new Mesh());
+                if (!DrawStreakTri(_rebirthMeshes[i], b, o, a)) return;
+            }
+        }
+
         IEnumerator Rebirth()
         {
             int slot = _state.Life > 0 || _state.Para.IsNaturalDeath ? _eggSlot : Random.Range(0, 4);
@@ -446,7 +474,9 @@ namespace DW1Remake.Game
                 while (acc >= 0.05f && !ended)
                 {
                     acc -= 0.05f; frame++;
-                    if (frame == 10) { _shardState = 1; if (_audio != null) _audio.Play(8, 5); }
+                    // DOOA_tickRebirth: fadeLevel is 0 each frame; in phase 0xCE (from the frame after 132) up to 146 it is lerp(5, 0, 132, 150)
+                    _rebirthStreaks = frame > 132 && frame < 147 ? PsLerp(5, 0, 132, 150, frame) : 0;
+                    if (frame == 10) { _shardState = 1; if (_audio != null) { _audio.StopSound(); _audio.Play(8, 5); } }
                     if (frame == 100) _shardState = 3;
                     if (frame >= 100 && frame <= 132) _eggWire = frame >= 130 ? 0x10 : PsLerp(1, 0x10, 100, 132, frame);
                     if (frame == 132)
@@ -505,8 +535,10 @@ namespace DW1Remake.Game
                 if (fx != null) fx.Tick(Time.deltaTime, _cam);
                 DrawDooaShards();
                 DrawEgg();
+                DrawRebirthStreaks();
                 yield return null;
             }
+            _rebirthStreaks = 0;
             _eggOn = false; _egg.Clear(); _eggShards.Clear(); _dooa.Clear(); _shardsOn = false;
             if (_partnerAnim != null) _partnerAnim.SetSlot(IdleSlot);
             if (_audio != null && _mapId >= 0 && _mapId < _mapFlags.Count) { _audio.SetMapSounds(_mapFlags[_mapId] & 0x1F); _audio.RestoreBgm(); }
