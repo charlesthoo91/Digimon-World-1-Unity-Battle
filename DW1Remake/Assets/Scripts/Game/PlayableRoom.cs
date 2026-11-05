@@ -625,6 +625,15 @@ namespace DW1Remake.Game
                         // ENTITY_MOVE_TO: SCRIPT_MOVEMENT type 8, tickEntityMoveTo: (target - position) / speed each frame until both x and z reach it;
                         // the boy's jumps over the Coelamon at Coela Point are this; his jump animation (0x15) gives the height and the last ~4 m (bone 0, drawn)
                         float zFix = a.Actor == 0xFC ? PartnerPlaceZOffset : 0f;   // measured against the PS1 game: Agumon starts further from the boy than the script's number
+                        // STILL OURS (user's decision 2026-11-05): a glide in a map's 0xFE setup section lands at once. On the PS1 it ends under the
+                        // fade-in (TWNB07: the recruited Betamon, 33 m in 10 frames, to his stall); our map loads faster and he was seen flying there.
+                        if (_runnerSection == 0xFE)
+                        {
+                            Mover old;
+                            if (_movers.TryGetValue(t, out old)) old.Gliding = false;
+                            t.position = new Vector3(a.X * Unit, t.position.y, a.Z * Unit + zFix);
+                            break;
+                        }
                         var m = MoverFor(t, an);
                         m.Goal = new Vector3(a.X * Unit, t.position.y, a.Z * Unit + zFix);
                         m.Walking = false;
@@ -902,11 +911,14 @@ namespace DW1Remake.Game
             foreach (var l in log) Debug.Log("[script section " + section + " in " + _mapNames[_mapId] + "] " + l);
         }
 
+        int _runnerSection = -1;      // the section the running script started from (0xFE = the map's own setup on arrival)
+
         bool StartScript(int section, Npc who)
         {
             if (_scripts == null || !_scripts.Available || _mapId < 0) return false;
             var log = new List<string>();
             _runner = new ScriptRunner(_scripts, _state, _scripts.ScriptIdForMap(_mapId), section, log);
+            _runnerSection = section;
             _talkingTo = who; _scriptAny = false; _line = null; _choiceOpts = null;
             if (_anim != null) _anim.SetSlot(IdleSlot);
             AdvanceScript();
@@ -2226,7 +2238,14 @@ namespace DW1Remake.Game
             if (StatsKeyPressed()) _showStats = !_showStats;
             if (OverlayKeyPressed()) { ShowOverlays = !ShowOverlays; if (_overlayRoot != null) _overlayRoot.SetActive(ShowOverlays); }
             TickOverlayAnimations();
-            if (_player == null || _map == null || _changing) return;
+            if (_changing)
+            {
+                // the map Digimon of the new map animate while the screen is still black: what their walk carried meanwhile must not be paid out
+                // at once afterwards (Betamon shot across TWNB07 to his stall on arrival)
+                foreach (var changing in _npcs) if (changing.Anim != null) { changing.Anim.TakeForward(); changing.Anim.TakeBodyMove(); }
+                return;
+            }
+            if (_player == null || _map == null) return;
             SyncPiles();
             TickMapObjects();
             if (_setup != null && _setup.Active) { _setup.Tick(MenuStep(), GameMenus.SideStep(), ActionPressed(), GameMenus.CancelKey()); return; }
@@ -2271,7 +2290,7 @@ namespace DW1Remake.Game
             }
             UpdateNpcs();
             TickActors();
-            if (_runner != null && !_pBusy && _partnerAnim != null && _partner != null && !_movers.ContainsKey(_partner) && !_partnerAnim.Busy
+            if (_runner != null && !_pBusy && !SetupWaitOnly() && _partnerAnim != null && _partner != null && !_movers.ContainsKey(_partner) && !_partnerAnim.Busy
                 && (_partnerAnim.Slot == WalkSlot || _partnerAnim.Slot == RunSlot)) _partnerAnim.SetSlot(IdleSlot);    // no running on the spot during a talk
             if (_pBusy && _runner == null) return;
             if (_eggOpen)
@@ -2288,6 +2307,13 @@ namespace DW1Remake.Game
             {
                 if (_wait > 0f || _waitAll)
                 {
+                    if (SetupWaitOnly())
+                    {
+                        // the camera was held for the script (FreezeCamera): it goes along with his steps, as it does after a script
+                        Vector3 was = _player.position;
+                        WalkBoy();
+                        if (_camOn) { _camPos += _player.position - was; _camGoal = _camPos; }
+                    }
                     _wait -= Time.deltaTime;
                     if (_wait <= 0f && (!_waitAll || !BusyFor(_waitFor))) { _wait = 0f; _waitAll = false; _waitFor = 0xFF; AdvanceScript(); }
                     return;
@@ -2321,6 +2347,33 @@ namespace DW1Remake.Game
             if (ActionPressed() && TryChest()) return;
             if (ActionPressed()) TryTalk();
             if (_runner != null) return;
+            WalkBoy();
+
+            // exits: grid values 110..119, doors and triggers: 50..109
+            int cell = _map.CollisionAt(_player.position.x / Unit, _player.position.z / Unit);
+            if (cell == 120 && (_state.Para.Condition & PartnerCare.Poopy) != 0) { if (_armed) { _armed = false; StartDgSection(ToiletSection); } }
+            else if (cell >= 110 && cell < 120)
+            {
+                if (_armed) TryExit(cell - 110);
+            }
+            else if (cell > 50 && cell < 80)
+            {
+                // checkMapInteraction: 51..79 call their section every frame he stands there while no script runs (on arrival too); a door with no section
+                // (ours: the map change found in the script) still waits until he has stepped off
+                if (_scripts != null && _scripts.Available && ScriptRunner.HasSection(_scripts, _scripts.ScriptIdForMap(_mapId), cell)) AutoTile(cell);
+                else if (_armed) TryDoor(cell);
+            }
+            else if (cell >= 80 && cell < 110)
+            {
+                // 80..109 run on every Cross press while he stands there, so no stepping off is needed
+                if (ActionPressed()) TryDoor(cell);
+            }
+            else _armed = true;
+        }
+
+        // the boy's free walk and his partner following (the walking part of Update)
+        void WalkBoy()
+        {
             Vector2 input = ReadMove();
             // arrow keys follow the screen: "up" walks up the screen, "right" to the right, whatever way the map's camera faces
             Vector3 dir = ScreenToGround(input);
@@ -2345,27 +2398,18 @@ namespace DW1Remake.Game
             }
 
             UpdatePartner(dir);
+        }
 
-            // exits: grid values 110..119, doors and triggers: 50..109
-            int cell = _map.CollisionAt(_player.position.x / Unit, _player.position.z / Unit);
-            if (cell == 120 && (_state.Para.Condition & PartnerCare.Poopy) != 0) { if (_armed) { _armed = false; StartDgSection(ToiletSection); } }
-            else if (cell >= 110 && cell < 120)
-            {
-                if (_armed) TryExit(cell - 110);
-            }
-            else if (cell > 50 && cell < 80)
-            {
-                // checkMapInteraction: 51..79 call their section every frame he stands there while no script runs (on arrival too); a door with no section
-                // (ours: the map change found in the script) still waits until he has stepped off
-                if (_scripts != null && _scripts.Available && ScriptRunner.HasSection(_scripts, _scripts.ScriptIdForMap(_mapId), cell)) AutoTile(cell);
-                else if (_armed) TryDoor(cell);
-            }
-            else if (cell >= 80 && cell < 110)
-            {
-                // 80..109 run on every Cross press while he stands there, so no stepping off is needed
-                if (ActionPressed()) TryDoor(cell);
-            }
-            else _armed = true;
+        // STILL OURS (user's decision 2026-11-05): while a map's 0xFE setup script only waits (0x67, no text, no choice, nothing of the boy or
+        // partner moving under the script, no script camera move), the boy may walk. On the PS1 those waits sit under the 20-frame fade-in
+        // (TWNB07: 15 + 5 frames after Betamon's glide); ours fades in faster and the boy stood frozen. No exits or triggers meanwhile.
+        bool SetupWaitOnly()
+        {
+            if (_runnerSection != 0xFE || _wait <= 0f || _waitAll || _line != null || _choiceOpts != null || _camMove || _playerScripted) return false;
+            Mover m;
+            if (_player != null && _movers.TryGetValue(_player, out m) && (m.Walking || m.Gliding || m.Looking)) return false;
+            if (_partner != null && _movers.TryGetValue(_partner, out m) && (m.Walking || m.Gliding || m.Looking)) return false;
+            return true;
         }
 
         bool _showStats;
@@ -2593,13 +2637,25 @@ namespace DW1Remake.Game
             try { LoadMap(path, exit); NotePreviousMap(fromMap, _mapId, exit); }
             catch (Exception e) { _error = e.Message; Debug.LogException(e); }
             yield return null;
-            if (!instant) for (float t = 1f; t > 0f; t -= Time.deltaTime / Mathf.Max(0.01f, FadeSeconds)) { _fade = t; yield return null; }
-            _fade = 0f;
+            // scriptTickChangeMap: changeMap (the map head script, then its section 0xFE and the arrival section) and fadeFromBlack(20) in the same
+            // frame, so the map's own script already plays while the picture fades in. TWNB07's 0xFE glides the recruited Betamon 33 m to his stall
+            // in 10 frames (6C 07): on the PS1 that ends under the fade; ours ran it after the fade, and he was seen shooting across the map.
             _changing = false;
             int arrive = _arrive; _arrive = 255;
             if (arrive == 255 && _state.SectionOnExit >= 0) { arrive = _state.SectionOnExit; _state.SectionOnExit = -1; }     // SCRIPT_OP_SECTION_ON_EXIT
             if (_intro && _mapId >= 0 && _mapNames[_mapId] == "TWNA01") FinishIntro();
             else RunMapStart(arrive);
+            if (!instant)
+            {
+                // a fade the script starts itself takes over (one fade on the PS1): stop writing ours as soon as someone else changed it
+                float wrote = _fade;
+                for (float t = 1f; t > 0f; t -= Time.deltaTime / Mathf.Max(0.01f, FadeSeconds))
+                {
+                    if (_fade != wrote) yield break;
+                    _fade = wrote = t; yield return null;
+                }
+                if (_fade == wrote) _fade = 0f;
+            }
         }
 
         int _thenSection = 255;

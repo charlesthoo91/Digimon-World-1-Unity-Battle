@@ -245,7 +245,7 @@ namespace DW1Remake.Game
             Header(z, 3, bx + 0x6E, by + 0x17);
             ScrollBarAt(z, bx + 0x88, by + 0x28, 6, 0x4A, b.Types.Count, b.Top, Visible);
             SelectionCursor(z, bx + 5, by + b.Cursor * 0x12 + 0x21, 0x80, 0x12);
-            String(z, bx + 0x2D, by + 7, side != 0 ? 0x38 : 0x3C, 0, side != 0 ? LabelRowRight : LabelRowLeft);
+            String(z, bx + 0x2D, by + 7, 0x3C, 0, side != 0 ? LabelRowRight : LabelRowLeft);      // fix (user, 2026-11-05): the game's 0x38 for "In hand" cuts its last letter
             if (Side == side) Box(z, bx + 4, by + 3, 0x8C, 0x12, 0x80, 0x80, 0xFF, 1);
             int rows = Mathf.Min(Visible, b.Types.Count - b.Top);
             for (int i = 0; i < rows; i++)

@@ -971,7 +971,7 @@ namespace DW1Remake.Game
                 case 69: TransformToBone(true); break;
                 case 71: { int s = Pop(), a = Pop(); SetVec(a, Vec(a) * s); break; }
                 case 72: { int s = Pop(), a = Pop(); if (s != 0) SetVec(a, Vec(a) / s); break; }
-                case 89: { Pop(); int o = Pop(); Pop(); bool h = Touching(Pos, Vector3.one * 50f); if (h) Hit(Pos); Put(m, o, h ? 1 : 0); break; }
+                case 89: LineHit(); break;
                 case 90:
                 {
                     // BTL_applyRadiusAttackHit: hit flag, radius; the target is hit when it is within radius + its own radius (on the ground plane)
@@ -982,9 +982,8 @@ namespace DW1Remake.Game
                     Vector3 p = Pos, q = ToGame(t.T.position);
                     float dx = p.x - q.x, dz = p.z - q.z;
                     if ((float)rad * rad + (float)t.Radius * t.Radius < dx * dx + dz * dz) break;
-                    // BTL_calculateAttackHitPosition (not decompiled): ours, the edge of the target towards the source, half its height up
-                    Vector3 s = _ctx.Src != null ? ToGame(_ctx.Src.T.position) : p, d = s - q; d.y = 0f;
-                    Vector3 at = q + (d.sqrMagnitude > 1f ? d.normalized * t.Radius : Vector3.zero); at.y = q.y - t.Height / 2;
+                    // the attack object: BTL_calculateAttackHitPosition with the target's radius, at half its height
+                    Vector3 at = _ctx.Src != null ? AttackHitPosition(t, _ctx.Src, t.Radius) : q; at.y = -t.Height / 2;
                     Put(m, o, 1); Hit(at); break;
                 }
                 case 91: BoxHit(); break;
@@ -1053,6 +1052,60 @@ namespace DW1Remake.Game
                     break;
                 }
             }
+        }
+
+        // BTL_calculateAttackHitPosition: a point on the circle of 'radius' round 'self', on the side of 'other' (heading _atan(dz, dx) + 0x800,
+        // RotMatrixZYX on (0, -height, radius)), x and z kept in 16 bits; the callers then set y themselves
+        Vector3 AttackHitPosition(EffectActor self, EffectActor other, int radius)
+        {
+            Vector3 q = ToGame(self.T.position), s = ToGame(other.T.position);
+            int vy = (Atan((int)s.z - (int)q.z, (int)s.x - (int)q.x) + 0x800) & 0xFFF;
+            Vector3 o = RotY(vy).MultiplyVector(new Vector3(0, -self.Height, radius));
+            return new Vector3((short)(int)q.x + (int)o.x, (int)o.y, (short)(int)q.z + (int)o.z);
+        }
+
+        // BTL_applyLineAttackHit: width (not read), hit flag, a vector. The line on the ground from this part to the source; the target is hit when that
+        // line touches the square of its radius (doSomethingWithSomePoints) and this part is not higher than its top less the vector's y. The attack
+        // object: BTL_calculateAttackHitPosition with its radius, at this part's height. (Every Digimon but the source is tested; ours: the target.)
+        void LineHit()
+        {
+            var m = _r.M;
+            Pop(); int o = Pop(), arg = Pop();
+            Put(m, o, 0);
+            var t = _ctx.Tgt; var s = _ctx.Src;
+            if (t == null || s == null || _r.Hit) return;
+            Vector3 p = Pos, src = ToGame(s.T.position), q = ToGame(t.T.position);
+            int r = t.Radius;
+            int[] rect = { (short)((int)q.x - r), (short)((int)q.z - r), (short)((int)q.x + r), (short)((int)q.z + r) };
+            if (LineTouchesBox(rect, (int)p.x, (int)p.z, (int)src.x, (int)src.z) != -1) return;
+            if ((int)p.y < -t.Height - I32(m, arg + 4)) return;
+            Vector3 at = AttackHitPosition(t, s, t.Radius); at.y = (int)p.y;
+            Put(m, o, 1); Hit(at);
+        }
+
+        // doSomethingWithSomePoints (effect_common.c): -1 when the line (x0, y0)-(x1, y1) touches the box {x0, y0, x1, y1}: an end inside it, the ends on
+        // opposite sides through it, or the corners not all on one side of the line; 0 when it misses
+        static int LineTouchesBox(int[] rect, int ax, int ay, int bx, int by)
+        {
+            int[] px = { ax, bx }, py = { ay, by }, code = new int[2];
+            for (int i = 0; i < 2; i++)
+            {
+                code[i] = rect[2] < px[i] ? 5 : px[i] < rect[0] ? 3 : 4;
+                if (rect[3] < py[i]) code[i] += 3; else if (py[i] < rect[1]) code[i] -= 3;
+                if (code[i] == 4) return -1;
+            }
+            if (code[0] + code[1] == 8) return -1;
+            if (code[0] / 3 == code[1] / 3) return 0;
+            if (code[0] % 3 == code[1] % 3) return 0;
+            int dx = bx - ax, dy = by - ay;
+            int[] cx = { rect[0] - ax, rect[2] - ax, rect[0] - ax, rect[2] - ax }, cy = { rect[1] - ay, rect[1] - ay, rect[3] - ay, rect[3] - ay };
+            // 32-bit products, as the game's (they may wrap round on long lines, as on the PS1)
+            unchecked
+            {
+                int cross = dx * cy[0] - dy * cx[0];
+                for (int i = 1; i < 4; i++) if (cross * (dx * cy[i] - dy * cx[i]) < 0) return -1;
+            }
+            return 0;
         }
 
         // BTL_applyBoxAttackHit

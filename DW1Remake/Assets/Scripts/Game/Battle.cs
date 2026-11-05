@@ -247,7 +247,7 @@ namespace DW1Remake.Game
             _route = route; _startTile = startTile; _boyRadius = boyRadius; _boyDone = false; _boyStart = 0f;       // a random fight: the boy goes back to the entrance he came in by
             _player = player; _playerA = playerAnim;
             Snd(0x10);
-            Active = true; Won = false; Fled = false; _phase = Phase.Notice; _time = 0f; _phaseStart = 0f; _running = false; _bannerUntil = 0f;
+            Active = true; Won = false; Fled = false; _phase = Phase.Notice; _time = 0f; _phaseStart = 0f; _running = false; _partnerHeld = false; _bannerUntil = 0f;
             _swings.Clear(); _pops.Clear(); _throws.Clear(); _runners.Clear(); ClearShots(); _startHp = Partner.Hp;
             Partner.Scale = partner.localScale; Enemy.Scale = enemy.localScale;
             enemy.rotation = _face(partner.position - enemy.position);
@@ -513,7 +513,7 @@ namespace DW1Remake.Game
             if (o == RunOrder)
             {
                 if (NoFlee) return;
-                _running = true; _runFrames = 0; _order = RunOrder; Shout("Run!");
+                _running = true; _runFrames = 0; _order = RunOrder; _partnerHeld = false; Shout("Run!");
                 // command 1: the boy's run (animation 3) starts at once, over the animation 0xE of the order
                 if (_playerA != null) _playerA.SetSlot(PlayerRunSlot);
                 return;
@@ -696,6 +696,8 @@ namespace DW1Remake.Game
             bool moving = me.A != null && (me.A.Slot == WalkSlot || me.A.Slot == RunSlot);
             float dSq = Mathf.Pow(Vector3.Distance(Flat(me.T.position), Flat(foe.T.position)) * 100f, 2f);
             float radii = (me.Info != null ? me.Info.Radius : 0) + (foe.Info != null ? foe.Info.Radius : 0);
+            // Run: BTL_handlePartnerMoveCommand comes first on every path of the partner's AI (queued move, charge, cooldown), so it is before the cooldown here
+            if (me == Partner && _running) { RunAfterBoy(me, walk); return; }
             if (me.Cool > 1)
             {
                 if (me.Style == 2) BackAway(me, foe, dt, walk); else Maintain(me, foe, dt, walk, dSq, radii, moving);
@@ -703,12 +705,6 @@ namespace DW1Remake.Game
             }
             if (me == Partner)
             {
-                if (_running)
-                {
-                    // the partner (moveRange 1) goes after the boy: ours, the battle AI's moveRange 1 is not traced
-                    if (_player != null && !MoveTo(me.T, me.A, _player.position, 4.5f, dt)) { }
-                    return;
-                }
                 if (_order == DefensiveOrder) { Hold(me, foe, dt); return; }
                 if (_order == DistanceOrder)
                 {
@@ -1292,6 +1288,7 @@ namespace DW1Remake.Game
         // self moves (BTL_applyBuffMove): Muscle Charge, War Cry, Mass Morph, Aqua Magic, Full Potential raise stats by a share of their value, up to 999
         void Buff(Fighter f, Tech t)
         {
+            if (FleeDropsHits) return;      // BTL_applyBuffMove comes after the FLEE_TIMER test
             int off = 0, def = 0, spd = 0;
             switch (t.Id)
             {
@@ -1306,9 +1303,12 @@ namespace DW1Remake.Game
             if (shown > 0) _pops.Add(new Pop { Text = "+" + shown, Pos = f.T.position + Vector3.up * 1.2f, Col = new Color(0f, 1f, 0f) });     // BTL_buffStats: colour 0xB
         }
 
+        // the hit code (battle_main.c): from FLEE_TIMER 0x13 on, every attack object is still taken off its target but does nothing (no hit, no miss, no buff)
+        bool FleeDropsHits { get { return _running && _runFrames >= 0x13; } }
+
         void Apply(Fighter a, Fighter d, Tech tech, float boost = 1f, Vector3? at = null)
         {
-            if (d.Hp <= 0) return;
+            if (d.Hp <= 0 || FleeDropsHits) return;
             Vector3 hitAt = at ?? HitPoint(d);
             // the hit code (battle_main.c), before the hit roll: a blow on the fighter whose finishing move is running ends it
             // (BTL_removeFinisherChargeup, BTL_removeFinisherAura, NO_AI_FLAG and FINISHING_ENTITY cleared, BTL_removeMoveEffect)
@@ -1878,6 +1878,30 @@ namespace DW1Remake.Game
             if (dir.sqrMagnitude > 0.0001f) { dir.Normalize(); _player.rotation = _face(dir); }
             float step = _playerA != null ? _playerA.TakeForward() : 10f * Time.deltaTime;
             if (step > 0f && dir.sqrMagnitude > 0f) OnGround(_player, dir * step);
+        }
+
+        // BTL_handlePartnerMoveCommand, order 1 (Run; the order sets moveRange 1, which this path never reads): BTL_setWalking (walk 0x23 when poisoned or
+        // at 1/5 HP or less, else run 0x24, BTL_startWalkingAnimation), then BTL_moveTowardLocation: it faces the boy at once (entityLookAtLocation) and its
+        // animation carries it; a step into something keeps its old facing (collisionGrace is not ported). Once it is off screen (entityIsOffScreen
+        // 0x140 x 0xF0) it takes animation 0x21 with animFlag 2, so its animation no longer moves it, until the fight ends.
+        bool _partnerHeld;
+
+        void RunAfterBoy(Fighter me, int walk)
+        {
+            if (_player == null) return;
+            if (_partnerHeld) { if (me.A != null) me.A.TakeForward(); return; }
+            if (me.A != null && me.A.Slot != WalkSlot && me.A.Slot != RunSlot) me.A.SetSlot(walk);
+            Vector3 to = Flat(_player.position - me.T.position);
+            Quaternion was = me.T.rotation;
+            if (to.sqrMagnitude > 0.0001f) me.T.rotation = _face(to.normalized);
+            float step = me.A != null ? me.A.TakeForward() : 0f;
+            if (step > 0f && to.sqrMagnitude > 0.0001f && !OnGround(me.T, to.normalized * step)) me.T.rotation = was;
+            Camera cam = _view != null ? _view : Camera.main;
+            if (cam != null && OffScreen(cam, me.T.position, me.Info != null ? me.Info.Radius : 0, me.Info != null ? me.Info.Height : 0))
+            {
+                _partnerHeld = true;
+                if (me.A != null && me.A.HasSlot(IdleSlot)) me.A.SetSlot(IdleSlot);
+            }
         }
 
         static Vector3 TileMid(Vector2Int t) { return new Vector3(((t.x - 50) * 100 + 50) * 0.01f, 0f, ((50 - t.y) * 100 - 50) * 0.01f); }
