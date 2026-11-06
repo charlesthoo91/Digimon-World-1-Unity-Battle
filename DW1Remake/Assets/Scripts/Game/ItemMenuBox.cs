@@ -25,6 +25,17 @@ namespace DW1Remake.Game
         public string BitsText = "";                                                      // the Bits box's line (shopkeeper text 6)
         public const int Visible = 6;
 
+        // the cards (ITEM_MENU_TYPE 3 buying, 4 selling): CARD_DATA (exe 0x8012FFD8, 66 x {Digimon, sprite, merit s16}), CARD_PRICES (0x8012FFC4, five s32 by
+        // sprite = rarity), the 12 x 12 card sprites (ETCTIM.BIN's 320,128 picture, colours (96,493), u = sprite x 12, v 64) and the Digimon names
+        public Func<int, string> DigimonName;
+        public Func<int, int> CardHeld;                  // getCardAmount
+        readonly int[] _cardDigimon = new int[66], _cardSprite = new int[66], _cardPrice = new int[5];
+        Texture2D _cardIcons;
+        public bool IsCards { get { return Type == 3 || Type == 4; } }
+        public int CardPrice(int card) { int sp = card >= 0 && card < 66 ? _cardSprite[card] : 0; return sp >= 0 && sp < 5 ? _cardPrice[sp] : 0; }
+        public int CardDigimonOf(int card) { return card >= 0 && card < 66 ? _cardDigimon[card] : 0; }
+        public int CardSprite(int card) { return card >= 0 && card < 66 ? _cardSprite[card] : 0; }
+
         ItemIcons _icons;
         List<ItemEntry> _items;
         string _ask = "", _answers = "";
@@ -51,6 +62,10 @@ namespace DW1Remake.Game
                 v._desc[t] = new RectInt(v.S16(d), v.S16(d + 2), v.S16(d + 4), v.S16(d + 6));
                 v._cursorW[t] = v.S16(v.At(CursorWidths) + t * 2);
             }
+            for (int i = 0; i < 66; i++) { v._cardDigimon[i] = v.Exe[v.At(0x8012FFD8) + 4 * i]; v._cardSprite[i] = v.Exe[v.At(0x8012FFD8) + 4 * i + 1]; }
+            for (int i = 0; i < 5; i++) v._cardPrice[i] = BitConverter.ToInt32(v.Exe, v.At(0x8012FFC4) + 4 * i);
+            TimImage cards;
+            if (disc.Exists("/ETCDAT/ETCTIM.BIN") && TimImage.TryParse(disc.ReadFile("/ETCDAT/ETCTIM.BIN"), 0x1A8A0, out cards)) v._cardIcons = cards.ToTexture(5);
             v.LoadHeaders();
             for (int i = 0; i < 5; i++) for (int k = 0; k < 3; k++) v._amountAt[i, k] = v.S16(v.At(AmountLayout) + i * 6 + k * 2);
             var lines = (confirmText ?? "").Split('\n');
@@ -104,6 +119,52 @@ namespace DW1Remake.Game
             return any;
         }
 
+        /// <summary>fillRecycleShopItemList: one row per kind in the recycle stock (RECYCLABLE_ITEMS order) with a count; the amount is the count, | 0x80
+        /// when the item's price is within the Bits. Returns whether there are rows at all.</summary>
+        public bool FillRecycle(ScriptState s)
+        {
+            Types.Clear(); Amounts.Clear(); Top = 0; Cursor = 0;
+            for (int i = 0; i < s.Recycle.Length; i++)
+            {
+                int count = s.Recycle[i];
+                if (count == 0) continue;
+                int id = s.RecyclableItems[i];
+                Types.Add(id);
+                if (id < _items.Count && _items[id].Price <= s.Money) count |= 0x80;
+                Amounts.Add(count);
+            }
+            return Types.Count != 0;
+        }
+
+        /// <summary>hasAnyCardToBuy: the shop's six cards (script state smth[0-5]; 0xFF = bought); 1 = the Bits cover its price and fewer than 9 are held.</summary>
+        public bool FillCardOffers(ScriptState s)
+        {
+            Types.Clear(); Amounts.Clear(); Top = 0; Cursor = 0;
+            bool any = false;
+            for (int i = 0; i < 6; i++)
+            {
+                int id = s.CardOffers[i];
+                Types.Add(id);
+                if (id == 0xFF) { Amounts.Add(0); continue; }
+                any = true;
+                Amounts.Add(CardPrice(id) <= s.Money && s.CardCount[id] < 9 ? 1 : 0);
+            }
+            return any;
+        }
+
+        /// <summary>shopFillSellCardList: cards 1-0x40, one row each (0xFF with 0 for a card not held); returns whether any is held.</summary>
+        public bool FillCardSell(ScriptState s)
+        {
+            Types.Clear(); Amounts.Clear(); Top = 0; Cursor = 0;
+            bool any = false;
+            for (int id = 1; id < 0x41; id++)
+            {
+                int n = s.CardCount[id];
+                if (n != 0) { Types.Add(id); Amounts.Add(n); any = true; } else { Types.Add(0xFF); Amounts.Add(0); }
+            }
+            return any;
+        }
+
         // itemMenuCursorUp / itemMenuCursorDown
         public void Up()
         {
@@ -141,11 +202,11 @@ namespace DW1Remake.Game
             return new RectInt(d.x + List.Rect.x, d.y + List.Rect.y + Cursor * 18, d.width, d.height);
         }
 
-        /// <summary>createSingleCardShopMenu for type 5: only a row whose item can be picked; the box grows out of the description place of that row.</summary>
+        /// <summary>createSingleCardShopMenu: type 5 only a row whose item can be picked, a card (3) only one that can be bought; the box grows out of the description place of that row.</summary>
         public bool Ask()
         {
             int r = Row;
-            if (r >= Types.Count || Types[r] == 0xFF || (Amounts[r] & 0x80) == 0) { Snd(0xB); return false; }
+            if (r >= Types.Count || Types[r] == 0xFF || (Type == 5 ? (Amounts[r] & 0x80) == 0 : Amounts[r] == 0)) { Snd(0xB); return false; }
             Open(Confirm, new RectInt(-0x38, -0x15, 0x70, 0x2A), RowOrigin(), 0xC1);
             Pick = 0;
             Snd(3);
@@ -160,6 +221,14 @@ namespace DW1Remake.Game
             if (r >= Types.Count || Types[r] == 0xFF) { Snd(0xB); return false; }
             ShopItem = Types[r];
             int amount = Amounts[r];
+            if (Type == 4)
+            {
+                // createItemMenuAmountBox, a card (ITEM_MENU_TYPE >= 3): half its price, as many as are held
+                ShopPrice = CardPrice(ShopItem) >> 1; MaxAmount = amount; ShopAmount = 1;
+                Open(Amount, new RectInt(-0x41, -0x2A, 0x82, 0x53), RowOrigin(), 0xC1);
+                Snd(3);
+                return true;
+            }
             ShopPrice = _items[ShopItem].Price;
             if (Type == 1)
             {
@@ -169,8 +238,9 @@ namespace DW1Remake.Game
             }
             else
             {
-                if (amount == 0) { Snd(0xB); return false; }
-                MaxAmount = 0x63;
+                // type 0: any row with a stock flag; type 2 (the recycle shop): only an affordable one, at most as many as the stock holds
+                if (Type == 0) { if (amount == 0) { Snd(0xB); return false; } MaxAmount = 0x63; }
+                else { if ((amount & 0x80) == 0) { Snd(0xB); return false; } MaxAmount = amount & 0x7F; }
                 int n = 0x63 - held;
                 if (n < MaxAmount) MaxAmount = n;
                 if (MaxAmount * ShopPrice > money) MaxAmount = ShopPrice > 0 ? money / ShopPrice : MaxAmount;
@@ -192,7 +262,7 @@ namespace DW1Remake.Game
         public bool OpenDesc()
         {
             int r = Row;
-            if (r >= Types.Count || Types[r] == 0xFF) return false;
+            if (IsCards || r >= Types.Count || Types[r] == 0xFF) return false;
             ShopItem = Types[r];
             Open(Desc, new RectInt(-0x84, -0x0B, 0x108, 0x16), RowOrigin(), 0xC1);
             return true;
@@ -231,6 +301,16 @@ namespace DW1Remake.Game
         // type 1: 0x16, half the price (or four dashes 0x817C if it cannot be sold), 0x0F, the amount in 2 places; type 5: 0x1C, the amount
         string RowText(int t, int a)
         {
+            if (IsCards)
+            {
+                // calculateCardMenuStrings (US): colour 1 (buying: 3 if it cannot be bought, 7 for a card not held yet), the Digimon's name, 0x17, 0x0F;
+                // buying: the price in 4 places; selling: half the price in 4, 0x0F, the amount in 2
+                int ink = Type == 3 ? (a != 0 ? (CardHeld != null && CardHeld(t) == 0 ? 7 : 1) : 3) : 1;
+                var cb = new System.Text.StringBuilder(Ink(ink)).Append(DigimonName != null ? DigimonName(_cardDigimon[t]) : "").Append(Tab17).Append(Gap);
+                int price = CardPrice(t);
+                if (Type == 3) return cb.Append(Digits(price, 4)).ToString();
+                return cb.Append(Digits(price >> 1, 4)).Append(Gap).Append(Digits(a, 2)).ToString();
+            }
             bool on = Type == 0 ? a != 0 : (a & 0x80) != 0;
             var sb = new System.Text.StringBuilder(Ink(on ? 1 : 3)).Append(_items[t].Name).Append(Gap);
             if (Type == 5) return sb.Append(Tab1C).Append(Digits(a & 0x7F, 2)).ToString();
@@ -238,14 +318,16 @@ namespace DW1Remake.Game
             if (Type == 1 && !on) sb.Append(new string((char)0x817C, 4)).Append(Gap);
             else sb.Append(Digits(Type == 1 ? _items[t].Price >> 1 : _items[t].Price, 4)).Append(Gap);
             if (Type == 1) sb.Append(Digits(a & 0x7F, 2));
+            else if (Type == 2) sb.Append(Tab1C).Append(Digits(a & 0x7F, 2));      // type 2 (recycle): 0x1C, the stock in 2 places
             return sb.ToString();
         }
 
         // updateItemMenuAmountBoxString (US): the name, 0x18, the price in 5 places, 0x19, the amount in 2, 0x1A, the total in 6 (at most 999999)
         string AmountText()
         {
-            if (ShopItem < 0 || ShopItem >= _items.Count) return "";
             int total = Mathf.Min(ShopPrice * ShopAmount, 999999);
+            if (Type == 4) return (DigimonName != null ? DigimonName(_cardDigimon[ShopItem]) : "") + Tab18 + Digits(ShopPrice, 5) + Tab19 + Digits(ShopAmount, 2) + Tab1A + Digits(total, 6);
+            if (ShopItem < 0 || ShopItem >= _items.Count) return "";
             return _items[ShopItem].Name + Tab18 + Digits(ShopPrice, 5) + Tab19 + Digits(ShopAmount, 2) + Tab1A + Digits(total, 6);
         }
 
@@ -254,7 +336,7 @@ namespace DW1Remake.Game
             var key = new System.Text.StringBuilder().Append(Type).Append(':').Append(Top).Append(':');
             for (int i = 0; i < Types.Count; i++) key.Append(Types[i]).Append(',').Append(Amounts[i]).Append(';');
             string amountText = Amount.State != 0 ? AmountText() : "";
-            string desc = Desc.State != 0 && ShopItem >= 0 && ShopItem < _items.Count ? _items[ShopItem].Description : "";
+            string desc = Desc.State != 0 && !IsCards && ShopItem >= 0 && ShopItem < _items.Count ? _items[ShopItem].Description : "";
             key.Append('|').Append(amountText).Append('|').Append(desc).Append('|').Append(BitsText);
             BuildPage(key.ToString(), px =>
             {
@@ -263,7 +345,7 @@ namespace DW1Remake.Game
                 for (int i = 0; i < Visible && Top + i < Types.Count; i++)
                 {
                     int t = Types[Top + i];
-                    if (t == 0xFF || t >= _items.Count) continue;
+                    if (t == 0xFF || (!IsCards && t >= _items.Count)) continue;
                     DrawCoded(px, RowText(t, Amounts[Top + i]), 0, i * 12, white);
                 }
                 Font.Render(_ask, px, 256, 256, 0, 96, white);
@@ -283,7 +365,7 @@ namespace DW1Remake.Game
             else
             {
                 Header(z, 1, bx + 0x80, by + 5);
-                if (Type != 0) Header(z, 3, bx + 0xB6, by + 5);
+                if (Type != 0 && Type != 3) Header(z, 3, bx + 0xB6, by + 5);      // the COUNT header: not when buying (items or cards)
             }
             ScrollBar(z, bx, by);
             SelectionCursor(z, bx + 5, by + Cursor * 0x12 + 0x11, _cursorW[Type & 7], 0x12);
@@ -291,8 +373,18 @@ namespace DW1Remake.Game
             for (int i = 0; i < rows; i++)
             {
                 int t = Types[Top + i];
-                if (t == 0xFF || _icons == null) continue;
+                if (t == 0xFF) continue;
                 int x = bx + 8, y = by + 0x12 + i * 0x12;
+                if (IsCards)
+                {
+                    // renderCardSprite at (x + 2, y + 2): 12 x 12 of sprite (rarity) number: u = sprite x 12, v 64 of the 256 x 128 picture
+                    if (_cardIcons == null) continue;
+                    var tex = _cardIcons; int sp = CardSprite(t);
+                    var cuv = new Rect(sp * 12 / 256f, (128 - 64 - 12) / 128f, 12 / 256f, 12 / 128f);
+                    Add(z, () => GUI.DrawTextureWithTexCoords(new Rect(X(x + 2), Y(y + 2), 12 * 4.42f, 12 * 4.42f), tex, cuv));
+                    continue;
+                }
+                if (_icons == null) continue;
                 var uv = _icons.Uv(t); var sheet = _icons.Sheet;
                 Add(z, () => GUI.DrawTextureWithTexCoords(new Rect(X(x), Y(y), 16 * 4.42f, 16 * 4.42f), sheet, uv));
             }
@@ -300,10 +392,10 @@ namespace DW1Remake.Game
                 if (Types[Top + i] != 0xFF) String(z, bx + 0x1A, by + 0x13 + i * 0x12, 0xFF, 0, i * 12);
         }
 
-        // renderItemMenuScrollBar; the bar's place is the item box's rect (allocateItemMenuBox: x 0xB2 buying, 0xD2 selling, 0x9A type 5; y 0x18, 6 x 0x5A)
+        // renderItemMenuScrollBar; the bar's place is the item box's rect (allocateItemMenuBox: x 0xB2 buying (types 0, 3), 0xD2 selling (1, 2, 4), 0x9A type 5; y 0x18, 6 x 0x5A)
         void ScrollBar(int z, int bx, int by)
         {
-            ScrollBarAt(z, (Type == 0 ? 0xB2 : Type == 1 ? 0xD2 : 0x9A) + bx, 0x18 + by, 6, 0x5A, Types.Count, Top, Visible);
+            ScrollBarAt(z, (Type == 0 || Type == 3 ? 0xB2 : Type == 1 || Type == 2 || Type == 4 ? 0xD2 : 0x9A) + bx, 0x18 + by, 6, 0x5A, Types.Count, Top, Visible);
         }
 
         // renderSingleCardShop: CONFIRM_BOX_LAYOUT (US): "Is it OK?" at (4, 2) 0x60 wide; "Yes" (0, 12) at (0x0E, 0x12); "No" (0x24, 12) at (0x44, 0x12)

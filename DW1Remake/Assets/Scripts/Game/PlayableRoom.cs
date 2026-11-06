@@ -204,7 +204,8 @@ namespace DW1Remake.Game
             }
             _state.Raised[PartnerType] = true;
             _care = new PartnerCare(_state, t => DigimonStatsCatalog.RaiseOf(_disc, t), c => DigimonStatsCatalog.SleepOf(_disc, c), t => DigimonStatsCatalog.Get(_disc, t).Level);
-            _care.OnNewDay = () => _dayCount++;
+            _state.DailyTrigger(n => UnityEngine.Random.Range(0, n));      // a game starts with a day's cards
+            _care.OnNewDay = () => { _dayCount++; _state.DailyTrigger(n => UnityEngine.Random.Range(0, n)); };      // dailyPStatTrigger
             _care.EvoItemTarget = i => DigimonStatsCatalog.EvoItemTarget(_disc, i);
             _care.ReqOf = t => DigimonStatsCatalog.ReqOf(_disc, t);
             _care.GainOf = t => DigimonStatsCatalog.GainOf(_disc, t);
@@ -247,6 +248,7 @@ namespace DW1Remake.Game
             {
                 byte[] exe = _disc.ReadFile("/SLUS_010.32"); uint load = System.BitConverter.ToUInt32(exe, 0x18);
                 for (int i = 0; i < 4; i++) PartnerCare.HealingValues[i] = System.BitConverter.ToInt16(exe, (int)(0x8013435C - load + 0x800) + 2 * i);   // HEALING_VALUES
+                System.Array.Copy(exe, (int)(0x8012FE78 - load + 0x800), _state.RecyclableItems, 0, 0x4E);      // RECYCLABLE_ITEMS
             }
             _menus.Disc = _disc;
             _menus.NeedBoyPicture = BuildBoyPicture;
@@ -474,12 +476,14 @@ namespace DW1Remake.Game
                     }
                     else if (a.Frames == 0x2D || a.Frames == 0x2E) { StartCoroutine(WhiteFade(a.Frames == 0x2D, _state.Vars[0xFE])); }   // fadeToWhite / fadeFromWhite, over variable 254 frames
                     else if (a.Frames == 0x30) { _line = null; _choiceOpts = null; StartCoroutine(SaveMachine()); return true; }   // openSaveMachine; tickSaveMachine until the menu closes
+                    else if (a.Frames == 0x0E) { _line = null; _choiceOpts = null; StartCoroutine(CardShop(_state.Vars[0xFE])); return true; }        // rollCardPack / openBuyCardMenu / openSellCardMenu
+                    else if (a.Frames == 0x16) { _line = null; _choiceOpts = null; StartCoroutine(CheckMedals()); return true; }                       // scriptCheckTournamentMedal
                     else if (a.Frames == 0x0A) { _line = null; _choiceOpts = null; StartCoroutine(BirdraTransport()); return true; }   // tickBirdraTransport
                     else if (a.Frames == 0x02) { _line = null; _choiceOpts = null; StartCoroutine(MojyamonTrade()); return true; }     // openMojyamonShop
                     else if (a.Frames == 0x0B) { _line = null; _choiceOpts = null; StartCoroutine(ItemKeeper()); return true; }        // tickItemKeeper
                     else if (a.Frames == 0x03 || a.Frames == 0x04 || a.Frames == 0x05 || a.Frames == 0x11) { }                    // the game does nothing for these
                     else if (EventBuiltin(a.Frames, out evWait)) return evWait;                                                      // the story events (PlayableRoomEvents)
-                    else if (a.Frames == 8 && _state.GetFlag(3)) Debug.Log("[script] built-in 0x64 08 with flag 3 = the recycle shop (openRecycleShop): not ported");
+                    else if (a.Frames == 8 && _state.GetFlag(3)) { _line = null; _choiceOpts = null; StartCoroutine(RecycleShop(_state.Vars[0xFE])); return true; }   // openRecycleShop
                     else if (a.Frames == 0x0F) { var ib = ItemBox(); if (ib != null) ib.OpenBits(DialogueOrigin(0xFD), ShopBitsText(ShopSection(_state.Vars[0xFE]))); }   // createShopBitsBox(1)
                     else if (a.Frames == 8)     // openShop: the script switched on flag 0x180 + item for each item it sells; variable 254 = the shopkeeper
                     {

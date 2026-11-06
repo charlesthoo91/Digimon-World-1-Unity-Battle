@@ -16,7 +16,7 @@ namespace DW1Remake.Game
         public float X, Y, Z, Clock;
         public int Day, PartnerType;
         public string PlayerName, PartnerName;
-        public byte[] Vars, Flags, Bag, Stored, Slots;
+        public byte[] Vars, Flags, Bag, Stored, Slots, Recycle, CardCount, CardOffers;
         public int[] Stats;
         public bool[] Techs, Cards, Raised;
         public List<int> TechSet;
@@ -38,6 +38,7 @@ namespace DW1Remake.Game
             };
             d.Registry = s.Registry;
             d.Stored = (byte[])s.Stored.Clone();
+            d.Recycle = (byte[])s.Recycle.Clone(); d.CardCount = (byte[])s.CardCount.Clone(); d.CardOffers = (byte[])s.CardOffers.Clone();
             d.Slots = (byte[])s.Slots.Clone();
             d.Stats = new int[s.Stats.Length];
             for (int i = 0; i < d.Stats.Length; i++) d.Stats[i] = s.Stats[i];
@@ -50,6 +51,9 @@ namespace DW1Remake.Game
             Array.Copy(Flags, s.Flags, Math.Min(Flags.Length, s.Flags.Length));
             Array.Copy(Bag, s.Bag, Math.Min(Bag.Length, s.Bag.Length));
             if (Stored != null) Array.Copy(Stored, s.Stored, Math.Min(Stored.Length, s.Stored.Length));
+            if (Recycle != null) Array.Copy(Recycle, s.Recycle, Math.Min(Recycle.Length, s.Recycle.Length));
+            if (CardCount != null) Array.Copy(CardCount, s.CardCount, Math.Min(CardCount.Length, s.CardCount.Length));
+            if (CardOffers != null) Array.Copy(CardOffers, s.CardOffers, Math.Min(CardOffers.Length, s.CardOffers.Length));
             for (int i = 0; i < s.Slots.Length; i++) s.Slots[i] = Slots != null && i < Slots.Length ? Slots[i] : (byte)0xFF;
             Array.Copy(Techs, s.Techs, Math.Min(Techs.Length, s.Techs.Length));
             Array.Copy(Cards, s.Cards, Math.Min(Cards.Length, s.Cards.Length));

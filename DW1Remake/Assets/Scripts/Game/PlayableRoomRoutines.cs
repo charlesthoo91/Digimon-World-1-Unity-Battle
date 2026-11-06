@@ -73,7 +73,7 @@ namespace DW1Remake.Game
             if (_itemBox == null && _itemCatalog != null)
             {
                 _itemBox = ItemMenuView.Load(_disc, Battle.StatFont, _menus != null ? _menus.Icons : null, _itemCatalog, HeadText(0x4D8, 0));
-                if (_itemBox != null) _itemBox.Sound = Snd;
+                if (_itemBox != null) { _itemBox.Sound = Snd; _itemBox.DigimonName = t => _state.SpeciesNameOf != null ? _state.SpeciesNameOf(t) : ""; _itemBox.CardHeld = c => _state.CardCount[c]; }
             }
             return _itemBox;
         }
@@ -153,25 +153,7 @@ namespace DW1Remake.Game
                 v.Open(v.List, v.ListRect, from ?? new RectInt(-5, -5, 10, 10), 0xF1);
                 _line = HeadText(sec, pick == 0 ? 8 : 9, true); _speaker = npc; _choiceOpts = null;
                 int next = 0;
-                while (next == 0)
-                {
-                    yield return null;
-                    if (v.Desc.State != 0)
-                    {
-                        // tickItemMenuDescriptionBox: Cross, Triangle or Start closes it
-                        if (v.Desc.State == 1 && (ShopCross() || GameMenus.TriangleOnly() || GameMenus.StartKey())) { v.Close(v.Desc); Snd(3); }
-                        continue;
-                    }
-                    if (v.Amount.State != 0) { if (v.Amount.State == 1) next = TickShopAmount(v, sec, npc); continue; }
-                    if (v.List.State != 1) continue;
-                    // tickItemMenu: Cross the amount box, Triangle back (state 8), up / down (R1: to the first / last row), Start the description
-                    if (GameMenus.StartKey()) { if (v.OpenDesc()) Snd(3); continue; }
-                    if (ShopCross()) { int r = v.Row; v.OpenAmount(_state.Money, r < v.Types.Count && v.Types[r] != 0xFF ? _state.Bag[v.Types[r]] : 0); continue; }
-                    if (GameMenus.TriangleOnly()) { next = 8; Snd(4); continue; }
-                    int step = GameMenus.RepeatStep();
-                    if (step < 0) { if (GameMenus.WalkHeld()) v.ToTop(); else v.Up(); }
-                    else if (step > 0) { if (GameMenus.WalkHeld()) v.ToBottom(); else v.Down(); }
-                }
+                yield return ShopList(v, sec, npc, r => next = r);
                 // state 7 (a sale: "Thanks!", or the baby discount line) / 8 ("Have anything else?"); then the choice again
                 v.Close(v.List);
                 _line = null;
@@ -182,6 +164,205 @@ namespace DW1Remake.Game
             v.Close(v.Bits);
             yield return HeadSay(sec, dealt ? 4 : 5, npc);
             ShopEnd();
+        }
+
+        // tickItemMenu with its amount and description boxes, until a sale (7) or Triangle (8): the loop the shop and the recycle shop share
+        IEnumerator ShopList(ItemMenuView v, int sec, int npc, System.Action<int> result)
+        {
+            int next = 0;
+            while (next == 0)
+            {
+                yield return null;
+                if (v.Desc.State != 0)
+                {
+                    // tickItemMenuDescriptionBox: Cross, Triangle or Start closes it
+                    if (v.Desc.State == 1 && (ShopCross() || GameMenus.TriangleOnly() || GameMenus.StartKey())) { v.Close(v.Desc); Snd(3); }
+                    continue;
+                }
+                if (v.Amount.State != 0) { if (v.Amount.State == 1) next = TickShopAmount(v, sec, npc); continue; }
+                if (v.List.State != 1) continue;
+                // tickItemMenu: Cross the amount box, Triangle back (state 8), up / down (R1: to the first / last row), Start the description
+                if (GameMenus.StartKey()) { if (v.OpenDesc()) Snd(3); continue; }
+                if (ShopCross()) { int r = v.Row; v.OpenAmount(_state.Money, r < v.Types.Count && v.Types[r] != 0xFF ? _state.Bag[v.Types[r]] : 0); continue; }
+                if (GameMenus.TriangleOnly()) { next = 8; Snd(4); continue; }
+                int step = GameMenus.RepeatStep();
+                if (step < 0) { if (GameMenus.WalkHeld()) v.ToTop(); else v.Up(); }
+                else if (step > 0) { if (GameMenus.WalkHeld()) v.ToBottom(); else v.Down(); }
+            }
+            result(next);
+        }
+
+        // openRecycleShop (built-in 8 with flag 3 on, states 0-9): what the thieves took (handleItemLoss) sold back at full price. Variable 254 = the
+        // keeper. Only "Buy / See ya": state 3 asks (text 3), 4 the list (type 2, text 8), 7 after a sale (text 10, or 0x0D for a baby), 8 Triangle
+        // (text 0x0B), 9 sold out (0x0C), 5 / 6 the end (text 4 after a sale, else 5).
+        IEnumerator RecycleShop(int npc)
+        {
+            _routineOn = true;
+            var v = ItemBox();
+            int sec = ShopSection(npc);
+            bool any = v != null && v.FillRecycle(_state), dealt = false;
+            if (!any)
+            {
+                yield return HeadSay(sec, 1, npc);              // "I don't have anything to sell."
+                ShopEnd(); yield break;
+            }
+            yield return HeadSay(sec, 0, npc);
+            int choice = 0;
+            while (true)
+            {
+                v.OpenBits(DialogueOrigin(0xFD), ShopBitsText(sec));
+                int pick = 0;
+                yield return HeadAsk(sec, 3, 2, p => pick = p, 0xFD, choice);
+                choice = pick;
+                if (pick == 1) break;
+                v.Type = 2;
+                v.FillRecycle(_state);
+                RectInt? from = DialogueOrigin(npc);
+                v.Open(v.List, v.ListRect, from ?? new RectInt(-5, -5, 10, 10), 0xF1);
+                _line = HeadText(sec, 8, true); _speaker = npc; _choiceOpts = null;
+                int next = 0;
+                yield return ShopList(v, sec, npc, r => next = r);
+                v.Close(v.List);
+                _line = null;
+                if (next == 8) { yield return HeadSay(sec, 0x0B, npc); continue; }
+                dealt = true;
+                yield return HeadSay(sec, PartnerIsBaby() ? 0x0D : 0x0A, npc);
+                if (!v.FillRecycle(_state)) { yield return HeadSay(sec, 0x0C, npc); break; }     // state 9: nothing left to buy
+            }
+            v.Close(v.Bits);
+            yield return HeadSay(sec, dealt ? 4 : 5, npc);
+            ShopEnd();
+        }
+
+        // ---- the card shop (built-in 0x0E; script_menu.c rollCardPack, openBuyCardMenu, openSellCardMenu; texts DG0 0x4D3). Variable 254 = the keeper.
+        // Flags 3 and 4 both off: a pack of three cards. 3 off, 4 on: buy one of the six cards of the day.
+        // 3 on: sell cards (half the price, any number).
+        IEnumerator CardShop(int npc)
+        {
+            _routineOn = true;
+            const int Sec = 0x4D3;
+            var v = ItemBox();
+            if (v == null) { ShopEnd(); yield break; }
+            if (!_state.GetFlag(3) && !_state.GetFlag(4))
+            {
+                // rollCardPack: three cards, each with its line (new: by rarity; held: 5, or 6 from six held) and a Cross after it
+                for (int k = 0; k < 3; k++) yield return HeadSay(Sec, TakeCard(v, RollCard(v)), 0xFD);
+                ShopEnd(); yield break;
+            }
+            int keeper = npc;
+            if (!_state.GetFlag(3))
+            {
+                // openBuyCardMenu: nothing to buy = text 1 and out; else the list (type 3) grows out of the keeper, text 0 stays up
+                v.Type = 3;
+                if (!v.FillCardOffers(_state)) { yield return HeadSay(Sec, 1, keeper); ShopEnd(); yield break; }
+            }
+            else
+            {
+                v.Type = 4;
+                v.FillCardSell(_state);
+            }
+            bool buying = v.Type == 3;
+            v.Open(v.List, v.ListRect, DialogueOrigin(buying ? keeper : 0xFD) ?? new RectInt(-5, -5, 10, 10), 0xF1);
+            _line = HeadText(Sec, buying ? 0 : 8, true); _speaker = keeper; _choiceOpts = null;
+            if (buying)
+            {
+                bool done = false;
+                while (!done)
+                {
+                    yield return null;
+                    if (v.Confirm.State == 1)
+                    {
+                        // tickSingleCardShop: left Yes, right No, Cross, Triangle shuts it
+                        if (GameMenus.CancelKey()) { v.Close(v.Confirm); Snd(4); continue; }
+                        int side = GameMenus.SideStep();
+                        if (side < 0) { v.Pick = 0; Snd(2); continue; }
+                        if (side > 0) { v.Pick = 1; Snd(2); continue; }
+                        if (ShopCross())
+                        {
+                            v.Close(v.Confirm);
+                            if (v.Pick == 0)
+                            {
+                                int card = v.Types[v.Row];
+                                _state.CardCount[card]++; _state.Cards[card] = true;
+                                _state.Money -= v.CardPrice(card);
+                                _state.CardOffers[v.Cursor] = 0xFF;          // smth[box->cursor] = 0xFF
+                                v.BitsText = ShopBitsText(ShopSection(keeper));
+                                ShopSaleSound();
+                                done = true;
+                            }
+                            else Snd(4);
+                        }
+                        continue;
+                    }
+                    if (v.Confirm.State != 0 || v.List.State != 1) continue;
+                    if (ShopCross()) { v.Ask(); continue; }
+                    if (GameMenus.TriangleOnly()) { Snd(4); done = true; continue; }
+                    int step = GameMenus.RepeatStep();
+                    if (step < 0) { if (GameMenus.WalkHeld()) v.ToTop(); else v.Up(); }
+                    else if (step > 0) { if (GameMenus.WalkHeld()) v.ToBottom(); else v.Down(); }
+                }
+            }
+            else
+            {
+                int next = 0;
+                yield return ShopList(v, Sec, keeper, r => next = r);
+                v.BitsText = ShopBitsText(ShopSection(keeper));
+            }
+            v.Close(v.List);
+            _line = null;
+            ShopEnd();
+        }
+
+        // rollCard: a rarity (1% 0, 4% 1, 15% 2, 30% 3, 50% 4), then one of the cards of that rarity
+        int RollCard(ItemMenuView v)
+        {
+            int r = Random.Range(0, 100), rarity = r == 0 ? 0 : r < 5 ? 1 : r < 0x14 ? 2 : r < 0x32 ? 3 : 4;
+            var pool = new List<int>();
+            for (int i = 0; i < 0x42; i++) if (v.CardSprite(i) == rarity) pool.Add(i);
+            return pool[Random.Range(0, pool.Count)];
+        }
+
+        // showCardTextbox: the card goes into the collection (up to 9 of it) and its line is chosen: new = by rarity (2 / 3 / 4), held = 5, six or more = 6;
+        // variable 249 = the card's Digimon for the text
+        int TakeCard(ItemMenuView v, int card)
+        {
+            int n = _state.CardCount[card], sp = v.CardSprite(card);
+            int line = n == 0 ? (sp == 0 ? 2 : sp == 1 ? 3 : 4) : n < 6 ? 5 : 6;
+            if (n < 9) { _state.CardCount[card]++; _state.Cards[card] = true; }
+            _state.Vars[249] = (byte)v.CardDigimonOf(card);
+            return line;
+        }
+
+        // scriptCheckTournamentMedal (built-in 0x16; tournament.c): one medal at a time, while one is earned and not yet held: the six cups of a group, 100
+        // tournament wins, or every card with the game beaten once. The text is DG0 0x4DB, line = the medal's number in the check.
+        IEnumerator CheckMedals()
+        {
+            _routineOn = true;
+            int[] ids = { 0, 1, 2, 3, 4, 0x0C };
+            while (true)
+            {
+                int result = MedalEarned();
+                if (result < 0 || _state.GetFlag(0x16C + ids[result])) break;
+                _state.SetFlag(0x16C + ids[result], true);          // unlockMedal: trigger 0x16C + medal
+                yield return HeadSay(0x4DB, result, 0xFF);
+            }
+            ShopEnd();
+        }
+
+        int MedalEarned()
+        {
+            bool all = true;
+            for (int i = 0; i < 6; i++) if (!_state.GetFlag(15 + i)) { all = false; break; }
+            if (all) return 0;
+            all = true; for (int i = 0; i < 5; i++) if (!_state.GetFlag(21 + i)) { all = false; break; }
+            if (all) return 1;
+            all = true; for (int i = 0; i < 7; i++) if (!_state.GetFlag(26 + i)) { all = false; break; }
+            if (all) return 2;
+            all = true; for (int i = 0; i < 4; i++) if (!_state.GetFlag(33 + i)) { all = false; break; }
+            if (all) return 3;
+            if (_state.Stats[18] >= 100) return 4;
+            for (int i = 0; i < 0x42; i++) if (_state.CardCount[i] == 0) return -1;
+            return _state.GetFlag(50) ? 5 : -1;
         }
 
         void ShopEnd()
@@ -219,12 +400,21 @@ namespace DW1Remake.Game
                 _state.RemoveItem(v.ShopItem, v.ShopAmount);
                 owner = npc;
             }
+            else if (v.Type == 4)
+            {
+                // a card sold (tickItemMenuAmountBox, ITEM_MENU_TYPE >= 3): half the price each; the Bits stop at 999999
+                _state.Money = Mathf.Min(_state.Money + v.ShopAmount * v.ShopPrice, 999999);
+                int left = _state.CardCount[v.ShopItem] - v.ShopAmount;
+                _state.CardCount[v.ShopItem] = (byte)Mathf.Max(0, left); _state.Cards[v.ShopItem] = left > 0;
+                owner = npc;
+            }
             else
             {
                 int unit = v.ShopPrice;
                 if (PartnerIsBaby()) { unit = unit * 90 / 100; _state.ShopVariable = (short)(v.ShopAmount * (v.ShopPrice - unit)); }
                 _state.Money -= v.ShopAmount * unit;
                 _state.AddItem(v.ShopItem, v.ShopAmount);
+                if (v.Type == 2) { int rid = _state.RecycleId(v.ShopItem); if (rid != 0xFF) _state.Recycle[rid] = (byte)System.Math.Max(0, _state.Recycle[rid] - v.ShopAmount); }     // smth[getRecycleId + 6] -= SHOP_AMOUNT
                 owner = 0xFD;
             }
             _state.SyncSlots();

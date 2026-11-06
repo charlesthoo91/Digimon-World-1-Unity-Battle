@@ -56,6 +56,25 @@ namespace DW1Remake.Formats
         public int Money;                         // bits; 0x2A adds, 0x2B takes away (the opening takes 50000 from 0, so the game starts at 0)
         public byte[] Bag = new byte[128];        // how many of each item the player carries (item number = position in the game's item list)
         public byte[] Stored = new byte[128];     // the Item Keeper's counts (script state smth[0x54 + item], tickItemKeeper)
+        public byte[] Recycle = new byte[0x4E];   // the recycle shop's stock (script state smth[6 + n]: how many of RECYCLABLE_ITEMS[n]; handleItemLoss fills it)
+        public byte[] RecyclableItems = new byte[0x4E];   // RECYCLABLE_ITEMS (exe 0x8012FE78), set by the room
+        public byte[] CardOffers = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };   // the card shop's six cards (script state smth[0-5], the daily roll)
+        /// <summary>dailyPStatTrigger (script_common.c), at every new day and when a game starts: the card shop gets six cards (1-0x40 except 4). The game's
+        /// test for a repeat compares with the slot being filled (still 0xFF), not the earlier ones, so a card can come twice. Variables 0x1C-0x1F count up
+        /// (unless 0xFF) and variable 2 loses its top bit.</summary>
+        public void DailyTrigger(Func<int, int> random)
+        {
+            for (int i = 0; i < 6; i++) CardOffers[i] = 0xFF;
+            for (int i = 0; i < 6; i++)
+            {
+                int r;
+                do { r = random(0x40) + 1; } while (r == 4 || r == CardOffers[i]);
+                CardOffers[i] = (byte)r;
+            }
+            for (int i = 0x1C; i < 0x20; i++) if (Vars[i] != 0xFF) Vars[i]++;
+            if (Vars[2] != 0xFF) Vars[2] &= 0x7F;
+        }
+        public int RecycleId(int item) { for (int i = 0; i < RecyclableItems.Length; i++) if (RecyclableItems[i] == item) return i; return 0xFF; }    // getRecycleId
         public int BagKinds() { int n = 0; foreach (var b in Bag) if (b > 0) n++; return n; }
         /// <summary>giveItem(type, 0): whether n more of this item would fit, without adding them.</summary>
         public bool CanAddItem(int id, int n = 1)

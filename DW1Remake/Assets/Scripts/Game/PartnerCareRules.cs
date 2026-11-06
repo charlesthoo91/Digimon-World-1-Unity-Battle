@@ -881,13 +881,27 @@ namespace DW1Remake.Game
             foreach (int m in InfoOf(babyType).RawMoves) if (m != 0xFF) { _s.TechSet.Add(m); break; }
         }
 
-        /// <summary>handleItemLoss: after a lost fight 30% of the kinds in the bag are gone.</summary>
+        /// <summary>handleItemLoss (script_common.c): after a lost fight 30% of the bag's filled slots (rounded down) are emptied, each pick random among
+        /// the slots still filled. A recyclable item's whole stack goes into the recycle shop's stock (up to 99, "Stolen objects may be sold somewhere");
+        /// the others are just gone. Variable 200 = how many were taken (the scripts' text).</summary>
         public void ItemLoss()
         {
-            var kinds = new List<int>();
-            for (int i = 0; i < _s.Bag.Length; i++) if (_s.Bag[i] > 0) kinds.Add(i);
-            int lose = kinds.Count * 30 / 100;
-            for (int n = 0; n < lose; n++) { int k = RandomLimit(kinds.Count); _s.Bag[kinds[k]] = 0; kinds.RemoveAt(k); }
+            _s.SyncSlots();
+            int size = System.Math.Min(_s.Slots.Length, _s.ItemSlots > 0 ? _s.ItemSlots : 10);
+            int count = 0;
+            for (int k = 0; k < size; k++) if (_s.Slots[k] != 0xFF) count++;
+            int lose = count * 30 / 100;
+            _s.Vars[0xC8] = (byte)lose;
+            for (int n = 0; n < lose; n++)
+            {
+                var pool = new List<int>();
+                for (int k = 0; k < size; k++) if (_s.Slots[k] != 0xFF) pool.Add(k);
+                int slot = pool[RandomLimit(pool.Count)], type = _s.Slots[slot];
+                int rid = _s.RecycleId(type);
+                if (rid != 0xFF) { int stock = _s.Recycle[rid] + _s.Bag[type]; _s.Recycle[rid] = (byte)(stock >= 0x64 ? 0x63 : stock); }
+                _s.RemoveItem(type, 0x63);
+                _s.SyncSlots();
+            }
         }
     }
 }

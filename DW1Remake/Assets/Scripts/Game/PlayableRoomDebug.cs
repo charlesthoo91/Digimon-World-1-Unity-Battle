@@ -188,6 +188,7 @@ namespace DW1Remake.Game
             if (GUILayout.Button("Learn every technique")) { for (int i = 0; i < 58; i++) _state.Techs[i] = true; }
             if (GUILayout.Button("Raise every Digimon (Chart page)")) { for (int i = 0; i < _state.Raised.Length; i++) _state.Raised[i] = true; }
             // getCardAmount reads the count (0-9) of each of the 66 cards; the old button only set the "seen" list, so the Card page stayed empty
+            if (GUILayout.Button("Recycle shop: stock every item (5 each)")) { for (int i = 0; i < _state.Recycle.Length; i++) _state.Recycle[i] = 5; Say("The recycle shop has 5 of everything."); }
             if (GUILayout.Button("Every card (1 of each of the 66)")) { for (int i = 0; i < 66; i++) { if (_state.CardCount[i] == 0) _state.CardCount[i] = 1; _state.Cards[i] = true; } Say("1 of every card."); }
             // unlockMedal: trigger 0x16C + medal (the Medals page shows 15)
             if (GUILayout.Button("Every medal (flags 0x16C-0x17A)")) { for (int i = 0; i < 15; i++) _state.SetFlag(0x16C + i, true); Say("Every medal."); }
