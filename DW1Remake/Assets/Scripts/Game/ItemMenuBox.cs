@@ -318,7 +318,8 @@ namespace DW1Remake.Game
             if (Type == 1 && !on) sb.Append(new string((char)0x817C, 4)).Append(Gap);
             else sb.Append(Digits(Type == 1 ? _items[t].Price >> 1 : _items[t].Price, 4)).Append(Gap);
             if (Type == 1) sb.Append(Digits(a & 0x7F, 2));
-            else if (Type == 2) sb.Append(Tab1C).Append(Digits(a & 0x7F, 2));      // type 2 (recycle): 0x1C, the stock in 2 places
+            // type 2 (recycle): the stock in 2 places. The original uses 0x1C (x 0x64), which covers the price's first digits (PROGRESS R2); our fix uses 0x1B (x 0xA0), under the COUNT header
+            else if (Type == 2) sb.Append(Tab1B).Append(Digits(a & 0x7F, 2));
             return sb.ToString();
         }
 
