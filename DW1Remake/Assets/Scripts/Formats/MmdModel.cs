@@ -169,8 +169,14 @@ namespace DW1Remake.Formats
         {
             int h = 128 * rows.Count;
             var px = new Color32[256 * h];
+            // a picture smaller than 256 x 128 (types 116, 118, 119, 121-123: 248 x 120, 256 x 88 ...) sits at the top of its 128-row block: the
+            // faces' v counts from the top of the picture and BuildMesh's uv is (127 - v) up from the block's bottom
+            int tw = tim.Width, th = tim.Height;
             for (int k = 0; k < rows.Count; k++)
-                Array.Copy(tim.GetPixels(rows[k]), 0, px, k * 128 * 256, 256 * 128);
+            {
+                var src = tim.GetPixels(rows[k]);
+                for (int y = 0; y < th; y++) Array.Copy(src, y * tw, px, k * 128 * 256 + (128 - th + y) * 256, tw);
+            }
             var tex = new Texture2D(256, h, TextureFormat.RGBA32, false);
             tex.filterMode = FilterMode.Point;
             tex.wrapMode = TextureWrapMode.Clamp;
@@ -247,7 +253,7 @@ namespace DW1Remake.Formats
             rows.Sort();
             Material mat = null;
             TimImage tim;
-            if (TimImage.TryParse(allTim, e.Type * 0x4800, out tim) && tim.Width == 256 && tim.Height == 128 && tim.BitsPerPixel == 4)
+            if (TimImage.TryParse(allTim, e.Type * 0x4800, out tim) && tim.Width <= 256 && tim.Height <= 128 && tim.BitsPerPixel == 4)
                 mat = MakeMaterial(BuildAtlas(tim, rows));
             else
                 Debug.LogWarning(e.Name + ": texture not found in ALLTIM.TIM, using a plain material.");

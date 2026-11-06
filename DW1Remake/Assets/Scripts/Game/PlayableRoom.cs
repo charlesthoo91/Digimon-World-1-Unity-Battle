@@ -2762,8 +2762,11 @@ namespace DW1Remake.Game
         {
             Vector3 dir = _fG + ((px.x - _map.PixelWidth * 0.5f) / _h) * _rG + ((px.y - _map.PixelHeight * 0.5f) / _h) * _dG;
             float gy = -unityY / Unit;
-            if (Mathf.Abs(dir.y) < 1e-6f) return ToUnity(_vpG);
-            float k = (gy - _vpG.y) / dir.y;
+            float k = Mathf.Abs(dir.y) < 1e-6f ? -1f : (gy - _vpG.y) / dir.y;
+            // a picture point above the horizon (GIAS06B's sky at the top of the map) never meets that height in front of the camera: the
+            // height was met behind it, whose picture point is another one, so ClampCam moved the camera again every frame and a 0x4F / 4A C8
+            // wait never ended (user 2026-11-05). Every point on the ray shows at the same picture point: take one in front instead
+            if (k <= 0f) k = 1000f;
             return ToUnity(_vpG + dir * k);
         }
 
@@ -2772,7 +2775,11 @@ namespace DW1Remake.Game
         {
             if (_map == null || _h == 0f) return pos;
             Vector3 f = pos + Vector3.up;
-            return WorldAtPixel(ClampPx(MapPixel(f)), f.y) - Vector3.up;
+            Vector2 px = MapPixel(f), c = ClampPx(px);
+            // already inside the map: the point stays as it is. Rebuilding it every frame moved a point that shows the sky (GIAS06B) to a new height
+            // each time, and the camera crept sideways for ever (user 2026-11-06)
+            if ((c - px).sqrMagnitude < 0.01f) return pos;
+            return WorldAtPixel(c, f.y) - Vector3.up;
         }
 
         // the camera place shown now
@@ -2780,7 +2787,9 @@ namespace DW1Remake.Game
         {
             if (_map == null || _h == 0f) return _camOn ? _camPos : _player.position;
             Vector3 f = (_camOn ? _camPos : _player.position) + Vector3.up;
-            return WorldAtPixel(ClampPx(MapPixel(f) + (_camOn ? Vector2.zero : _camOffsetPx)), f.y) - Vector3.up;
+            Vector2 want = MapPixel(f) + (_camOn ? Vector2.zero : _camOffsetPx), c = ClampPx(want);
+            if (_camOn && (c - want).sqrMagnitude < 0.01f) return _camPos;
+            return WorldAtPixel(c, f.y) - Vector3.up;
         }
 
         // tickCameraMovement: the picture moves by (target - now) / speed whole pixels a game frame, plus one more pixel for the first
