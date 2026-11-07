@@ -1254,18 +1254,27 @@ namespace DW1Remake.Game
         // talk to the closest friendly Digimon in front of you
         void TryTalk()
         {
-            // checkMapInteraction: Cross while the boy's step runs into a map Digimon (the boxes of their radii) runs its script; standing still
-            // finds no one (entityCheckCollision tests the place his animation moves him to)
+            // checkMapInteraction: Cross while the boy's step runs into a map Digimon (the boxes of their radii) runs its script; standing still,
+            // the Cross frame stretches his box 50 units the way he faces (CrossReach)
             Npc best = null; float bd = float.MaxValue;
+            bool standing = _anim == null || _anim.Slot == IdleSlot;
             foreach (var n in _npcs)
             {
-                if (n.T == null || !n.T.gameObject.activeInHierarchy || (n != _bump && !NpcPushing(n))) continue;
+                if (n.T == null || !n.T.gameObject.activeInHierarchy) continue;
+                if (n != _bump && !NpcPushing(n) && !(standing && CrossReach(n))) continue;
                 float d = Vector3.Distance(n.T.position, _player.position);
                 if (d < bd) { bd = d; best = n; }
             }
             if (best == null) return;
             if (_scripts == null || !_scripts.Available) return;
-            if (!StartScript(best.Data.Script, best)) { Say("(" + best.T.name + " has nothing to say - script " + best.Data.Script + " is an event that is not supported yet)"); return; }
+            // a section that ends without showing anything (OMOC03's Tinmon before flag 0x15E: IF the flag, "Thanks.", else END) does nothing on the
+            // PS1 either: no line, no turn. Only a section missing from the script gets our note.
+            if (!StartScript(best.Data.Script, best))
+            {
+                if (!ScriptRunner.HasSection(_scripts, _scripts.ScriptIdForMap(_mapId), best.Data.Script))
+                    Say("(" + best.T.name + " has nothing to say - script " + best.Data.Script + " is not in this map's script)");
+                return;
+            }
             Vector3 look = _player.position - best.T.position; look.y = 0;
             if (look.sqrMagnitude > 0.01f)
                 best.T.rotation = Quaternion.LookRotation(-look.normalized) * Quaternion.Euler(0, FacingOffset, 0);
@@ -1375,6 +1384,24 @@ namespace DW1Remake.Game
                 if (Mathf.Abs(o.position.x - at.x) < reach && Mathf.Abs(o.position.z - at.z) < reach) return true;
             }
             return false;
+        }
+
+        // entityCheckEntityCollision for the boy on the map: on the frame Cross is pressed while he stands (animation 0), his box reaches 50 units
+        // further on the side(s) he faces (vy in (0, 0x800): -x; (0x800, 0x1000): +x; < 0x400 or > 0xC00: -z; (0x400, 0xC00): +z). So a Digimon
+        // right beside him can be talked to from any side, not only when his step runs into it (OMOC03's Tinmon, user 2026-11-07)
+        bool CrossReach(Npc n)
+        {
+            var b = DigimonStatsCatalog.Get(_disc, 0); var it = DigimonStatsCatalog.Get(_disc, n.Data.Type);
+            float r = (b != null ? b.Radius : 0) * Unit, ro = (it != null ? it.Radius : 0) * Unit, ext = 50f * Unit;
+            Vector3 f = _player.rotation * Quaternion.Inverse(Quaternion.Euler(0, FacingOffset, 0)) * Vector3.forward;
+            int vy = ((int)(Mathf.Atan2(f.x, f.z) * 4096f / (2f * Mathf.PI))) & 0xFFF;
+            float left = _player.position.x - r, right = _player.position.x + r, top = _player.position.z - r, bottom = _player.position.z + r;
+            if (vy > 0 && vy < 0x800) left -= ext;
+            if (vy > 0x800) right += ext;
+            if (vy < 0x400 || vy > 0xC00) top -= ext;
+            if (vy > 0x400 && vy < 0xC00) bottom += ext;
+            Vector3 o = n.T.position;
+            return left < o.x + ro && right > o.x - ro && top < o.z + ro && bottom > o.z - ro;
         }
 
         bool TouchingAt(Npc n, Vector3 boy)
