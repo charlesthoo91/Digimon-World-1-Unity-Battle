@@ -926,7 +926,11 @@ namespace DW1Remake.Game
             _runnerSection = section; _bump = null;
             _talkingTo = null; _scriptAny = false; _line = null; _choiceOpts = null;
             AdvanceScript();
-            if (_runner != null && _anim != null) _anim.SetSlot(IdleSlot);
+            // he stops, unless the section's first commands already gave him a walk or an animation of his own (MIST05 Cherrymon: 0x52 runs him to
+            // her at once; setting idle after it left him carried there standing, user 2026-11-07)
+            Mover pm;
+            bool own = _playerScripted || (_player != null && _movers.TryGetValue(_player, out pm) && pm.Walking);
+            if (_runner != null && _anim != null && !own) _anim.SetSlot(IdleSlot);
             if (_runner != null) FreezeCamera();
             foreach (var l in log) Debug.Log("[script section " + section + " in " + _mapNames[_mapId] + "] " + l);
         }
@@ -1535,9 +1539,12 @@ namespace DW1Remake.Game
             // a lost fight ends with the partner held down in 0x2B (BTL_isBattleFinished: the death countdown); nothing stands it up before MURD
             if (_partnerAnim != null && (_battle.Won || _battle.Fled)) _partnerAnim.SetSlot(IdleSlot);
             _camBack = 0f; _camOffsetPx = Vector2.zero;      // the camera glides back to the boy: createCameraMovement(tamer, 20), a straight move of 20 frames
+            // the script's camera ends there too: the script that started the fight usually ends right after it, and the end of a script keeps
+            // the camera's offset from the boy (_camOffsetPx). Its pre-fight place made the picture jump back once the glide was over (user 2026-11-07)
             _way.Clear();
             if (_anim != null) _anim.SetSlot(IdleSlot);
             if (!Free(_player.position)) _player.position = _prePlayerPos;
+            if (_camOn) { _camMove = false; _camPos = _camGoal = _player.position; }
             // the end of the fight (battle_main.c): a map Digimon with isOnScreen = 1 leaves the map (isOnMap = 0), any other is put back (isOnMap = 1).
             // isOnScreen is not updated during the fight, so the ones that were on screen when it began (the enemies and those that ran) are gone,
             // and the ones that were off screen (taken off the map by handleBattleStart) come back where they were. After a scripted fight its
