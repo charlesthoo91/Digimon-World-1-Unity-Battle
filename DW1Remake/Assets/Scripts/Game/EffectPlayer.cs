@@ -27,7 +27,8 @@ namespace DW1Remake.Game
         sealed class Run
         {
             public int Tech; public byte[] M; public Ctx[] Ctxs; public int Start; public int Logged, LoggedStep, Steps;
-            public Action<Vector3> OnHit; public bool Hit;
+            public Action<Vector3, EffectActor> OnHit; public bool Hit;
+            public List<EffectActor> Victims; public Func<EffectActor, bool> CanHit, Alive; public readonly HashSet<EffectActor> HitSet = new HashSet<EffectActor>();     // ENTITY_TABLE 1-9 but the source; stats.current.isHit
             public EffectActor Src, Tgt;
             public int Flash = -1;
             public readonly List<Prim> Prims = new List<Prim>();
@@ -40,7 +41,7 @@ namespace DW1Remake.Game
         // BTL_addParticleEmitter: a spray from the owner's place, one new spark a frame, up to 20
         sealed class Spark { public int Dist, Vel; public Vector3 Dir, Pos; }
         sealed class Emitter { public int Owner, Frames, Start, Vel, Acc, Kind; public Color Col; public readonly Spark[] Sparks = new Spark[20]; }
-        sealed class Asset { public TimImage Tim; public Texture2D[] Tex = new Texture2D[16]; public Mesh[] Meshes; public int[] Rows; public int Width, Height; }
+        sealed class Asset { public TimImage Tim; public Texture2D[] Tex = new Texture2D[16]; public Mesh[] Meshes; public int[] Rows, Abr; public int Width, Height; }
         sealed class Flash { public Vector3 Pos; public int T, Max, Mode, S0, S1; public bool Front; public Vector3 C0, C1; }
 
         readonly byte[] _file; readonly Action<int> _sound;
@@ -99,11 +100,12 @@ namespace DW1Remake.Game
                 try
                 {
                     var model = MmdModel.Parse(raw);
-                    a.Meshes = new Mesh[model.Parts.Count]; a.Rows = new int[a.Meshes.Length];
+                    a.Meshes = new Mesh[model.Parts.Count]; a.Rows = new int[a.Meshes.Length]; a.Abr = new int[a.Meshes.Length];
                     for (int i = 0; i < a.Meshes.Length; i++)
                     {
                         a.Meshes[i] = BuildMesh(model.Parts[i], a);
-                        if (model.Parts[i].Faces.Count > 0) a.Rows[i] = model.Parts[i].Faces[0].Row;     // each object names its own colour set (CLUT y - 488)
+                        a.Abr[i] = -1;
+                        if (model.Parts[i].Faces.Count > 0) { a.Rows[i] = model.Parts[i].Faces[0].Row; a.Abr[i] = model.Parts[i].Faces[0].Abr; }     // each object names its own colour set (CLUT y - 488) and whether its packets are semi-transparent (and how)
                     }
                 }
                 catch (Exception e) { Debug.LogWarning("Effect model " + tech + ": " + e.Message); }
@@ -133,11 +135,18 @@ namespace DW1Remake.Game
         /// <summary>Starts the technique's effect. False when it has none for this Digimon. onHit fires once with the place of the hit.</summary>
         public bool Start(int tech, EffectActor src, EffectActor tgt, Action<Vector3> onHit)
         {
+            return Start(tech, src, tgt, null, null, onHit == null ? (Action<Vector3, EffectActor>)null : (at, who) => onHit(at));
+        }
+
+        /// <summary>The same, with every Digimon the attack hit subs test (BTL_applyLineAttackHit, BTL_applyRadiusAttackHit, BTL_applyBoxAttackHit look at all of
+        /// ENTITY_TABLE 1-9 but the source, friends too): victims (tgt among them), canHit says whether one may be hit now (not already in its hit reaction, not down), onHit gets the place and the victim.</summary>
+        public bool Start(int tech, EffectActor src, EffectActor tgt, List<EffectActor> victims, Func<EffectActor, bool> canHit, Action<Vector3, EffectActor> onHit, Func<EffectActor, bool> alive = null)
+        {
             if (_mat == null || tech < 0 || (tech + 1) * Block > _file.Length) return false;
             int b = tech * Block;
             int start = I32(_file, b), init = I32(_file, b + 4), subs = I32(_file, b + 44);
             if (start <= 0 || start >= Block || subs <= 0 || subs > 256) return false;     // the game has no limit (largest on the disc: 149); 256 only rejects the unused block at the end
-            var r = new Run { Tech = tech, M = new byte[Block - Header], Src = src, Tgt = tgt, OnHit = onHit, Ctxs = new Ctx[subs], Start = start };
+            var r = new Run { Tech = tech, M = new byte[Block - Header], Src = src, Tgt = tgt, OnHit = onHit, Victims = victims, CanHit = canHit, Alive = alive, Ctxs = new Ctx[subs], Start = start };
             Array.Copy(_file, b + Header, r.M, 0, r.M.Length);
             for (int i = 0; i < subs; i++) r.Ctxs[i] = new Ctx { Src = src, Tgt = tgt };
             var asset = AssetOf(tech);
@@ -416,7 +425,19 @@ namespace DW1Remake.Game
         }
 
         readonly Material[] _spriteMats = new Material[8];
-        Material _subFront;
+        Material _subFront, _solidModel;
+
+        // a model packet without the semi-transparent bit: opaque (the picture's empty colour 0 still shows through), written to the depth buffer so its faces hide each other
+        Material SolidModelMaterial()
+        {
+            if (_solidModel == null && _mat != null)
+            {
+                _solidModel = new Material(_mat);
+                _solidModel.SetFloat("_SrcBlend", (float)UnityEngine.Rendering.BlendMode.SrcAlpha); _solidModel.SetFloat("_DstBlend", (float)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+                _solidModel.SetFloat("_BlendOp", (float)UnityEngine.Rendering.BlendOp.Add); _solidModel.SetFloat("_ZWrite", 1f);
+            }
+            return _solidModel;
+        }
 
         // the sprite's attribute: semi-transparent ones blend by their mode (subtract = the dark clouds of Electric Cloud and others); solid ones cover
         Material SpriteMaterial(int attr)
@@ -774,16 +795,27 @@ namespace DW1Remake.Game
             SetTransform(BonePos(a, bone) + world, (int)e.x, (int)e.y, (int)e.z);
         }
 
-        void Hit(Vector3 at)
+        void Hit(Vector3 at, EffectActor victim)
         {
-            if (_r.Hit) return;
-            _r.Hit = true;
-            if (_r.OnHit != null) _r.OnHit(ToUnity((int)at.x, (int)at.y, (int)at.z));
+            if (victim == null || !_r.HitSet.Add(victim)) return;
+            if (victim == _r.Tgt) _r.Hit = true;
+            if (_r.OnHit != null) _r.OnHit(ToUnity((int)at.x, (int)at.y, (int)at.z), victim);
         }
 
-        bool Touching(Vector3 at, Vector3 ext)
+        // the Digimon an attack hit sub tests: every victim not hit by this effect yet and allowed to be hit now; without a list, only the target
+        IEnumerable<EffectActor> Candidates()
         {
-            var t = _ctx.Tgt;
+            if (_r.Victims == null) { if (_ctx.Tgt != null && !_r.HitSet.Contains(_ctx.Tgt)) yield return _ctx.Tgt; yield break; }
+            foreach (var v in _r.Victims)
+                if (v != null && v != _ctx.Src && !_r.HitSet.Contains(v) && (_r.CanHit == null || _r.CanHit(v))) yield return v;
+        }
+
+        internal List<EffectActor> LivingEntities() { var l = new List<EffectActor>(); if (_r.Victims == null) return l; foreach (var v in _r.Victims) if (v != null && (_r.Alive == null || _r.Alive(v))) l.Add(v); return l; }
+
+        bool Touching(Vector3 at, Vector3 ext) { return Touching(at, ext, _ctx.Tgt); }
+
+        bool Touching(Vector3 at, Vector3 ext, EffectActor t)
+        {
             if (t == null) return false;
             Vector3 p = ToGame(t.T.position), d = at - p;
             float r = t.Radius;
@@ -835,7 +867,7 @@ namespace DW1Remake.Game
                     p.x += (r * Sin(-(ry >> 3) * 8)) >> 12; p.z += (r * Sin(-(((ry >> 3) + 0x80) & 0x1FF) * 8)) >> 12;
                     SetTransform(p, 0, ry, 0); break;
                 }
-                case 9: Hit(Pos); break;
+                case 9: Hit(Pos, _ctx.Tgt); break;
                 case 10:
                 {
                     // BTL_getScatteredSpawnPosition: the source's listed bone (or the parent's place), spread at random by up to r
@@ -980,14 +1012,16 @@ namespace DW1Remake.Game
                     // BTL_applyRadiusAttackHit: hit flag, radius; the target is hit when it is within radius + its own radius (on the ground plane)
                     int o = Pop(), rad = Pop();
                     Put(m, o, 0);
-                    var t = _ctx.Tgt;
-                    if (t == null || _r.Hit) break;
-                    Vector3 p = Pos, q = ToGame(t.T.position);
-                    float dx = p.x - q.x, dz = p.z - q.z;
-                    if ((float)rad * rad + (float)t.Radius * t.Radius < dx * dx + dz * dz) break;
-                    // the attack object: BTL_calculateAttackHitPosition with the target's radius, at half its height
-                    Vector3 at = _ctx.Src != null ? AttackHitPosition(t, _ctx.Src, t.Radius) : q; at.y = -t.Height / 2;
-                    Put(m, o, 1); Hit(at); break;
+                    foreach (var t in new List<EffectActor>(Candidates()))
+                    {
+                        Vector3 p = Pos, q = ToGame(t.T.position);
+                        float dx = p.x - q.x, dz = p.z - q.z;
+                        if ((float)rad * rad + (float)t.Radius * t.Radius < dx * dx + dz * dz) continue;
+                        // the attack object: BTL_calculateAttackHitPosition with the target's radius, at half its height
+                        Vector3 at = _ctx.Src != null ? AttackHitPosition(t, _ctx.Src, t.Radius) : q; at.y = -t.Height / 2;
+                        Put(m, o, 1); Hit(at, t);
+                    }
+                    break;
                 }
                 case 91: BoxHit(); break;
                 case 34:
@@ -1075,15 +1109,18 @@ namespace DW1Remake.Game
             var m = _r.M;
             Pop(); int o = Pop(), arg = Pop();
             Put(m, o, 0);
-            var t = _ctx.Tgt; var s = _ctx.Src;
-            if (t == null || s == null || _r.Hit) return;
-            Vector3 p = Pos, src = ToGame(s.T.position), q = ToGame(t.T.position);
-            int r = t.Radius;
-            int[] rect = { (short)((int)q.x - r), (short)((int)q.z - r), (short)((int)q.x + r), (short)((int)q.z + r) };
-            if (LineTouchesBox(rect, (int)p.x, (int)p.z, (int)src.x, (int)src.z) != -1) return;
-            if ((int)p.y < -t.Height - I32(m, arg + 4)) return;
-            Vector3 at = AttackHitPosition(t, s, t.Radius); at.y = (int)p.y;
-            Put(m, o, 1); Hit(at);
+            var s = _ctx.Src;
+            if (s == null) return;
+            foreach (var t in new List<EffectActor>(Candidates()))
+            {
+                Vector3 p = Pos, src = ToGame(s.T.position), q = ToGame(t.T.position);
+                int r = t.Radius;
+                int[] rect = { (short)((int)q.x - r), (short)((int)q.z - r), (short)((int)q.x + r), (short)((int)q.z + r) };
+                if (LineTouchesBox(rect, (int)p.x, (int)p.z, (int)src.x, (int)src.z) != -1) continue;
+                if ((int)p.y < -t.Height - I32(m, arg + 4)) continue;
+                Vector3 at = AttackHitPosition(t, s, t.Radius); at.y = (int)p.y;
+                Put(m, o, 1); Hit(at, t);
+            }
         }
 
         // doSomethingWithSomePoints (effect_common.c): -1 when the line (x0, y0)-(x1, y1) touches the box {x0, y0, x1, y1}: an end inside it, the ends on
@@ -1115,9 +1152,10 @@ namespace DW1Remake.Game
         void BoxHit()
         {
             Pop(); int o = Pop(); Vector3 ext = Vec(Pop());
-            bool hit = !_r.Hit && Touching(Pos, ext);
-            Put(_r.M, o, hit ? 1 : 0);
-            if (hit) Hit(Pos);
+            bool any = false;
+            foreach (var t in new List<EffectActor>(Candidates()))
+                if (Touching(Pos, ext, t)) { any = true; Hit(Pos, t); }
+            Put(_r.M, o, any ? 1 : 0);
         }
 
         // EFECreateFlash: colour max, colour min, scale max, scale min, frames, fixed depth, place, mode (0 and 1 add, 0x20 subtracts; below 0 = screen offset)
@@ -1267,8 +1305,11 @@ namespace DW1Remake.Game
             foreach (var o in r.Models)
             {
                 _mp.SetFloat("_VertexColor", 0f);
-                _mp.SetTexture("_MainTex", TextureOf(a, a.Rows != null && o.Object < a.Rows.Length ? a.Rows[o.Object] : 0)); _mp.SetColor("_Color", Color.white); _mp.SetVector("_Rect", new Vector4(r.UvOff[o.Object].x / Mathf.Max(1, a.Width), r.UvOff[o.Object].y / Mathf.Max(1, a.Height), 1, 1));
-                Graphics.DrawMesh(a.Meshes[o.Object], o.M, _mat, 0, null, 0, _mp);
+                _mp.SetTexture("_MainTex", TextureOf(a, a.Rows != null && o.Object < a.Rows.Length ? a.Rows[o.Object] : 0)); // drawTMD: a packet that is not semi-transparent covers what is behind it (Tremar's rocks); a semi-transparent one blends by the mode of its texture page
+                int abr = a.Abr != null && o.Object < a.Abr.Length ? a.Abr[o.Object] : 1;
+                Material mat = abr >= 0 ? SpriteMaterial(4 | abr) : SolidModelMaterial();
+                _mp.SetColor("_Color", abr == 0 ? new Color(1f, 1f, 1f, 0.5f) : abr == 3 ? new Color(1f, 1f, 1f, 0.25f) : Color.white); _mp.SetVector("_Rect", new Vector4(r.UvOff[o.Object].x / Mathf.Max(1, a.Width), r.UvOff[o.Object].y / Mathf.Max(1, a.Height), 1, 1));
+                Graphics.DrawMesh(a.Meshes[o.Object], o.M, mat, 0, null, 0, _mp);
             }
         }
     }

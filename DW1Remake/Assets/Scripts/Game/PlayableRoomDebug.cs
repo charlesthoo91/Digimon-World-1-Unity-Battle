@@ -122,6 +122,50 @@ namespace DW1Remake.Game
             _battle.Partner.Finish = _battle.Partner.FinishMax;
         }
 
+        // dev tool: a fight against the Digimon of a map's record (its own numbers, techniques and chances, read from the map file), its finishing gauge FULL at the start.
+        // The finisher exists only when the technique of its record's slot 3 is one of 0x3A-0x70 (Geremon of FACT09, record 3, has Party time; Psychemon of GOMI01 has none).
+        // Extra records of the same map join as more enemies (count).
+        void TestFightRecord(string mapName, int record, int count = 1)
+        {
+            if (_battle == null || _battle.Active || _runner != null || _player == null || _partner == null || _changing) { Say("Not now."); return; }
+            int mi = _mapNames.IndexOf(mapName);
+            if (mi < 0) { Say(mapName + " not found."); return; }
+            string path = MapCatalog.PathFor(_mapNames, mi);
+            MapBackground bg;
+            try { bg = MapBackground.Parse(_disc.ReadFile(path), _disc.ReadFile(path.Substring(0, path.Length - 4) + ".TFS")); }
+            catch (System.Exception e) { Say("Map read failed: " + e.Message); return; }
+            if (record < 0 || record >= bg.Npcs.Count) { Say("No record " + record + "."); return; }
+            if (_entries == null) _entries = new List<DigimonEntry>(DigimonCatalog.Load(_disc));
+            if (_allTim == null) _allTim = _disc.ReadFile("/CHDAT/ALLTIM.TIM");
+            Vector3 right = _cam != null ? _cam.transform.right : Vector3.right; right.y = 0f; right.Normalize();
+            Vector3 up = Vector3.Cross(right, Vector3.up);
+            var foes = new List<Npc>();
+            for (int k = 0; k < count; k++)
+            {
+                var data = bg.Npcs[Mathf.Min(record + k, bg.Npcs.Count - 1)];
+                DigimonEntry entry = null;
+                foreach (var e in _entries) if (e.Type == data.Type) { entry = e; break; }
+                if (entry == null) { Say("No model for type " + data.Type + "."); return; }
+                var go = MmdModel.Parse(_disc.ReadFile(entry.MmdPath)).Build(entry, _allTim);
+                go.transform.SetParent(transform, false);
+                Vector3 side = k == 0 ? Vector3.zero : up * (k == 1 ? 2.5f : -2.5f);
+                Vector3 at = _player.position - right * 5f + side;
+                if (!Free(at)) at = _player.position + right * 5f + side;
+                go.transform.position = at;
+                go.transform.rotation = FaceRot(_player.position - at);
+                var n = new Npc { Data = data, T = go.transform, Anim = go.GetComponent<DigimonAnimator>(), Name = entry.Name, Home = at };
+                if (n.Anim != null) { n.Anim.DigimonType = data.Type; n.Anim.SetSlot(IdleSlot); }
+                _npcs.Add(n);
+                foes.Add(n);
+            }
+            _debugOpen = false;
+            StartBattle(foes[0]);
+            for (int k = 1; k < foes.Count; k++) _battle.AddEnemy(foes[k].T, foes[k].Anim, foes[k].Name, DigimonStatsCatalog.Get(_disc, foes[k].Data.Type), foes[k].Data);
+            _battle.Partner.Finish = _battle.Partner.FinishMax;
+            foreach (var f in _battle.AllFightersPublic()) if (f.Finisher != null) f.Finish = f.FinishMax;
+            Debug.Log("[testfight] " + foes[0].Name + " enemy finisher: " + (_battle.Enemy.Finisher != null ? _battle.Enemy.Finisher.Name : "none (its slot 3 is not a finishing move)"));
+        }
+
         void SkipOpening()
         {
             if (_changing) return;
@@ -171,6 +215,9 @@ namespace DW1Remake.Game
             if (GUILayout.Button("Skip the opening (go to File City with Agumon)")) { SkipOpening(); _debugOpen = false; }
             if (GUILayout.Button("Test fight: Agumon (the first fight's numbers), FINISH ready")) { TestFight(); }
             if (GUILayout.Button("Test fight: two Agumon at once")) { TestFight(2); }
+            if (GUILayout.Button("Test fight: Psychemon (GOMI01), finishing gauge full (Tremar, no finisher in the data)")) { TestFightRecord("GOMI01", 0); }
+            if (GUILayout.Button("Test fight: Psychemon + two Geremon (Tremar hits the others too)")) { TestFightRecord("GOMI01", 0, 3); }
+            if (GUILayout.Button("Test fight: Geremon of FACT09 (finisher Party time), gauge full")) { TestFightRecord("FACT09", 3); }
             if (GUILayout.Button("Recruit Coelamon (flag 0xF9)")) { _state.SetFlag(0xF9, true); BuildNpcs(); }
             if (GUILayout.Button("Recruit EVERY Digimon (all recruit flags)")) { foreach (var f in RecruitFlags) _state.SetFlag(f, true); BuildNpcs(); Say("All recruit flags on."); }
             GUILayout.BeginHorizontal(); GUILayout.Label("Flag", GUILayout.Width(40)); _flagText = GUILayout.TextField(_flagText, GUILayout.Width(80));

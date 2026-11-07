@@ -356,6 +356,10 @@ namespace DW1Remake.Game
             public bool Stopped;        // MapDigimonEntity.stopAnim: it spoke in the running script, its AI waits for the script to end
         }
         readonly List<Npc> _npcs = new List<Npc>();
+        // NPC_ACTIVE_ANIM: scriptStartAnimation and scriptSetEntityWalking (0x56, 0x4E, 0x51-0x53) call setActiveAnim for a map Digimon, and from then on
+        // NPCEntityTickOverworld runs none of its AI (no waypoints, no tracking, no idle) until the map is loaded again. A script walk ends in animation 0.
+        readonly HashSet<int> _aiOff = new HashSet<int>();
+        void NpcAiOff(Transform t) { foreach (var n in _npcs) if (n.T == t) _aiOff.Add(n.Record); }
         string _playerName = "", _partnerName = "";
         [Tooltip("Show each Digimon's name above it (F3 toggles).")] public bool ShowNames = true;
         List<DigimonEntry> _entries;
@@ -376,6 +380,7 @@ namespace DW1Remake.Game
         {
             public Transform T; public DigimonAnimator A;
             public Vector3 Goal; public bool Walking; public float Still;
+            public Transform WalkTarget;      // tickEntityWalkTo with a target entity: its place is read again every frame, and touching anyone ends the walk
             public bool HasTurn; public Quaternion TurnTo;
             public bool Looking; public Vector3 LookPos; public float LookAcc; public int LookVy; public bool LookVyKnown;    // tickLookAtEntity: ROTATION_DATA, 0x200 a game frame
             public bool Gliding; public Vector3 GlideStep; public float GlideAcc;    // tickEntityMoveTo: a fixed step each game frame, height kept
@@ -481,6 +486,7 @@ namespace DW1Remake.Game
                     else if (a.Frames == 0x0A) { _line = null; _choiceOpts = null; StartCoroutine(BirdraTransport()); return true; }   // tickBirdraTransport
                     else if (a.Frames == 0x02) { _line = null; _choiceOpts = null; StartCoroutine(MojyamonTrade()); return true; }     // openMojyamonShop
                     else if (a.Frames == 0x0B) { _line = null; _choiceOpts = null; StartCoroutine(ItemKeeper()); return true; }        // tickItemKeeper
+                    else if (a.Frames == 0x01) { _line = null; _choiceOpts = null; StartCoroutine(MeritShop()); return true; }         // openMeritShop (ShogunGekomon, GKYO02)
                     else if (a.Frames == 0x03 || a.Frames == 0x04 || a.Frames == 0x05 || a.Frames == 0x11) { }                    // the game does nothing for these
                     else if (EventBuiltin(a.Frames, out evWait)) return evWait;                                                      // the story events (PlayableRoomEvents)
                     else if (a.Frames == 8 && _state.GetFlag(3)) { _line = null; _choiceOpts = null; StartCoroutine(RecycleShop(_state.Vars[0xFE])); return true; }   // openRecycleShop
@@ -580,6 +586,7 @@ namespace DW1Remake.Game
                     if (ActorOf(a.Actor, out t, out an))
                     {
                         var m = MoverFor(t, an); m.Goal = new Vector3(a.X * Unit, 0, a.Z * Unit); m.Walking = true; m.Still = 0f;
+                        NpcAiOff(t);
                         if (an != null) an.SetSlot(ScriptWalkSlot(a.Actor, a.Anim));
                     }
                     break;
@@ -595,8 +602,10 @@ namespace DW1Remake.Game
                     if (ActorOf(a.Actor, out t, out an))
                     {
                         Vector3 goal = new Vector3(a.X * Unit, 0, a.Z * Unit);
+                        t2 = null;
                         if (a.Cmd != 0x52) { if (!ActorOf(a.Target, out t2, out an2)) break; goal = t2.position; }
-                        var m = MoverFor(t, an); m.Goal = goal; m.Walking = true; m.Still = 0f;
+                        var m = MoverFor(t, an); m.Goal = goal; m.Walking = true; m.Still = 0f; m.WalkTarget = a.Cmd != 0x52 ? t2 : null;
+                        NpcAiOff(t);
                         if (an != null) an.SetSlot(ScriptWalkSlot(a.Actor, a.Anim));
                         // 0x52 / 0x53: moveCameraByDiff every frame, the camera moves as far as the walker does
                         m.WalkCam = a.Cmd != 0x51;
@@ -664,7 +673,7 @@ namespace DW1Remake.Game
                         an.SetSlot(a.Target, a.Target != 0 && a.Target != 2); _animated.Add(an);
                         if (an == _anim) { _playerScripted = a.Target != 0 && a.Target != 2; an.TakeBodyMove(); }
                         // a map Digimon: its forward travel becomes real movement (UpdateNpcs), so the model must not also show it
-                        foreach (var n in _npcs) if (n.Anim == an) { n.Scripted = true; an.BodyMovesItself = true; an.TakeBodyMove(); }
+                        foreach (var n in _npcs) if (n.Anim == an) { n.Scripted = true; _aiOff.Add(n.Record); an.BodyMovesItself = true; an.TakeBodyMove(); }
                     }
                     break;
                 default:
@@ -742,16 +751,21 @@ namespace DW1Remake.Game
                 else if (m.Walking)
                 {
                     // tickEntityWalkTo: it turns straight to the goal, its walk carries it step by step, and it stops on the goal's tile
+                    if (m.WalkTarget != null) m.Goal = m.WalkTarget.position;
                     Vector3 to = m.Goal - m.T.position; to.y = 0;
                     float step = m.A != null ? m.A.TakeForward() : ActorSpeed * Time.deltaTime;
                     m.Still = step > 0f ? 0f : m.Still + Time.deltaTime;
                     if (m.Still > 0.5f) step = ActorSpeed * Time.deltaTime;     // an animation with no forward movement must not hang the script
-                    if (TileOf(m.T.position) == TileOf(m.Goal) || to.sqrMagnitude < 0.0001f) { m.Walking = false; if (m.A != null) m.A.SetSlot(IdleSlot); }
+                    Vector3 next = m.T.position + (to.sqrMagnitude > 0f ? to.normalized * Mathf.Min(step, to.magnitude) : Vector3.zero);
+                    // with a target entity, entityCheckCollision tries the step against every other Digimon and the boy: a step into one is not taken
+                    // and the walk is over (col 0-8). The Gekomon that run at the boy on STIC02 stop round him, not on top of him
+                    bool touched = m.WalkTarget != null && step > 0f && TouchesAnyone(m.T, next);
+                    if (TileOf(m.T.position) == TileOf(m.Goal) || to.sqrMagnitude < 0.0001f || touched) { m.Walking = false; m.WalkTarget = null; if (m.A != null) m.A.SetSlot(IdleSlot); }
                     else
                     {
                         m.T.rotation = FaceRot(to);
                         Vector3 was = m.T.position;
-                        m.T.position += to.normalized * Mathf.Min(step, to.magnitude);     // never past the goal, so a long stride cannot circle it and hang the script
+                        m.T.position = next;     // never past the goal, so a long stride cannot circle it and hang the script
                         if (m.WalkCam) { FreezeCamera(); _camPos += m.T.position - was; _camGoal = _camPos; }
                     }
                 }
@@ -951,7 +965,20 @@ namespace DW1Remake.Game
         void ReleaseSpeakers()
         {
             _dialogueOwner = 0xFF;
+            _allStopped = false;
             foreach (var n in _npcs) n.Stopped = false;
+        }
+
+        // setMovementEnabled(-1, 1), from the fight command when a scripted fight is won with trigger 1 set (the scripts set it just before
+        // 0x66): stopAnim on all 8 slots of MAP_DIGIMON_TABLE and clearMapAITable(-1). stopAnim belongs to the slot, not the entity, so a
+        // Digimon the script switches on later (0x47, scriptSetDigimon leaves stopAnim alone) stands still too until the script ends.
+        // STIC02 after Otamamon: the Gekomon stand at their places until 0x51 runs them to the boy (user's PS1 clip 2026-11-07)
+        bool _allStopped;
+
+        void StopAllMapDigimon()
+        {
+            _allStopped = true;
+            foreach (var n in _npcs) { n.Stopped = true; n.HasTarget = false; n.Chasing = false; n.Section = 0; }
         }
 
         // moves the running script to its next text box, menu or map change
@@ -1117,10 +1144,11 @@ namespace DW1Remake.Game
         void ScriptSetDigimon(int type, int slot, int autotalk)
         {
             if (_map == null || slot < 0 || slot >= _map.Npcs.Count || _map.Npcs[slot].Type != type) return;
+            bool stopped = _allStopped;     // the slot's stopAnim stays as it was
             for (int i = _npcs.Count - 1; i >= 0; i--)
-                if (_npcs[i].Record == slot) { if (_npcs[i].T != null) Destroy(_npcs[i].T.gameObject); _npcs.RemoveAt(i); }
+                if (_npcs[i].Record == slot) { stopped |= _npcs[i].Stopped; if (_npcs[i].T != null) Destroy(_npcs[i].T.gameObject); _npcs.RemoveAt(i); }
             var n = MakeNpc(slot, autotalk);
-            if (n != null) _npcs.Add(n);
+            if (n != null) { n.Stopped = stopped; _npcs.Add(n); }
         }
 
         float _npcAcc;
@@ -1146,6 +1174,8 @@ namespace DW1Remake.Game
                     front.y = 0f;
                     n.T.position += front.normalized * n.Anim.TakeBodyMove();
                 }
+                // NPC_ACTIVE_ANIM != 0: the AI, the tracking and the stopAnim idle all wait (only the animation's own travel moved it, above)
+                if (_aiOff.Contains(n.Record)) continue;
                 if (n == _talkingTo || n == _battleNpc) continue;
                 // NPCEntityTickOverworld with stopAnim set (and no script animation): it only goes back to animation 0
                 if (n.Stopped) { if (!n.Scripted && n.AiAnim != IdleSlot) NpcAnim(n, IdleSlot); continue; }
@@ -1316,6 +1346,32 @@ namespace DW1Remake.Game
 
         // the game's collision boxes (entityCheckEntityCollision): squares of each one's radius (DIGIMON_DATA +0x18) round the two of them
         bool Touching(Npc n) { return TouchingAt(n, _player.position); }
+
+        // the game radius of whoever this is: the boy (DIGIMON_DATA 0), the partner, or a map Digimon
+        int RadiusOf(Transform t)
+        {
+            if (t == _player) { var b = DigimonStatsCatalog.Get(_disc, 0); return b != null ? b.Radius : 0; }
+            if (t == _partner) return _menus != null && _menus.PartnerInfo != null ? _menus.PartnerInfo.Radius : 120;
+            foreach (var n in _npcs) if (n.T == t) { var it = DigimonStatsCatalog.Get(_disc, n.Data.Type); return it != null ? it.Radius : 0; }
+            return 0;
+        }
+
+        // entityCheckCollision, for a walker: does its box at 'at' overlap the box of the boy, the partner or any map Digimon on the map
+        bool TouchesAnyone(Transform walker, Vector3 at)
+        {
+            int r = RadiusOf(walker);
+            var others = new List<Transform>();
+            if (_player != null) others.Add(_player);
+            if (_partner != null && _partner.gameObject.activeInHierarchy) others.Add(_partner);
+            foreach (var n in _npcs) if (n.T != null && n.T.gameObject.activeInHierarchy) others.Add(n.T);
+            foreach (var o in others)
+            {
+                if (o == walker) continue;
+                float reach = (r + RadiusOf(o)) * Unit;
+                if (Mathf.Abs(o.position.x - at.x) < reach && Mathf.Abs(o.position.z - at.z) < reach) return true;
+            }
+            return false;
+        }
 
         bool TouchingAt(Npc n, Vector3 boy)
         {
@@ -1778,7 +1834,7 @@ namespace DW1Remake.Game
             foreach (var l in _mapLights) if (l != null) Destroy(l);
             _mapLights.Clear();
             _lightList.Clear(); _lightBase.Clear();
-            ClearNpcs();
+            ClearNpcs(); _aiOff.Clear();      // clearMapDigimon: NPC_ACTIVE_ANIM is 0 again
 
             _map = map;
             MapPath = path;
@@ -1797,6 +1853,7 @@ namespace DW1Remake.Game
             BuildBackdrop();
             BuildOverlays(mapBytes);
             LoadDoors(mapBytes);
+            LoadTrainingPoop(mapBytes);
             if (Hd2D && UseMapLights) SetupLights();
 
             // where the Digimon appears
@@ -2317,7 +2374,13 @@ namespace DW1Remake.Game
                     if (!_battle.Active)
                     {
                         EndBattle();
-                        if (_battleWait) { _battleWait = false; if (_runner != null) AdvanceScript(); }
+                        if (_battleWait)
+                        {
+                            _battleWait = false;
+                            // SCRIPT_OP_START_BATTLE, a won fight: with trigger 1 set, setMovementEnabled(-1, 1)
+                            if (_runner != null && _battle.Won && _state.GetFlag(1)) StopAllMapDigimon();
+                            if (_runner != null) AdvanceScript();
+                        }
                     }
                     return;
                 }
@@ -2818,7 +2881,10 @@ namespace DW1Remake.Game
             while (_camMove && _camMoveAcc >= 1f / 20f)
             {
                 _camMoveAcc -= 1f / 20f;
-                float sx = Mathf.Sign(_camMoveTo.x - _camMoveCur.x), sy = Mathf.Sign(_camMoveTo.y - _camMoveCur.y);
+                // which way each axis still has to go; 0 once it is there (Mathf.Sign(0) is +1: an axis that arrived first with a negative step
+                // went on past its target for ever, and a 4A C8 wait never ended: GKYO02 ShogunGekomon's 0x50 back to the boy, user 2026-11-07)
+                float sx = _camMoveTo.x > _camMoveCur.x ? 1f : _camMoveTo.x < _camMoveCur.x ? -1f : 0f;
+                float sy = _camMoveTo.y > _camMoveCur.y ? 1f : _camMoveTo.y < _camMoveCur.y ? -1f : 0f;
                 Vector2 c = _camMoveCur + _camMoveStep;
                 if (_camMoveExtraX-- >= 0) c.x += sx;
                 if (_camMoveExtraY-- >= 0) c.y += sy;

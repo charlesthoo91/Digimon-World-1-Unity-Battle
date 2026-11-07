@@ -313,6 +313,103 @@ namespace DW1Remake.Game
             ShopEnd();
         }
 
+        // ---- the merit shop (built-in 0x01; script_menu.c openMeritShop, texts DG0 0x4D4). Variable 254 = the keeper (ShogunGekomon, GKYO02).
+        // State 0: text 0. State 3: the Bits box with the points (createShopBitsBox(0): shopkeeper text 7), then the boy's choice (text 1):
+        // 4 a card (type 6, ITEM_MENU_LEFT, text 5), 5 an item (type 7, ITEM_MENU_RIGHT, text 6), 6 the end (the Bits box shuts, no text).
+        // A card: createMeritCardTradeDialogue (SHOP_VARIABLE = its merit, text 7 + its rarity), then text 2: 8 gives it (MERIT += it, at most
+        // 9999; one card fewer), 9 keeps it. An item: readSelectedItemMerit (SHOP_VARIABLE = its merit), text 3 with the list still up: 0x0C
+        // (MERIT -= it, the item into the bag), 0x0D not. Each ending (and Triangle, 0x0A) shuts the list and goes back to state 3.
+        IEnumerator MeritShop()
+        {
+            _routineOn = true;
+            const int Sec = 0x4D4;
+            int owner = _state.Vars[0xFE];
+            var v = ItemBox();
+            if (v == null) { ShopEnd(); yield break; }
+            int bsec = ShopSection(owner);
+            yield return HeadSay(Sec, 0, owner);
+            while (true)
+            {
+                v.OpenBits(DialogueOrigin(0xFD), MeritBitsText(bsec));
+                int pick = 0;
+                yield return HeadAsk(Sec, 1, 3, p => pick = p, 0xFD);
+                if (pick == 2) break;
+                // states 4 / 5: the list grows out of the keeper (createCardMenu / createItemMenu with ITEM_MENU_TYPE 6 / 7); its line stays up
+                v.Type = pick == 0 ? 6 : 7;
+                if (pick == 0) v.FillCardSell(_state); else v.FillMeritItems(_state);
+                v.Open(v.List, v.ListRect, DialogueOrigin(owner) ?? new RectInt(-5, -5, 10, 10), 0xF1);
+                _line = HeadText(Sec, pick == 0 ? 5 : 6, true); _speaker = owner; _choiceOpts = null;
+                int chosen = -1;
+                while (true)
+                {
+                    yield return null;
+                    if (v.Desc.State != 0)
+                    {
+                        // tickItemMenuDescriptionBox (items only): Cross, Triangle or Start closes it
+                        if (v.Desc.State == 1 && (ShopCross() || GameMenus.TriangleOnly() || GameMenus.StartKey())) { v.Close(v.Desc); Snd(3); }
+                        continue;
+                    }
+                    if (v.List.State != 1) continue;
+                    if (pick == 1 && GameMenus.StartKey()) { if (v.OpenDesc()) Snd(3); continue; }
+                    if (ShopCross())
+                    {
+                        // createMeritCardTradeDialogue / readSelectedItemMerit: only a row held (cards) or within reach (items)
+                        int r = v.Row;
+                        if (r < v.Types.Count && v.Types[r] != 0xFF && v.Amounts[r] != 0) { chosen = v.Types[r]; Snd(3); break; }
+                        Snd(0xB); continue;
+                    }
+                    if (GameMenus.TriangleOnly()) { Snd(4); break; }            // state 0x0A
+                    int step = GameMenus.RepeatStep();
+                    if (step < 0) { if (GameMenus.WalkHeld()) v.ToTop(); else v.Up(); }
+                    else if (step > 0) { if (GameMenus.WalkHeld()) v.ToBottom(); else v.Down(); }
+                }
+                if (chosen >= 0)
+                {
+                    int yes = 1;
+                    if (pick == 0)
+                    {
+                        _state.ShopVariable = v.CardMerit(chosen);
+                        yield return HeadSay(Sec, 7 + v.CardSprite(chosen), owner);
+                        yield return HeadAsk(Sec, 2, 2, p => yes = p, 0xFD);
+                        if (yes == 0)
+                        {
+                            v.Close(v.List);
+                            _state.Stats[14] = (ushort)Mathf.Min(_state.Stats[14] + _state.ShopVariable, 9999);
+                            int left = _state.CardCount[chosen] - 1;
+                            _state.CardCount[chosen] = (byte)Mathf.Max(0, left); _state.Cards[chosen] = left > 0;
+                            ShopSaleSound();
+                        }
+                    }
+                    else
+                    {
+                        _state.ShopVariable = _itemCatalog[chosen].Merit;
+                        yield return HeadAsk(Sec, 3, 2, p => yes = p, 0xFD);
+                        if (yes == 0)
+                        {
+                            v.Close(v.List);
+                            _state.Stats[14] = (ushort)Mathf.Max(0, _state.Stats[14] - _state.ShopVariable);
+                            _state.AddItem(chosen, 1);
+                            _state.SyncSlots();
+                            ShopSaleSound();
+                        }
+                    }
+                }
+                v.Close(v.List);
+                _line = null;
+            }
+            v.Close(v.Bits);
+            ShopEnd();
+        }
+
+        // the keeper's points line (shopkeeper text 7: "Points" and MERIT in 4 places with the game's padding)
+        string MeritBitsText(int section)
+        {
+            _state.GameDigits = true;
+            string t = HeadText(section, 7);
+            _state.GameDigits = false;
+            return t;
+        }
+
         // rollCard: a rarity (1% 0, 4% 1, 15% 2, 30% 3, 50% 4), then one of the cards of that rarity
         int RollCard(ItemMenuView v)
         {

@@ -183,6 +183,25 @@ namespace DW1Remake.Game
             PlaceDoors();
         }
 
+        // initializeTrainingPoop (map.c, only on map 0xA5, GOMI02): \ETCNA\TRY.TMD, the big poop, at (1922, 0, 503), no rotation, scale 0x1000; its picture is in the map's images
+        void LoadTrainingPoop(byte[] mapBytes)
+        {
+            if (_mapId != 0xA5 || _mapId >= _num8.Count) return;
+            try
+            {
+                if (_mapVram == null) _mapVram = MapOverlay.Parse(mapBytes, _num8[_mapId], _num4[_mapId]);
+                var model = ReadTmd(_disc.ReadFile("/ETCNA/TRY.TMD"));
+                var m = model.Parts.Count > 0 ? BuildStatic(model.Parts[0], PageTexture, (f, i) => new Vector2((f.U[i] + 0.5f) / 256f, 1f - (f.T[i] + 0.5f) / 256f), _objAssets) : null;
+                if (m == null) return;
+                var d = new Door { Model = -2 };
+                d.Pos[0] = 1922; d.Pos[1] = 0; d.Pos[2] = 503;
+                d.T = MakeStaticObject(m, "Training poop", ObjRoot());
+                _doors.Add(d);
+                PlaceDoors();
+            }
+            catch (System.Exception ex) { Debug.LogWarning("[objects] training poop: " + ex.Message); }
+        }
+
         // renderDoors: model 10 is drawn twice, the second one mirrored and 680 units along Z
         void PlaceDoors()
         {

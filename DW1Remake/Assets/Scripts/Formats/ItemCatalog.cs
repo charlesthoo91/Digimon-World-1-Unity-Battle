@@ -10,7 +10,8 @@ namespace DW1Remake.Formats
         public int Id;
         public string Name;
         public int Price;
-        public int Category;        // from the record: 0 recovery, 1 cure, 2 food, 3 training disk, 4 chip/part, 5 tool/key (guessed from the names)
+        public int Merit;           // record +24 (Item.meritValue): its price in merit points at ShogunGekomon (0 = not offered)
+        public int Category;       // from the record: 0 recovery, 1 cure, 2 food, 3 training disk, 4 chip/part, 5 tool/key (guessed from the names)
         public string Description;
         public int TextColour;      // record +28: 0 cyan, 1 pink, 2 green (seen on the PS1 item page)
         public bool Droppable;      // record +29 (Item.droppable): it can be thrown away, sold or handed over (shopFillSellItemList)
@@ -41,6 +42,7 @@ namespace DW1Remake.Formats
                     Id = i,
                     Name = Encoding.ASCII.GetString(exe, p, n),
                     Price = BitConverter.ToUInt16(exe, p + 20),
+                    Merit = BitConverter.ToUInt16(exe, p + 24),
                     Category = exe[p + 26],
                     TextColour = exe[p + 28],
                     Droppable = exe[p + 29] != 0

@@ -16,6 +16,31 @@ namespace DW1Remake.Game
         // the spot in map 0x70 and the spot in the other gym, game units (TRN_D_8008F320)
         static readonly int[,] TrainSpot = { { 0x58C, -0x6D0, 0x58C, -0x6D0 }, { -0x3D6, -0xA14, -0x527, 0xCD9 }, { 0x2D, -0x184, 0x32, -0x11F }, { -0x33B, -0x662, -0x33B, -0x662 }, { 0x2AC, 0x868, 0x2AC, 0x868 }, { -0x4E1, 0x3F3, -0x5E3, 0x2CE } };
 
+        // TRN2_setup*Training (second gym, game units): map, kind, first stop x / z (NoStop = none), spot x / z, rotation vy (-1 = look at the boy)
+        const int NoStop = int.MinValue;
+        static readonly int[][] Trn2Spots =
+        {
+            new[] { 0xA5, 4, 0x3E5, 0x76, 0x6F8, 0x1D2, 0x400 },          // GOMI02 MP
+            new[] { 0x6B, 0, NoStop, 0, 0x168, 0x2E1, 0x898 },            // BETL03 HP
+            new[] { 0x6B, 1, NoStop, 0, -0x586, -0x59, 0x400 },           // BETL03 Offense
+            new[] { 0x63, 0, NoStop, 0, 0, -0x96, 0x400 },                // ICSA03 HP
+            new[] { 0x63, 3, NoStop, 0, 0x63E, -0x3BF, -1 },              // ICSA03 Defense
+            new[] { 0x6C, 3, NoStop, 0, -0x3C6, 0x3F8, 0x800 },           // BETL04 Defense
+            new[] { 0x6C, 2, 0xF7, 0x226, 0x372, 0x3C5, 0xA50 },          // BETL04 Speed
+        };
+
+        // TRN_TRAINING_SPOTS / TRN2_TRAINING_SPOTS: map, the game's stat (0 HP, 1 MP, 2 Off, 3 Def, 4 Speed, 5 Brains), x, z of the spot the slot box grows out of
+        static readonly int[][] HudSpots =
+        {
+            new[] { 0x70, 0, 0x3F2, -0x3CF }, new[] { 0x70, 2, -0x1FA, -0x791 }, new[] { 0x70, 3, -0x315, -0x36B }, new[] { 0x70, 1, 0x598, 0x4FC }, new[] { 0x70, 4, 0xC, 0x1BD }, new[] { 0x70, 5, -0x6F3, 0x824 },
+            new[] { 0x4E, 2, -0x33D, 0x1003 }, new[] { 0x4E, 4, 0x2FE, 0x6A },
+            new[] { 0xA5, 1, 0x59A, -0x11B },
+            new[] { 0x6B, 2, -0x52B, 0x540 }, new[] { 0x6B, 0, -0x228, 0x6BE },
+            new[] { 0x6C, 4, 0x2EE, 0x7F8 }, new[] { 0x6C, 3, -0xCC, 0x962 },
+            new[] { 0x63, 2, 0x5E9, 0x5B }, new[] { 0x63, 0, 0, 0x3E8 },
+            new[] { 0x77, 5, -0x7E1, 0x562 },
+        };
+
         int TrainAnim(int kind)
         {
             if (_trn == null) _trn = _disc.ReadFile("/TRN_REL.BIN");
@@ -31,29 +56,59 @@ namespace DW1Remake.Game
             Vector3 back = _partner.position;
             Quaternion boyFacing = _player.rotation;
             int side = _mapId == 0x70 ? 0 : 2;
-            bool hasSpot = _mapId != 0x6B && _mapId != 0x6C && _mapId != 0xA5 && _mapId != 0x63;      // the second gym's spots (TRN2) are not ported
-            Vector3 spot = hasSpot ? new Vector3(TrainSpot[kind, side] * Unit, _partner.position.y, TrainSpot[kind, side + 1] * Unit) : _partner.position;
+            // the second gym (TRN2_setup*Training): its own spots, a first stop for two of them, and the way the partner faces
+            int[] t2 = null;
+            foreach (int[] e in Trn2Spots) if (e[0] == _mapId && e[1] == kind) t2 = e;
+            bool hasSpot = t2 != null || (_mapId != 0x6B && _mapId != 0x6C && _mapId != 0xA5 && _mapId != 0x63);
+            Vector3 spot = t2 != null ? new Vector3(t2[4] * Unit, _partner.position.y, t2[5] * Unit)
+                : hasSpot ? new Vector3(TrainSpot[kind, side] * Unit, _partner.position.y, TrainSpot[kind, side + 1] * Unit) : _partner.position;
             if (_anim != null && _anim.HasSlot(10)) _anim.SetSlot(10);
             bool slots = _state.Vars[0xF6] == 1;     // the bonus try: TRN_startSlotSessionIfEnabled, on when variable 0xF6 is 1
-            RectInt spotSquare = hasSpot ? SpotSquare(spot) : new RectInt(-8, -8, 16, 16);      // TRN_getTrainingSpotScreenPos (else SLOTS_UI_END)
+            // TRN_getTrainingSpotScreenPos: the slot box grows out of the map's spot for this stat (its own table, not the walking spot); none = SLOTS_UI_END
+            RectInt spotSquare = new RectInt(-8, -8, 16, 16);
+            foreach (int[] e in HudSpots) if (e[0] == _mapId && e[1] == SlotStat[kind]) spotSquare = SpotSquare(new Vector3(e[2] * Unit, _partner.position.y, e[3] * Unit));
             _spotSquare = spotSquare;
             if (slots) StartSlot(SlotStat[kind], spotSquare);
             float slotAcc = 0f;
+            _trainSpot = spot;
+            if (_trn == null) _trn = _disc.ReadFile("/TRN_REL.BIN");
+            TrainRun run = BeginPieces(kind);      // storeMapObjectPosition: where the pieces it moves stand now
+            if (t2 != null && t2[2] != NoStop)
+            {
+                var first = WalkTo(new Vector3(t2[2] * Unit, _partner.position.y, t2[3] * Unit), RunSlot);
+                while (first.MoveNext()) { if (slots) TickSlotFrames(ref slotAcc); yield return first.Current; }
+                PiecesFirstStop(run);
+            }
             var walk = WalkTo(spot, RunSlot);
             while (walk.MoveNext()) { if (slots) TickSlotFrames(ref slotAcc); yield return walk.Current; }
             if (slots) _slot.Auto = true;            // TRN_startSlotSpin: the reels start by themselves once the partner is at its spot
-            int slot = TrainAnim(kind);
+            // TRN2: the facing the tick sets on arrival (rotation vy, or entityLookAtLocation the boy); GOMI02's MP training plays animation 0xC, started again whenever it ends (a loop)
+            int slot = _mapId == 0xA5 && kind == 4 ? 0xC : TrainAnim(kind);
+            if (t2 != null && t2[6] >= 0) _partner.rotation = Quaternion.Euler(0, t2[6] * 360f / 4096f, 0) * Quaternion.Euler(0, FacingOffset, 0);
+            else if (t2 != null) Face(_partner, _player.position);
             if (_partnerAnim != null && _partnerAnim.HasSlot(slot)) _partnerAnim.SetSlot(slot);
             if (kind == 5 && _anim != null && _anim.HasSlot(9)) _anim.SetSlot(9);
-            // 1200 frames or Triangle; with the bonus try, until the slot machine has paid out
-            for (float t = 0f; slots ? _slot.Result < 0 : t < 60f && !GameMenus.TriangleKey(); t += Time.deltaTime)
+            PiecesArrive(run);
+            // 1200 frames or Triangle; with the bonus try, until the slot machine has paid out. The pieces' routine runs once a game frame
+            // and, for the first gym's Defense, ends the training only when its round is over
+            float pieceAcc = 0f;
+            for (float t = 0f; ; t += Time.deltaTime)
             {
                 Face(_player, _partner.position);
                 if (slots) TickSlotFrames(ref slotAcc);
+                if (run != null && run.Show != null && !run.ShowDone)
+                {
+                    pieceAcc += Time.deltaTime * 20f;
+                    while (pieceAcc >= 1f) { pieceAcc -= 1f; if (!run.Show.MoveNext()) { run.ShowDone = true; break; } }
+                }
+                bool over = slots ? _slot.Result >= 0 : t >= 60f || GameMenus.TriangleKey();
+                if (over && run != null) run.WantEnd = true;
+                if (over && (run == null || !run.Blocks || run.ShowDone)) break;
                 yield return null;
             }
             int bonus = slots ? _slot.Result : 10;
             _slot = null;
+            PiecesAward(run);
             if (_audio != null) _audio.Play(8, 10);
             if (_partnerAnim != null) _partnerAnim.SetSlot(0x12, true);
             if (_anim != null) _anim.SetSlot(IdleSlot);
@@ -91,7 +146,18 @@ namespace DW1Remake.Game
             if (_statsBox != null) _statsBox.ShrinkTo(null);      // TRN_closeUIBox(1): removeAnimatedUIBox(1, NULL)
             _player.rotation = boyFacing;
             if (_care.LearnFromTraining(_trn, kind)) Say(DigimonStatsCatalogName(_care.LastLearned) + " mastered!");
-            yield return WalkTo(_player.position, RunSlot);
+            // the way back: HP's pieces creep back while it walks (case 5)
+            var home = WalkTo(_player.position, RunSlot);
+            float backAcc = 0f; bool piecesBack = run == null || run.Kind != 0;
+            for (;;)
+            {
+                bool walking = home.MoveNext();
+                backAcc += Time.deltaTime * 20f;
+                while (!piecesBack && backAcc >= 1f) { backAcc -= 1f; piecesBack = PiecesReturn(run); }
+                if (!walking && piecesBack) break;
+                yield return walking ? home.Current : null;
+            }
+            PiecesFinish(run);
             if (_partnerAnim != null) _partnerAnim.SetSlot(IdleSlot);
             _armed = true;      // he still stands on the board's trigger: Cross starts the next training at once
         }
@@ -135,13 +201,19 @@ namespace DW1Remake.Game
             {
                 if (BitConverter.ToInt32(d, o) != 0x10 || BitConverter.ToInt32(d, o + 4) != 8) continue;
                 int img = o + 8 + BitConverter.ToInt32(d, o + 8);
-                if (img < o || img + 12 > d.Length || BitConverter.ToUInt16(d, img + 4) != 704 || BitConverter.ToUInt16(d, img + 6) != 0) continue;
+                // the gym maps hold the symbols in a 64 x 256 picture at VRAM (704, 0); GOMI02 and BETL04 only the 64 x 32 piece at (704, 216)
+                if (img < o || img + 12 > d.Length || BitConverter.ToUInt16(d, img + 4) != 704) continue;
+                int imgY = BitConverter.ToUInt16(d, img + 6);
+                if (imgY != 0 && imgY != 216) continue;
+                _slotV0 = imgY;
                 DW1Remake.Formats.TimImage tim;
                 // CLUT (48, 486) for the symbols and (64, 486) for the strip: colour sets 3 and 4 of the picture's colour block
                 if (DW1Remake.Formats.TimImage.TryParse(d, o, out tim)) { _slotTex = tim.ToTexture(3); _slotShade = tim.ToTexture(4); }
                 break;
             }
         }
+
+        int _slotV0;      // the picture's VRAM y: the sprites' v values are page coordinates
 
         void TickSlotFrames(ref float acc)
         {
@@ -284,7 +356,7 @@ namespace DW1Remake.Game
                 int cx = 41 * i - 41;
                 // TRN_SLOT_SPRITE2: 8 x 32 at u 224, scaled 4 x 2, subtracted at half strength (drawn here as a dark wash)
                 var o = GUI.color; GUI.color = new Color(0f, 0f, 0f, 0.5f);
-                GUI.DrawTextureWithTexCoords(new Rect(px(cx - 16), py(-74), 32 * 4.42f, 64 * 4.42f), _slotShade, new Rect(224f / tw, 1f - 248f / th, 8f / tw, 32f / th));
+                GUI.DrawTextureWithTexCoords(new Rect(px(cx - 16), py(-74), 32 * 4.42f, 64 * 4.42f), _slotShade, new Rect(224f / tw, 1f - (248f - _slotV0) / th, 8f / tw, 32f / th));
                 GUI.color = o;
                 int y = p.Scroll[i] - 0x7A;
                 if (p.Settle[i] == 0) { y += p.Speed[i] >> 6; if (p.Scroll[i] + (p.Speed[i] >> 6) == 0x20) y--; }
@@ -297,7 +369,7 @@ namespace DW1Remake.Game
                     else if (y + 0x20 >= -9) { sy = y; v = 0xD8; h = 0x20 - (y + 0x2A); }
                     else { sy = y; v = 0xD8; h = 0x20; }
                     if (y >= -9 || y + 0x20 < -0x49 || h <= 0) continue;
-                    GUI.DrawTextureWithTexCoords(new Rect(px(cx - 16), py(sy), 32 * 4.42f, h * 4.42f), _slotTex, new Rect(u / tw, 1f - (v + h) / th, 32f / tw, h / th));
+                    GUI.DrawTextureWithTexCoords(new Rect(px(cx - 16), py(sy), 32 * 4.42f, h * 4.42f), _slotTex, new Rect(u / tw, 1f - (v + h - _slotV0) / th, 32f / tw, h / th));
                 }
             }
             UiKit.End();

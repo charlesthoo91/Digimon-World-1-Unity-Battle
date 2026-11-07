@@ -305,13 +305,19 @@ namespace DW1Remake.Formats
         static string Decode(byte[] d, int j, ScriptState st, int speaker, out int end, bool colours = false)
         {
             var sb = new StringBuilder();
+            // showTextbox (US 0x80101688, machine code): the text ends only where a line break (0D 00) is followed by 00 00. A 00 00 anywhere
+            // else is copied into the line like a character and the line's drawing stops at it, so the rest of that line is not seen and the
+            // text goes on. GKYO02's Gekomon ("You can collect" 00 00 ...) sets flag 0x7A after such a line (the merit shop needs it).
+            bool afterBreak = false, hidden = false;
             while (j < d.Length)
             {
                 int c = d[j];
-                if ((c >= 0x81 && c <= 0x9F) || (c >= 0xE0 && c <= 0xFC)) { if (j + 1 >= d.Length) break; sb.Append(MapScripts.Pair(c << 8 | d[j + 1])); j += 2; }
-                else if (c == 0x0D) { sb.Append('\n'); j += 2; }
+                bool wasBreak = afterBreak; afterBreak = false;
+                if ((c >= 0x81 && c <= 0x9F) || (c >= 0xE0 && c <= 0xFC)) { if (j + 1 >= d.Length) break; if (!hidden) sb.Append(MapScripts.Pair(c << 8 | d[j + 1])); j += 2; }
+                else if (c == 0x0D) { sb.Append('\n'); j += 2; afterBreak = true; hidden = false; }
+                else if (c == 0x00) { j += 2; if (wasBreak) break; hidden = true; }
+                else if (hidden) j += c < 0x20 ? 2 : 1;
                 else if (c == 0x01) { if (colours) sb.Append((char)(ColourMark + (d[j + 1] & 15))); j += 2; }      // setTextColor
-                else if (c == 0x00) { j += 2; break; }
                 else if (c < 0x20) { sb.Append(st.CodeText(c, d[j + 1], speaker)); j += 2; } // a value the game fills in (names, numbers, time...)
                 else j++;
             }

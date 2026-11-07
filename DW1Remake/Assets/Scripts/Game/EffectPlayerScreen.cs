@@ -239,11 +239,14 @@ namespace DW1Remake.Game
             SetVec(out2, EulerYXZ(r * YXZ(Vec(rotIn))));
         }
 
-        // BTL_selectRandomTargetEntity: a random living fighter (ours: the target, or the source too when it may pick itself)
+        // BTL_selectRandomTargetEntity: a random living entity of ENTITY_TABLE 1-9; the source itself only when the argument is not 0 (the game names it excludeSelf,
+        // but the test lets everyone through when it is set). The hit subs never hurt the source, so aiming at itself harms nobody.
         void RandomTarget()
         {
             int self = Pop();
-            if (self != 0 && _ctx.Src != null && _rng.Next(2) == 0) _ctx.Tgt = _ctx.Src;
+            var living = LivingEntities();
+            if (_ctx.Src != null && self != 0) living.Add(_ctx.Src);
+            if (living.Count > 0) _ctx.Tgt = living[_rng.Next(living.Count)];
         }
 
         // BTL_getCameraRotation

@@ -31,13 +31,29 @@ def secs(s):
         r.append((i, v)); o += 4
     return r
 
-def text_end(s, j):
+def old_end(s, j):
     while j < len(s):
         c = s[j]
         if 0x81 <= c <= 0x9F or 0xE0 <= c <= 0xFC: j += 2
         elif c == 0: return j + 2
+        elif c < 0x20: j += 2
+        else: j += 1
+    return j
+
+stray = []
+def text_end(s, j):
+    # showTextbox (US 0x80101688): the text ends only at 0D 00 followed by 00 00; a 00 00 elsewhere is a character
+    start = j; brk = False
+    while j < len(s):
+        c = s[j]; was = brk; brk = False
+        if 0x81 <= c <= 0x9F or 0xE0 <= c <= 0xFC: j += 2
+        elif c == 0x0D: j += 2; brk = True
+        elif c == 0:
+            j += 2
+            if was: break
         elif c < 0x20: textcodes[c] += 1; j += 2
         else: j += 1
+    if old_end(s, start) != j: stray.append(start)
     return j
 
 def walk(name, s, start):
@@ -101,3 +117,4 @@ print('== 0x27 boxes'); print(' '.join('%02X:%d' % (k, closes[k]) for k in sorte
 print('== text codes'); print(' '.join('%02X:%d' % (k, textcodes[k]) for k in sorted(textcodes)))
 print('== IF conditions'); print(dict(conds))
 print('== problems (%d)' % len(bad)); print('\n'.join(bad[:40]))
+print('== texts with a 00 00 before their end:', len(stray), ' '.join(hex(x) for x in stray[:20]))

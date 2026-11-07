@@ -7,6 +7,7 @@ Shader "DW1Remake/Effect"
         _Color ("Colour", Color) = (1,1,1,1)
         _Rect ("UV offset and scale", Vector) = (0,0,1,1)
         [HideInInspector] _ZTest ("ZTest", Float) = 4
+        [HideInInspector] _ZWrite ("ZWrite", Float) = 0
         [HideInInspector] _SrcBlend ("Src blend", Float) = 1
         [HideInInspector] _DstBlend ("Dst blend", Float) = 1
         [HideInInspector] _BlendOp ("Blend op", Float) = 0
@@ -20,7 +21,7 @@ Shader "DW1Remake/Effect"
             Name "Effect"
             Blend [_SrcBlend] [_DstBlend]
             BlendOp [_BlendOp]
-            ZWrite Off
+            ZWrite [_ZWrite]
             ZTest [_ZTest]
             Cull Off
             HLSLPROGRAM

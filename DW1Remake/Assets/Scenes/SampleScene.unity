@@ -432,7 +432,7 @@ MonoBehaviour:
   WalkSlot: 2
   WindowHeightPx: 240
   FadeSeconds: 0.25
-  Hd2D: 1
+  Hd2D: 0
   UseMapLights: 1
   InvertLightDirection: 0
   AutoOrientLights: 1
@@ -454,8 +454,8 @@ MonoBehaviour:
   PlayerNameText: A
   PartnerNameText: B
   QuickStart: 0
-  LoadSaveOnStart: 0
-  TitleScreen: 1
+  LoadSaveOnStart: 1
+  TitleScreen: 0
 --- !u!4 &559601211
 Transform:
   m_ObjectHideFlags: 0

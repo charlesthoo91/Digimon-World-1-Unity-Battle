@@ -35,6 +35,7 @@ namespace DW1Remake.Game
             public Tech Pending; public Fighter PendingTarget;
             public int Cool, Flat, PoisonFrames; public bool Poisoned, Blind; public float Adjust; public Vector3 Scale;
             public float NextAct, AnimReset, StunUntil;
+            public float HitUntil;              // stats.current.isHit: until its hit reaction is over nothing hits it again (the effects' hit subs skip it)
             public float ShownHp;               // the HP shown on screen: it drains smoothly after a hit (393, 379, 365 ...)
             public Vector3 Slot;
             public Vector3 FleeTo; public int Leaving;      // NPCEntity.flee (Unity); after the fight 0 getting up, 1 running off, 2 done
@@ -203,7 +204,14 @@ namespace DW1Remake.Game
                 var t = MakeTech(info.Moves[place], false);
                 f.Moves[k] = t; f.Techs.Add(t);
             }
-            if (info.SignatureId >= 0) f.Finisher = MakeTech(info.SignatureId, true);
+            // BTL_tickFighterStates: an enemy has a finisher only when the technique of its slot 3 (moves[3]) is one of 0x3A-0x70; the gauge then fills and it fires. Psychemon's
+            // slot 3 is Tremar, a normal move, so it has none (its list ends in War Cry, a power-up that never hits)
+            if (data != null)
+            {
+                int place3 = data.MoveSlots[3] - DigimonStats.FirstMoveSlot;
+                if (place3 >= 0 && place3 < info.Moves.Count && IsFinisherId(info.Moves[place3])) f.Finisher = MakeTech(info.Moves[place3], true);
+            }
+            else if (info.SignatureId >= 0) f.Finisher = MakeTech(info.SignatureId, true);
         }
 
         /// <summary>right = the screen's right direction on the ground.</summary>
@@ -1059,7 +1067,7 @@ namespace DW1Remake.Game
                     sw.Done = true;
                     if (ranged && sw.Tech.Self) Buff(sw.From, sw.Tech);
                     else if (sw.Effect) { }      // its program lands the hit
-                    else if (ranged && sw.Tech.Wide && !sw.From.Blind) Apply(sw.From, sw.To, sw.Tech, sw.Boost);   // a wide technique covers the whole area: it cannot be dodged
+                    else if (ranged && sw.Tech.Wide && !sw.From.Blind) { foreach (var f in new List<Fighter>(AllFighters())) if (f != sw.From && (f == sw.To || CanBeHit(f))) Apply(sw.From, f, sw.Tech, sw.Boost); }   // a wide technique covers the whole area: it cannot be dodged
                     else if (ranged) Fire(sw);
                     else
                     {
@@ -1090,6 +1098,12 @@ namespace DW1Remake.Game
 
         static Vector3 Flat(Vector3 v) { v.y = 0; return v; }
 
+        public IEnumerable<Fighter> AllFightersPublic() { return AllFighters(); }
+        IEnumerable<Fighter> AllFighters() { yield return Partner; foreach (var f in Enemies()) yield return f; }
+
+        // isHit: a fighter in its hit reaction (or down) cannot be hit again until the reaction is over
+        bool CanBeHit(Fighter f) { return f != null && f.Hp > 0 && _time >= f.HitUntil && f.Leaving == 0; }
+
         EffectActor ActorFor(Fighter f)
         {
             return new EffectActor { T = f.T, A = f.A, Type = f.Info != null ? f.Info.Type : 0, Radius = f.Info != null ? f.Info.Radius : 120, Height = f.Info != null ? f.Info.Height : 200, BoneCount = f.Info != null ? f.Info.BoneCount : 2 };
@@ -1105,14 +1119,25 @@ namespace DW1Remake.Game
             bool ok = false;
             try
             {
-                ok = Effects.Start(sw.Tech.Id, ActorFor(sw.From), ActorFor(sw.To), at =>
+                // BTL_applyLineAttackHit / RadiusAttackHit / BoxAttackHit test every Digimon but the source (ENTITY_TABLE 1-9), friends too: Tremar from one enemy
+                // also hurts the other enemies. One already in its hit reaction (isHit) or down is skipped.
+                var victims = new List<EffectActor>(); var who = new Dictionary<EffectActor, Fighter>(); EffectActor primary = null;
+                foreach (var f in AllFighters())
+                {
+                    if (f == sw.From) continue;
+                    var act = ActorFor(f); victims.Add(act); who[act] = f;
+                    if (f == sw.To) primary = act;
+                }
+                if (primary == null) primary = ActorFor(sw.To);
+                ok = Effects.Start(sw.Tech.Id, ActorFor(sw.From), primary, victims, a => who.ContainsKey(a) && CanBeHit(who[a]), (at, victim) =>
                 {
                     // BTL_addAttackObjectToTarget: the attack object sits where the effect part touched; the hit effect starts there
-                    sw.HitAt = at;
-                    if (sw.Tech.Melee || sw.Landed) return;
-                    sw.Landed = true;
-                    Apply(sw.From, sw.To, sw.Tech, sw.Boost, at);
-                });
+                    Fighter f = who.ContainsKey(victim) ? who[victim] : sw.To;
+                    if (f == sw.To) sw.HitAt = at;
+                    if (sw.Tech.Melee) return;
+                    if (f == sw.To) { if (sw.Landed) return; sw.Landed = true; }
+                    Apply(sw.From, f, sw.Tech, sw.Boost, at);
+                }, a => who.ContainsKey(a) && who[a].Hp > 0);
             }
             catch (Exception e) { Debug.LogWarning("Effect of " + sw.Tech.Name + ": " + e.Message); }
             Debug.Log("[effect] start " + sw.Tech.Name + " (technique " + sw.Tech.Id + ") by " + sw.From.Name + ": " + (ok ? "program running" : "no program, plain shot"));
@@ -1310,6 +1335,7 @@ namespace DW1Remake.Game
         void Apply(Fighter a, Fighter d, Tech tech, float boost = 1f, Vector3? at = null)
         {
             if (d.Hp <= 0 || FleeDropsHits) return;
+            if (_time < d.HitUntil) return;       // isHit: it is still in the reaction to the last blow (fall and getting up)
             Vector3 hitAt = at ?? HitPoint(d);
             // the hit code (battle_main.c), before the hit roll: a blow on the fighter whose finishing move is running ends it
             // (BTL_removeFinisherChargeup, BTL_removeFinisherAura, NO_AI_FLAG and FINISHING_ENTITY cleared, BTL_removeMoveEffect)
@@ -1335,6 +1361,7 @@ namespace DW1Remake.Game
                 float length = (d.A != null ? d.A.SecondsOf(slot) : 0f) + tech.Stagger / 20f;
                 Play(d, slot, length);
                 d.NextAct = Mathf.Max(d.NextAct, _time + length);
+                d.HitUntil = _time + length;
             }
             // BTL_startHitAnimation: createParticleFX(MOVE_DATA.special, 1, attack position, the hit Digimon, MOVE_DATA.iframes + 0x10)
             if (Effects != null) Effects.AddHitFx(tech.Element, 1, hitAt, ActorFor(d), tech.Stagger + 0x10);
