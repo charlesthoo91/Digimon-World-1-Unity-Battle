@@ -117,6 +117,7 @@ namespace DW1Remake.Game
         public bool Won { get; private set; }
         public bool Fled { get; private set; }
         public bool NoFlee;                     // scripted fights (script variable 250 = 1): running away is locked
+        public bool Tamerless;                  // script flag 2 at the start: the boy gives no orders and uses no items
         public Fighter Partner, Enemy;           // Enemy = the one the partner is after; the others wait in Extras (up to three enemies, "Change target!")
         public readonly List<Fighter> Extras = new List<Fighter>();
         public BattleIcons Icons; public ItemIcons Items;
@@ -219,6 +220,7 @@ namespace DW1Remake.Game
                           Transform enemy, DigimonAnimator enemyAnim, string enemyName, DigimonStats enemyInfo, MapDigimon enemyData, Vector3 right, bool noFlee, List<Vector2Int> route, Vector2Int startTile, float boyRadius)
         {
             NoFlee = noFlee;
+            Tamerless = _s.GetFlag(2);      // battle_setup.c: IS_TAMERLESS_BATTLE = isTriggerSet(2)
             Extras.Clear();
             Partner = new Fighter
             {
@@ -357,7 +359,10 @@ namespace DW1Remake.Game
                     break;
                 }
                 case Phase.Fight:
-                    if (!_charging && SquarePressed() && Partner.Finisher != null && Partner.Finish >= Partner.FinishMax) { _wantFinish = true; Partner.Pending = null; Partner.Wait = 0; Snd(3); Shout(Partner.Finisher.Name); }     // battle_tick.c: command 0xB and its shout
+                    // IS_TAMERLESS_BATTLE (script flag 2, battle_setup.c): handleCommands returns at once (no cursor, no order, no Run, no finishing
+                    // move) and tamerTickBattle opens no item box. FRZL08's second Garurumon fight ("Only Digimon will fight")
+                    if (Tamerless) { triangle = false; side = 0; action = false; }
+                    if (!Tamerless && !_charging && SquarePressed() && Partner.Finisher != null && Partner.Finish >= Partner.FinishMax) { _wantFinish = true; Partner.Pending = null; Partner.Wait = 0; Snd(3); Shout(Partner.Finisher.Name); }     // battle_tick.c: command 0xB and its shout
                     if (triangle) { if (OnOpenBag != null) OnOpenBag(); }
                     if (side != 0) { Snd(2); MoveHover(side); }
                     if (action) { Snd(3); if (_playerA != null) _playerA.SetSlot(14, true); Choose(_hover - 1); }

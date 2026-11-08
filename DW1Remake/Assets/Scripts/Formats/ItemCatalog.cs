@@ -52,6 +52,10 @@ namespace DW1Remake.Formats
                 e.Description = dp >= 0 && dp < exe.Length ? Encoding.ASCII.GetString(exe, dp, len) : "";
                 list.Add(e);
             }
+            // FIXED ORIGINAL BUG (user's decision 2026-11-08): the US text of DV Chip E (item 31) says "Boost Off. Pwr+Speed +1000", but the chip
+            // gives +1000 max HP and +1000 max MP (item.c, chip 0x1F). Our own line, in the style of DV Chip A / D, replaces it only when the disc
+            // has that wrong text
+            if (list.Count > 31 && list[31].Description == "Boost Off. Pwr+Speed +1000") list[31].Description = "Boost HP+MP +1000";
             return list;
         }
     }
