@@ -759,7 +759,7 @@ namespace DW1Remake.Game
                     Vector3 next = m.T.position + (to.sqrMagnitude > 0f ? to.normalized * Mathf.Min(step, to.magnitude) : Vector3.zero);
                     // with a target entity, entityCheckCollision tries the step against every other Digimon and the boy: a step into one is not taken
                     // and the walk is over (col 0-8). The Gekomon that run at the boy on STIC02 stop round him, not on top of him
-                    bool touched = m.WalkTarget != null && step > 0f && TouchesAnyone(m.T, next);
+                    bool touched = m.WalkTarget != null && step > 0f && (m.T == _player ? TouchesAnyone(m.T, next) : StepRunsInto(m.T, m.T.position, next));
                     if (TileOf(m.T.position) == TileOf(m.Goal) || to.sqrMagnitude < 0.0001f || touched) { m.Walking = false; m.WalkTarget = null; if (m.A != null) m.A.SetSlot(IdleSlot); }
                     else
                     {
@@ -1384,6 +1384,40 @@ namespace DW1Remake.Game
                 if (Mathf.Abs(o.position.x - at.x) < reach && Mathf.Abs(o.position.z - at.z) < reach) return true;
             }
             return false;
+        }
+
+        // entityCheckCollision -> entityCheckEntityCollision (map.c) for a walker that is not the boy: only the edge(s) of its box on the side it
+        // steps to are tested (dx < 0 its left edge, dx > 0 its right, dz < 0 its top, dz > 0 its bottom), each against the other's box (isRectInRect,
+        // edges count). So a Digimon that stands in someone and walks away from them is not stopped (GIAS04: MetalMamemon starts in the boy and
+        // runs to Biyomon, user's clip 2026-11-08). The boy as the walker keeps the whole-box test (TouchesAnyone).
+        bool StepRunsInto(Transform walker, Vector3 from, Vector3 next)
+        {
+            int dx = Mathf.RoundToInt((next.x - from.x) / Unit), dz = Mathf.RoundToInt((next.z - from.z) / Unit);
+            if (dx == 0 && dz == 0) return false;
+            int r = RadiusOf(walker);
+            int nx = Mathf.RoundToInt(next.x / Unit), nz = Mathf.RoundToInt(next.z / Unit);
+            int left = nx - r, right = nx + r, bottom = nz + r, top = nz - r;
+            var others = new List<Transform>();
+            if (_player != null) others.Add(_player);
+            if (_partner != null && _partner.gameObject.activeInHierarchy) others.Add(_partner);
+            foreach (var n in _npcs) if (n.T != null && n.T.gameObject.activeInHierarchy) others.Add(n.T);
+            foreach (var o in others)
+            {
+                if (o == walker) continue;
+                int ro = RadiusOf(o), ox = Mathf.RoundToInt(o.position.x / Unit), oz = Mathf.RoundToInt(o.position.z / Unit);
+                int x0 = ox - ro, x1 = ox + ro, z0 = oz - ro, z1 = oz + ro;
+                if (dx < 0 && EdgeInBox(x0, x1, z0, z1, left, bottom, left, top)) return true;
+                if (dx > 0 && EdgeInBox(x0, x1, z0, z1, right, bottom, right, top)) return true;
+                if (dz < 0 && EdgeInBox(x0, x1, z0, z1, left, top, right, top)) return true;
+                if (dz > 0 && EdgeInBox(x0, x1, z0, z1, left, bottom, right, bottom)) return true;
+            }
+            return false;
+        }
+
+        // isRectInRect: the box (x0..x1, z0..z1) and the edge given as (l, t, r, b) in its argument order
+        static bool EdgeInBox(int x0, int x1, int z0, int z1, int l, int t, int r, int b)
+        {
+            return !(x1 < l || r < x0 || t < z0 || b > z1);
         }
 
         // entityCheckEntityCollision for the boy on the map: on the frame Cross is pressed while he stands (animation 0), his box reaches 50 units
