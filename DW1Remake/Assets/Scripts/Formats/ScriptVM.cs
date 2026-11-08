@@ -114,7 +114,7 @@ namespace DW1Remake.Formats
             }
         }
         public Action<int> OnDamage;              // 0x69 dealt this much to the partner (the room shows the number)
-        public int ShopVariable;                  // SHOP_VARIABLE: the Bits a baby partner's discount saved (shop text code 0x10)
+        public int ShopVariable;                  // SHOP_VARIABLE (shown by text code 0x10): a baby partner's shop discount, merit values, Monochromon's total profit (built-ins 0x1E / 0x1F / 0x38)
         public bool GameDigits;                   // while set, code 0x0A gives the game's padded number (the shop's Bits box draws it with drawString's spaces)
         public int ItemSlots;                     // 0x23: how many items the bag holds (10 at the start, 20/30 with each Dimensional Key Chain)
         /// <summary>INVENTORY.types: the bag's slots in their order (0xFF = an empty slot); the counts stay in Bag. SyncSlots keeps the two in step.</summary>

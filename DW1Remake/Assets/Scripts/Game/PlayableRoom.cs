@@ -470,9 +470,9 @@ namespace DW1Remake.Game
                     else if (a.Frames == 0x0C) { int it = _state.Vars[0xFE]; if (it != 0xFF) _state.RemoveItem(it, 1); }       // take one of the chosen item
                     else if (a.Frames == 0x0D) { int it = _state.Vars[0xFE]; if (it != 0xFF) _state.RemoveItem(it, 0x63); }    // take all of it
                     else if (a.Frames == 0x15) ResetPieceAnimation(_state.Vars[0xF7], _state.Vars[0xF8]);                      // resetMapObjectAnimation(var 247, var 248)
-                    else if (a.Frames == 0x1E) _shopVariable = 0;                                                                  // SHOP_VARIABLE = 0
-                    else if (a.Frames == 0x1F) _shopVariable += _state.Vars[0xF4] + (_state.Vars[0xF3] << 8);                     // += variables 243/244
-                    else if (a.Frames == 0x38) { _state.Vars[0xF3] = (byte)((_shopVariable / 256) & 0xFF); _state.Vars[0xF4] = (byte)(_shopVariable & 0xFF); }
+                    else if (a.Frames == 0x1E) _state.ShopVariable = 0;                                                                  // SHOP_VARIABLE = 0
+                    else if (a.Frames == 0x1F) _state.ShopVariable += _state.Vars[0xF4] + (_state.Vars[0xF3] << 8);                     // += variables 243/244 (one SHOP_VARIABLE, shown by text code 0x10)
+                    else if (a.Frames == 0x38) { _state.Vars[0xF3] = (byte)((_state.ShopVariable / 256) & 0xFF); _state.Vars[0xF4] = (byte)(_state.ShopVariable & 0xFF); }
                     else if (a.Frames == 0x21)
                     {
                         // flags 0x25-0x27 on; variable 2 = 0x16 on day 0x16 else 0x95; variable 3 = 0x16; variable 4 = the partner's type
@@ -2074,7 +2074,6 @@ namespace DW1Remake.Game
         }
 
         GameObject[] _ovPieces;
-        int _shopVariable;
         float _white;      // the screen fade to white (built-ins 0x2D / 0x2E)
 
         System.Collections.IEnumerator WhiteFade(bool toWhite, int frames)
