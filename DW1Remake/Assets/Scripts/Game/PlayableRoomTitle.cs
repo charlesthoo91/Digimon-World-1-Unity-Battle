@@ -90,23 +90,27 @@ namespace DW1Remake.Game
             t.Picture = TitlePicture("/ETCNA/TITLE2.TIM", out t.PictureHeight);
             yield return TitleFade(false);
             int pick = -1;
+            MoveOldSave();
             while (pick < 0)
             {
-                bool hasSave = File.Exists(SavePath);
-                var s = InitialMenu(hasSave);
+                // the memory cards are always there (CONNECTED_CARDS): CONTINUE and DELETE are never dimmed
+                var s = InitialMenu(true);
                 int answer = 0;
                 yield return Ask(s, a => answer = a);
                 if (answer != 1) continue;      // Circle / Triangle: nothing
-                if (s.Pos == 0) pick = 0;                        // NEW GAME
-                else if (s.Pos == 1 && hasSave) pick = 1;        // CONTINUE GAME
-                else if (s.Pos == 2 && hasSave)                  // DELETE GAME
+                if (s.Pos == 0)                                  // NEW GAME: menus 0xA (card), 0xE (empty slot), 0xF (confirm) or 0x13 (no card)
                 {
-                    var c = YesNoScreen(SlotTitle(2), 0x46, 0x3C, 0x57, 0x63, 67, 87);
-                    c.Box(0x3C, 0x32, 0xBC, 0x20); c.Box(0x3C, 0x52, 0x38, 0x22);
-                    int a2 = 0;
-                    yield return Ask(c, a => a2 = a);
-                    if (a2 == 1 && c.Pos == 0) { try { File.Delete(SavePath); } catch (System.Exception e) { Debug.LogWarning("[title] " + e.Message); } }
+                    int got = 0;
+                    yield return CardFlow(0, r => got = r);
+                    if (got == 1) pick = 0;
                 }
+                else if (s.Pos == 1)                             // CONTINUE GAME: menus 0x14, 0x17, 0x18
+                {
+                    int got = 0;
+                    yield return CardFlow(1, r => got = r);
+                    if (got == 1) pick = 1;
+                }
+                else if (s.Pos == 2) { int got = 0; yield return CardFlow(2, r => got = r); }     // DELETE GAME: menus 0x1E, 0x21, 0x22
                 // BATTLE MODE (pos 3): the VS mode is not ported
                 else if (s.Pos == 4) yield return ModsPage();    // ours: the optional mods (ModSettings)
             }
@@ -154,6 +158,161 @@ namespace DW1Remake.Game
             return s;
         }
 
+        // ------------------------------------------------------------------ the memory cards (tickMainMenu / renderMainMenu, US)
+
+        // MENU_HIGHLIGHTS[k] (exe 0x801316B8, 16 bytes): rows at +1, row height +6, x +8, y +10, width +12, height +14
+        void HighlightCursor(SysScreen s, int k, int max = 0)
+        {
+            byte[] exe = ExeBytes;
+            int h = (int)(0x801316B8 - System.BitConverter.ToUInt32(exe, 0x18) + 0x800) + 16 * k;
+            s.Cursor(System.BitConverter.ToInt16(exe, h + 8), System.BitConverter.ToInt16(exe, h + 10), System.BitConverter.ToInt16(exe, h + 12),
+                     System.BitConverter.ToInt16(exe, h + 14), System.BitConverter.ToInt16(exe, h + 6), (sbyte)exe[h + 1], max);
+        }
+
+        // SLOT_ACTION_TITLES[action] for card 2: STR_2 is drawn over its "1"
+        string CardTitle(int action, int card) { string t = SlotTitle(action); return card == 1 && t.EndsWith("1") ? t.Substring(0, t.Length - 1) + Exe(0x80134662) : t; }
+
+        /// <summary>action 0 new game, 1 continue, 2 delete; result 1 = a slot was chosen and confirmed (_card / _cardSlot set, or _noCard for a new
+        /// game without a card), 0 = back to the title menu</summary>
+        IEnumerator CardFlow(int action, System.Action<int> result)
+        {
+            while (true)
+            {
+                // view 1 (renderSelectNewGameCard: START SLOT 1 / 2, NO MEMORY CARD) or views 2 / 4 (renderSelectCardSlot)
+                var s = new SysScreen();
+                int x = action == 0 ? 0x4B : 0x46;
+                s.Text(CardTitle(action, 0), x, 0x37); s.Text(CardTitle(action, 1), x, 0x43);
+                if (action == 0) { s.Text(SlotTitle(3), x, 0x4F); s.Box(0x41, 0x32, 0xBE, 0x2E); }
+                else s.Box(0x3C, 0x32, 0xB7, 0x22);
+                HighlightCursor(s, action == 0 ? 1 : action == 1 ? 2 : 4);
+                int answer = 0;
+                yield return Ask(s, a => answer = a);
+                if (answer != 1) { result(0); yield break; }
+                if (action == 0 && s.Pos == 2)
+                {
+                    // menu 0x13, view 6 (renderConfirmNoCard): Yes starts the game with no card (MEMORY_CARD_ID = -1)
+                    var c = new SysScreen();
+                    c.Text(SlotTitle(3), 0x3A, 0x18); c.Box(0x30, 0x13, 0xBE, 0x16);
+                    uint[] warn = { 0x801312A0, 0x801312B8, 0x801312D0, 0x801312E4 };
+                    for (int i = 0; i < 4; i++) c.Text(Exe(warn[i]), 0x22, 0x5A + 12 * i);
+                    c.Box(0x18, 0x55, 0x110, 0x46);
+                    c.Text(Exe(0x801346AC), 0x6E, 0x37); c.Text(Exe(0x801346B0), 0x6E, 0x43); c.Box(0x64, 0x32, 0x38, 0x22);
+                    HighlightCursor(c, 6);
+                    int a2 = 0;
+                    yield return Ask(c, a => a2 = a);
+                    if (a2 == 1 && c.Pos == 0) { _card = -1; _cardSlot = -1; _noCard = true; result(1); yield break; }
+                    continue;
+                }
+                int card = s.Pos;
+                while (true)
+                {
+                    int slot = -1;
+                    yield return SlotList(action, card, r => slot = r);
+                    if (slot < 0) break;            // back to the card choice
+                    bool yes = false;
+                    yield return ConfirmSlot(action, card, slot, r => yes = r);
+                    if (!yes) continue;             // back to the list
+                    if (action == 2)
+                    {
+                        // menu 0x23: the file is deleted, then the card is read again (back to the list)
+                        try { File.Delete(SlotPath(card, slot)); } catch (System.Exception e) { Debug.LogWarning("[title] " + e.Message); }
+                        continue;
+                    }
+                    _card = card; _cardSlot = slot; _noCard = false;
+                    result(1); yield break;
+                }
+            }
+        }
+
+        // menus 0xE / 0x17 / 0x21, view 7 (renderSelectSlot / renderSaveSlotBox, tickSelectSlotInput): the title, then six boxes 0x24 apart of
+        // the card's 15 slots; five cursor rows, the list scrolls to slot 10. A new game takes only an empty slot, continue and delete only a used
+        // one; the others are dimmed (colour 1). A used slot shows the player name and the partner species (US save titles have no place)
+        IEnumerator SlotList(int action, int card, System.Action<int> result)
+        {
+            var info = new SaveGameData[SlotsPerCard];
+            for (int i = 0; i < SlotsPerCard; i++) info[i] = ReadSlot(card, i);
+            var s = new SysScreen();
+            HighlightCursor(s, 7, SlotsPerCard - 5);
+            s.Refresh = v =>
+            {
+                v.Texts.Clear(); v.Boxes.Clear(); v.Dim.Clear();
+                v.Text(CardTitle(action, card), 0x3A, 0x18); v.Box(0x30, 0x13, 0xE0, 0x16);
+                for (int i = 0; i < 6; i++)
+                {
+                    int slot = v.Scroll + i, y = 0x29 + 0x24 * i;
+                    if (slot >= SlotsPerCard) break;
+                    var d = info[slot];
+                    bool dim = (d != null) == (action == 0);
+                    if (d != null)
+                    {
+                        var sp = DigimonStatsCatalog.Get(_disc, d.PartnerType);
+                        string who = d.PlayerName ?? "", kind = sp != null ? sp.Name : "";
+                        if (dim) { v.DimText(who, 0x58, y + 5); v.DimText(kind, 0xA6, y + 5); }
+                        else { v.Text(who, 0x58, y + 5); v.Text(kind, 0xA6, y + 5); }
+                    }
+                    v.Box(0x30, y, 0xE0, 0x24);
+                }
+            };
+            s.Refresh(s);
+            while (true)
+            {
+                int answer = 0;
+                yield return Ask(s, a => answer = a);
+                if (answer != 1) { result(-1); yield break; }
+                int slot = s.Scroll + s.Pos;
+                if ((info[slot] != null) != (action == 0)) { result(slot); yield break; }
+                // the wrong kind of slot: nothing happens (the cursor stays)
+            }
+        }
+
+        // menus 0xF / 0x18 / 0x22, view 8 (renderConfirmSlotSelection, US): the title, the slot (Not used when empty), Yes / No and
+        // SLOT_ACTION_QUESTIONS[action]; delete starts on No
+        IEnumerator ConfirmSlot(int action, int card, int slot, System.Action<bool> result)
+        {
+            var d = ReadSlot(card, slot);
+            var s = new SysScreen();
+            s.Text(CardTitle(action, card), 0x3A, 0x18); s.Box(0x30, 0x13, 0xB0, 0x16);
+            if (d != null)
+            {
+                var sp = DigimonStatsCatalog.Get(_disc, d.PartnerType);
+                s.Text(d.PlayerName ?? "", 0x58, 0x2E); s.Text(sp != null ? sp.Name : "", 0xA6, 0x2E);
+            }
+            else s.Text(Exe(0x80131340), 0x58, 0x2E);
+            s.Box(0x30, 0x29, 0xE0, 0x24);
+            s.Text(Exe(0x801346AC), 0x3A, 0x52); s.Text(Exe(0x801346B0), 0x3A, 0x5E); s.Box(0x30, 0x4D, 0x38, 0x22);
+            byte[] exe = ExeBytes;
+            uint q = System.BitConverter.ToUInt32(exe, (int)(0x801318DC - System.BitConverter.ToUInt32(exe, 0x18) + 0x800) + 4 * action);
+            s.Text(Exe(q), 0x3E, 0x74); s.Box(0x30, 0x6F, 0xE0, 0x16);
+            HighlightCursor(s, 8);
+            if (action == 2) s.Pos = 1;
+            int answer = 0;
+            yield return Ask(s, a => answer = a);
+            result(answer == 1 && s.Pos == 0);
+        }
+
+        // ------------------------------------------------------------------ ours: Escape while walking = back to the title (not in the original)
+
+        static bool s_toTitle;      // the scene is loaded again for the title screen (whatever the editor's test ticks say)
+
+        IEnumerator BackToTitle()
+        {
+            _routineOn = true;
+            // laid out like the game's own Do you want to save? (YesNoScreen), wider for two lines of our words
+            var s = YesNoScreen("Return to the title screen?", 0x3A, 0x37, 0x57, 0x63, 0x37, 87);
+            s.Text("Anything not saved is lost.", 0x3A, 0x37 + 12);
+            s.Box(0x30, 0x32, 0xE0, 0x20); s.Box(0x30, 0x52, 0x38, 0x22);
+            int answer = 0;
+            yield return Ask(s, a => answer = a);
+            if (answer == 1 && s.Pos == 0)
+            {
+                // the same way the game's own end goes back to the title (PlayableRoomFinale): the whole scene starts again
+                s_toTitle = true;
+                UnityEngine.SceneManagement.SceneManager.LoadScene(UnityEngine.SceneManagement.SceneManager.GetActiveScene().buildIndex);
+                yield break;
+            }
+            _routineOn = false;
+        }
+
         // ------------------------------------------------------------------ ours: the MODS page (not in the original game)
         const string ModsLabel = "MODS";
 
@@ -168,7 +327,7 @@ namespace DW1Remake.Game
             {
                 var s = new SysScreen();
                 // the game's letters are about 11 pixels wide: the names start at 0x1C and ON / OFF at 0xD8, in a box 0xF0 wide
-                s.Text("REMASTERED MAPS", 0x1C, 0x37); s.Text(ModSettings.RemasteredMaps ? "ON" : "OFF", 0xD8, 0x37);
+                s.Text("DIGITAL CLOCK", 0x1C, 0x37); s.Text(ModSettings.DigitalClock ? "ON" : "OFF", 0xD8, 0x37);
                 s.Text("ONLINE BATTLE", 0x1C, 0x37 + 12); s.Text(ModSettings.OnlineBattle ? "ON" : "OFF", 0xD8, 0x37 + 12);
                 s.Text("SMOOTH 60 FPS", 0x1C, 0x37 + 24); s.Text(ModSettings.Smooth60 ? "ON" : "OFF", 0xD8, 0x37 + 24);
                 s.Text("BACK", 0x1C, 0x37 + 36);
@@ -180,7 +339,7 @@ namespace DW1Remake.Game
                 yield return Ask(s, a => answer = a);
                 pos = s.Pos;
                 if (answer != 1 || pos == 3) yield break;
-                if (pos == 0) ModSettings.RemasteredMaps = !ModSettings.RemasteredMaps;
+                if (pos == 0) ModSettings.DigitalClock = !ModSettings.DigitalClock;
                 else if (pos == 1) ModSettings.OnlineBattle = !ModSettings.OnlineBattle;
                 else ModSettings.Smooth60 = !ModSettings.Smooth60;
             }

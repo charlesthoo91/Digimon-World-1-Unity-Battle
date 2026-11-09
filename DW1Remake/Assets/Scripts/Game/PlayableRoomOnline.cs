@@ -11,7 +11,7 @@ namespace DW1Remake.Game
     /// record 0, script 5) talking to Greymon first asks: online battle, tournament (the original script) or leave. Online battle opens the
     /// link screen: one PC hosts and gives a code, the friend pastes it and gives a reply code, the host pastes that, and the two PCs link
     /// directly (NetLink). Once linked they swap their partners' profiles; when both press Battle! the match runs (PlayableRoomOnlineMatch).
-    /// The link screen is used with the mouse and keyboard (copy / paste of the codes).
+    /// The link screen uses the game's boxes and the pad keys; the codes go through the PC's clipboard (Copy / Paste).
     /// </summary>
     public sealed partial class PlayableRoom
     {
@@ -22,7 +22,6 @@ namespace DW1Remake.Game
         int _onlineRole = -1;                   // -1 not chosen, 1 host, 0 join
         string _friendCode = "";
         FriendProfile _friend;
-        GUIStyle _onBox, _onLabel, _onButton, _onField;
 
         const byte MsgProfile = 1;
 
@@ -56,6 +55,7 @@ namespace DW1Remake.Game
             if (pick == 1) { _routineOn = false; original(); yield break; }
             if (pick != 0) { _routineOn = false; yield break; }
 
+            _onPos = 0; _onNote = null;
             _onlineOn = true; _onlineRole = -1; _friendCode = ""; _friend = null; _profileSent = false; _meReady = _friendReady = false;
             // a linked game must keep running when its window is not in front (a player build stops otherwise, and the link times out)
             bool wasBackground = Application.runInBackground;
@@ -72,6 +72,9 @@ namespace DW1Remake.Game
                     if (_onlineRole == 1 && _meReady && _friendReady && _friend != null && !_onlineMatch) { _net.SendSure(new[] { MsgStart, (byte)(_onlineOrders ? 1 : 0) }); StartCoroutine(OnlineMatch(true)); }
                     if (_onlineMatch) OnlineFrame();
                 }
+                // the link screen while no match runs (the match has the arena's own screens)
+                if (!_onlineMatch) OnlineScreenTick();
+                else if (_sys != null && _sys == _onSys) { _sys = null; _onSys = null; }
                 yield return null;
             }
             if (_net != null) { _net.Dispose(); _net = null; }
@@ -148,86 +151,108 @@ namespace DW1Remake.Game
             else ReadMatch(m);
         }
 
-        // ---------------------------------------------------------------- the link screen (mouse and keyboard)
+        // ---------------------------------------------------------------- the link screen, in the game's own boxes, font and cursor (SysScreen,
+        // DrawSysScreen, as the save and title menus): up / down and Cross; Triangle / Circle closes. Copy and paste use the PC's clipboard
 
-        void OnlineStyles()
+        int _onPos;
+        string _onNote; float _onNoteUntil;
+        SysScreen _onSys;
+        const int OnX = 0x22, OnBoxX = 0x18, OnBoxW = 0x110;
+
+        // a sentence broken at spaces to fit the box (the font's own widths)
+        static List<string> Wrap(string text, int width)
         {
-            if (_onBox != null) return;
-            _onBox = new GUIStyle(GUI.skin.box) { fontSize = 22, alignment = TextAnchor.UpperCenter };
-            _onLabel = new GUIStyle(GUI.skin.label) { fontSize = 20, wordWrap = true };
-            _onButton = new GUIStyle(GUI.skin.button) { fontSize = 20 };
-            _onField = new GUIStyle(GUI.skin.textField) { fontSize = 20 };
+            var lines = new List<string>(); var font = Battle.StatFont;
+            foreach (var para in (text ?? "").Split('\n'))
+            {
+                string cur = "";
+                foreach (var w in para.Split(' '))
+                {
+                    string next = cur.Length == 0 ? w : cur + " " + w;
+                    if (font != null && cur.Length > 0 && font.Measure(next) > width) { lines.Add(cur); cur = w; }
+                    else cur = next;
+                }
+                lines.Add(cur);
+            }
+            return lines;
         }
 
-        void DrawOnline()
+        void OnlineScreenTick()
         {
-            if (!_onlineOn || _onlineMatch) return;
-            OnlineStyles();
-            float w = Mathf.Min(900f, Screen.width - 40f), h = 520f;
-            var r = new Rect((Screen.width - w) / 2f, (Screen.height - h) / 2f, w, h);
-            GUI.Box(r, "Online battle", _onBox);
-            GUILayout.BeginArea(new Rect(r.x + 20, r.y + 50, r.width - 40, r.height - 70));
-            if (_onlineRole < 0)
+            var lines = new List<string>(); var opts = new List<string>(); var acts = new List<System.Action>();
+            int wrap = OnBoxW - 0x14;
+            System.Action close = () => { _onlineOn = false; };
+            if (_net == null)
             {
-                GUILayout.Label("One of you hosts, the other joins. You will swap two codes (by chat, e-mail...).", _onLabel);
-                GUILayout.Space(10);
-                if (GUILayout.Button("Host: I make the first code", _onButton, GUILayout.Height(44))) { _onlineRole = 1; _net = new NetLink(true); }
-                if (GUILayout.Button("Join: my friend sent me a code", _onButton, GUILayout.Height(44))) { _onlineRole = 0; _net = new NetLink(false); }
-                GUILayout.FlexibleSpace();
-                if (GUILayout.Button("Close", _onButton, GUILayout.Height(40))) _onlineOn = false;
+                lines.AddRange(Wrap("One of you hosts and the other joins. You swap two codes by chat or e-mail.", wrap));
+                opts.Add("Host. I make the first code."); acts.Add(() => { _onlineRole = 1; _net = new NetLink(true); _onPos = 0; });
+                opts.Add("Join. My friend has a code."); acts.Add(() => { _onlineRole = 0; _net = new NetLink(false); _onPos = 0; });
             }
-            else if (_net != null)
+            else if (_net.Now == NetLink.State.Linked)
             {
-                GUILayout.Label(_net.Status, _onLabel);
-                GUILayout.Space(8);
-                bool host = _onlineRole == 1;
-                if (_net.MyCode != null && _net.Now != NetLink.State.Linked)
+                lines.Add("Linked.   Ping " + _net.PingMs + " ms");
+                if (_onlineResult != null) lines.Add("Last match   " + _onlineResult);
+                if (_friend == null) lines.Add("Waiting for your friend's Digimon...");
+                else
                 {
-                    GUILayout.Label(host ? "1. Your code - send it to your friend:" : "2. Your reply code - send it back to your friend:", _onLabel);
-                    GUILayout.BeginHorizontal();
-                    GUILayout.TextField(_net.MyCode, _onField, GUILayout.Height(36));
-                    if (GUILayout.Button("Copy", _onButton, GUILayout.Width(110), GUILayout.Height(36))) GUIUtility.systemCopyBuffer = _net.MyCode;
-                    GUILayout.EndHorizontal();
-                }
-                if (_net.Now == NetLink.State.Ready)
-                {
-                    GUILayout.Space(8);
-                    GUILayout.Label(host ? "2. Paste your friend's reply code:" : "1. Paste your friend's code:", _onLabel);
-                    GUILayout.BeginHorizontal();
-                    _friendCode = GUILayout.TextField(_friendCode, _onField, GUILayout.Height(36));
-                    if (GUILayout.Button("Paste", _onButton, GUILayout.Width(110), GUILayout.Height(36))) _friendCode = GUIUtility.systemCopyBuffer ?? "";
-                    GUILayout.EndHorizontal();
-                    if (GUILayout.Button("Link", _onButton, GUILayout.Height(40))) _net.UseFriendCode(_friendCode);
-                }
-                if (_net.Now == NetLink.State.Linked)
-                {
-                    GUILayout.Label("Ping: " + _net.PingMs + " ms", _onLabel);
-                    if (_onlineResult != null) GUILayout.Label("Last match: " + _onlineResult, _onLabel);
-                    if (_friend == null) GUILayout.Label("Waiting for your friend's Digimon...", _onLabel);
-                    else
+                    var info = DigimonStatsCatalog.Get(_disc, _friend.Type);
+                    lines.Add("Friend   " + _friend.Name + "   " + (info != null ? info.Name : ""));
+                    lines.Add("HP " + _friend.Hp + "   MP " + _friend.Mp);
+                    lines.Add("Off " + _friend.Off + "  Def " + _friend.Def + "  Spd " + _friend.Spd + "  Brn " + _friend.Brain);
+                    if (_onlineRole == 1)
                     {
-                        var info = DigimonStatsCatalog.Get(_disc, _friend.Type);
-                        GUILayout.Label("Your friend's partner: " + _friend.Name + " (" + (info != null ? info.Name : "type " + _friend.Type) + ")", _onLabel);
-                        GUILayout.Label("HP " + _friend.Hp + "   MP " + _friend.Mp + "   Off " + _friend.Off + "   Def " + _friend.Def + "   Speed " + _friend.Spd + "   Brains " + _friend.Brain, _onLabel);
-                        GUILayout.Space(6);
-                        if (_onlineRole == 1)
-                        {
-                            if (GUILayout.Button("Orders: " + (_onlineOrders ? "ON - each player gives orders to their own Digimon" : "OFF - both Digimon fight by their own judgement"), _onButton, GUILayout.Height(40)))
-                                _onlineOrders = !_onlineOrders;
-                        }
-                        else GUILayout.Label("The host chooses whether players give orders. A tournament match; the host's PC runs the fight.", _onLabel);
-                        if (!_meReady) { if (GUILayout.Button("Battle!", _onButton, GUILayout.Height(44))) { _meReady = true; _net.SendSure(new[] { MsgReady }); } }
-                        else GUILayout.Label(_friendReady ? "Starting..." : "Waiting for your friend to press Battle!...", _onLabel);
+                        opts.Add("Orders   " + (_onlineOrders ? "ON" : "OFF")); acts.Add(() => { _onlineOrders = !_onlineOrders; });
+                    }
+                    else lines.Add(_onlineOrders ? "Orders ON" : "The host chooses the orders.");
+                    if (!_meReady) { opts.Add("Battle!"); acts.Add(() => { _meReady = true; _net.SendSure(new[] { MsgReady }); }); }
+                    else lines.Add(_friendReady ? "Starting..." : "Waiting for your friend's Battle!...");
+                }
+            }
+            else if (_net.Now == NetLink.State.Failed || _net.Now == NetLink.State.Closed)
+            {
+                lines.AddRange(Wrap(_net.Status, wrap));
+                opts.Add("Try again");
+                acts.Add(() => { _net.Dispose(); _net = null; _onlineRole = -1; _friendCode = ""; _friend = null; _profileSent = false; _meReady = _friendReady = false; _onPos = 0; });
+            }
+            else
+            {
+                lines.AddRange(Wrap(_net.Status, wrap));
+                if (_net.MyCode != null)
+                {
+                    lines.Add("");
+                    lines.Add(_onlineRole == 1 ? "Your code" : "Your reply code");
+                    lines.AddRange(Wrap(NetLink.Spaced(_net.MyCode), wrap));      // the groups of five go on as many lines as the box needs
+                    opts.Add("Copy my code"); acts.Add(() => { GUIUtility.systemCopyBuffer = _net.MyCode; _onNote = "Your code is copied."; _onNoteUntil = Time.time + 2.5f; });
+                    if (_net.Now == NetLink.State.Ready)
+                    {
+                        opts.Add(_onlineRole == 1 ? "Paste reply code" : "Paste friend's code");
+                        acts.Add(() => { _friendCode = GUIUtility.systemCopyBuffer ?? ""; _net.UseFriendCode(_friendCode); });
                     }
                 }
-                if (_net.Now == NetLink.State.Failed || _net.Now == NetLink.State.Closed)
-                {
-                    if (GUILayout.Button("Try again", _onButton, GUILayout.Height(40))) { _net.Dispose(); _net = null; _onlineRole = -1; _friendCode = ""; _friend = null; _profileSent = false; _meReady = _friendReady = false; }
-                }
-                GUILayout.FlexibleSpace();
-                if (GUILayout.Button("Close", _onButton, GUILayout.Height(40))) _onlineOn = false;
             }
-            GUILayout.EndArea();
+            if (_onNote != null && Time.time < _onNoteUntil) lines.Add(_onNote);
+            opts.Add("Close"); acts.Add(close);
+            if (lines.Count > 9) lines.RemoveRange(9, lines.Count - 9);
+
+            // the title box, the text box, the choices box under it
+            var s = new SysScreen();
+            s.Text("ONLINE BATTLE", OnX, 0x15); s.Box(OnBoxX, 0x10, OnBoxW, 0x16);
+            int y = 0x31;
+            foreach (var l in lines) { s.Text(l, OnX, y); y += 12; }
+            s.Box(OnBoxX, 0x2C, OnBoxW, 12 * lines.Count + 10);
+            int oy = 0x2C + 12 * lines.Count + 10 + 6 + 5;
+            for (int i = 0; i < opts.Count; i++) s.Text(opts[i], OnX, oy + 12 * i);
+            s.Box(OnBoxX, oy - 5, OnBoxW, 12 * opts.Count + 10);
+            if (_onPos >= opts.Count) _onPos = opts.Count - 1;
+            s.Cursor(OnX - 3, oy, OnBoxW - 0x10, 0xC, 12, opts.Count);
+            s.Pos = _onPos;
+            _sys = _onSys = s;
+
+            int ms = MenuStep();
+            if (ms != 0) { _onPos = (_onPos + ms + opts.Count) % opts.Count; Snd(2); }
+            else if (ActionPressed()) { Snd(3); acts[_onPos](); }
+            else if (GameMenus.CancelKey()) { Snd(4); close(); }
+            if (!_onlineOn && _sys == _onSys) { _sys = null; _onSys = null; }
         }
     }
 }

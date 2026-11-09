@@ -40,8 +40,11 @@ namespace DW1Remake.EditorTools
             {
                 PlayerSettings.companyName = Company;
                 PlayerSettings.productName = Product;
-                // only the Mono player is installed for Windows (no IL2CPP module)
-                PlayerSettings.SetScriptingBackend(target, ScriptingImplementation.Mono2x);
+                // IL2CPP when its Windows module is installed: the game code becomes machine code (no readable .dll), much harder to take apart.
+                // It also needs Visual Studio's "Desktop development with C++"; without the module the Mono player is used
+                bool il2cpp = Directory.Exists(Path.Combine(EditorApplication.applicationContentsPath, "PlaybackEngines/windowsstandalonesupport/Variations/win64_player_nondevelopment_il2cpp"));
+                PlayerSettings.SetScriptingBackend(target, il2cpp ? ScriptingImplementation.IL2CPP : ScriptingImplementation.Mono2x);
+                Debug.Log("[build] scripting backend: " + (il2cpp ? "IL2CPP" : "Mono"));
                 report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
                 {
                     scenes = scenes,
@@ -74,7 +77,7 @@ namespace DW1Remake.EditorTools
             if (!AssetDatabase.IsValidFolder("Assets/Resources")) AssetDatabase.CreateFolder("Assets", "Resources");
             if (!AssetDatabase.IsValidFolder(KeepFolder)) AssetDatabase.CreateFolder("Assets/Resources", "BuildKeep");
 
-            string[] ours = { "DW1Remake/Backdrop", "DW1Remake/BlobShadow", "DW1Remake/Effect", "DW1Remake/GuiBlend", "DW1Remake/Half", "DW1Remake/Overlay", "DW1Remake/Psx", "DW1Remake/Upscale" };
+            string[] ours = { "DW1Remake/Backdrop", "DW1Remake/BlobShadow", "DW1Remake/Effect", "DW1Remake/GuiBlend", "DW1Remake/Half", "DW1Remake/Overlay", "DW1Remake/Psx" };
             foreach (var name in ours) if (!Keep(name, name.Substring(name.IndexOf('/') + 1))) return false;
             // MmdModel.MakeMaterial (lit and unlit), the Finale's see-through boy, and the plain unlit / sprite materials
             if (!Keep("Universal Render Pipeline/Lit", "UrpLitCutout", "_ALPHATEST_ON", "_SPECULARHIGHLIGHTS_OFF", "_ENVIRONMENTREFLECTIONS_OFF")) return false;

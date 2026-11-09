@@ -422,6 +422,7 @@ namespace DW1Remake.Game
             d.Clock = _clock; d.Day = _dayCount; d.PartnerType = PartnerType;
             d.PrevScreen = _prevScreen; d.PrevExit = _prevExit; d.CurExit = _curExit;
             _mainState = 2; d.MainState = 2;      // gameClearSave: MAIN_STATE = 2, saved with the game
+            if (_noCard) return;     // gameClearSave: no memory card (MEMORY_CARD_ID == -1) = no save
             System.IO.File.WriteAllText(SavePath, JsonUtility.ToJson(d));
         }
     }

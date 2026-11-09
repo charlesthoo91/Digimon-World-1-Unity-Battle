@@ -16,7 +16,32 @@ namespace DW1Remake.Game
         [Tooltip("If a save file exists (F11 saves in the editor), continue from it instead of starting fresh.")]
         public bool LoadSaveOnStart = false;
 
-        public static string SavePath { get { return Path.Combine(Application.persistentDataPath, "save1.json"); } }
+        // ---- the memory cards (main_menu.c): two card slots of 15 Digimon World saves each (SAVEGAME_SLOT_INFO[15]); each save is a file here.
+        // MEMORY_CARD_ID / MEMORY_CARD_SLOT: the card and slot this game was started in or continued from; the save machine and the sleep
+        // menu save back to it. -1 = no memory card (NEW GAME > NO MEMORY CARD): that game cannot be saved
+        public const int Cards = 2, SlotsPerCard = 15;
+        int _card = -1, _cardSlot = -1;
+        bool _noCard;       // the player chose NO MEMORY CARD at NEW GAME (a test start in the editor without a slot uses the test save instead)
+
+        public static string SlotPath(int card, int slot) { return Path.Combine(Application.persistentDataPath, "save_card" + (card + 1) + "_slot" + (slot + 1).ToString("00") + ".json"); }
+
+        // the editor's test save (F11 / F12, Load Save On Start) when no slot is chosen; older builds' only save
+        static string TestSavePath { get { return Path.Combine(Application.persistentDataPath, "save1.json"); } }
+
+        string SavePath { get { return _card >= 0 && _cardSlot >= 0 ? SlotPath(_card, _cardSlot) : TestSavePath; } }
+
+        // an older build's single save becomes card 1, slot 1 (once; the old file stays)
+        static void MoveOldSave()
+        {
+            try { if (File.Exists(TestSavePath) && !File.Exists(SlotPath(0, 0))) File.Copy(TestSavePath, SlotPath(0, 0)); }
+            catch (System.Exception e) { Debug.LogWarning("[save] " + e.Message); }
+        }
+
+        static SaveGameData ReadSlot(int card, int slot)
+        {
+            try { string p = SlotPath(card, slot); return File.Exists(p) ? JsonUtility.FromJson<SaveGameData>(File.ReadAllText(p)) : null; }
+            catch (System.Exception e) { Debug.LogWarning("[save] slot unreadable: " + e.Message); return null; }
+        }
 
         // ------------------------------------------------------------------ save / load (F11 / F12 in the editor and development builds)
 
@@ -28,7 +53,9 @@ namespace DW1Remake.Game
             d.Clock = _clock; d.Day = _dayCount; d.PartnerType = PartnerType; d.MainState = _mainState;
             d.PrevScreen = _prevScreen; d.PrevExit = _prevExit; d.CurExit = _curExit;
             File.WriteAllText(SavePath, JsonUtility.ToJson(d));
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
             Say("Saved to " + SavePath);
+#endif
         }
 
         SaveGameData ReadSave()

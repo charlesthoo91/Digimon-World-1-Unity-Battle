@@ -19,7 +19,7 @@ namespace DW1Remake.Game
     {
         public enum State { Starting, Ready, Linking, Linked, Failed, Closed }
 
-        const byte Version = 2;           // 2: profiles carry techniques, the match messages
+        const byte Version = 3;           // 2: profiles carry techniques, the match messages
         static readonly string[] StunHosts = { "stun.l.google.com", "stun1.l.google.com", "stun.cloudflare.com" };
         static readonly int[] StunPorts = { 19302, 19302, 3478 };
         const byte MsgHello = 1, MsgHelloAck = 2, MsgData = 3, MsgAck = 4, MsgPing = 5, MsgPong = 6, MsgBye = 7;
@@ -83,7 +83,39 @@ namespace DW1Remake.Game
 
         // ---------------------------------------------------------------- link codes
 
-        // "DW1-" + base64 of: version, host flag, nonce (4), internet address (4) and port (2), home address (4) and port (2)
+        // the 18 bytes (version, host flag, nonce 4, internet address 4 and port 2, home address 4 and port 2) as 29 capital letters and digits: the
+        // game's font has those (base64's + / = are not in it), and there is no I, O, 0 or 1 to mix up
+        const string Alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+        static string ToCode(byte[] b)
+        {
+            var sb = new System.Text.StringBuilder(); int acc = 0, bits = 0;
+            foreach (byte x in b) { acc = (acc << 8) | x; bits += 8; while (bits >= 5) { bits -= 5; sb.Append(Alphabet[(acc >> bits) & 31]); } }
+            if (bits > 0) sb.Append(Alphabet[(acc << (5 - bits)) & 31]);
+            return sb.ToString();
+        }
+
+        static byte[] FromCode(string s)
+        {
+            var r = new List<byte>(); int acc = 0, bits = 0;
+            foreach (char c in s)
+            {
+                int v = Alphabet.IndexOf(c);
+                if (v < 0) return null;
+                acc = (acc << 5) | v; bits += 5;
+                if (bits >= 8) { bits -= 8; r.Add((byte)((acc >> bits) & 255)); }
+            }
+            return r.ToArray();
+        }
+
+        /// <summary>The code in groups of five, easier to read out.</summary>
+        public static string Spaced(string code)
+        {
+            var sb = new System.Text.StringBuilder();
+            for (int i = 0; i < code.Length; i++) { if (i > 0 && i % 5 == 0) sb.Append(' '); sb.Append(code[i]); }
+            return sb.ToString();
+        }
+
         string MakeCode()
         {
             var b = new byte[18];
@@ -92,19 +124,18 @@ namespace DW1Remake.Game
             var pub = _public ?? _local;
             pub.Address.GetAddressBytes().CopyTo(b, 6); b[10] = (byte)(pub.Port >> 8); b[11] = (byte)pub.Port;
             _local.Address.GetAddressBytes().CopyTo(b, 12); b[16] = (byte)(_local.Port >> 8); b[17] = (byte)_local.Port;
-            return "DW1-" + Convert.ToBase64String(b);
+            return ToCode(b);
         }
 
         /// <summary>Takes the friend's code; false (and Status says why) when it is not a code or is the wrong kind.</summary>
         public bool UseFriendCode(string code)
         {
-            code = (code ?? "").Trim();
-            if (code.StartsWith("DW1-")) code = code.Substring(4);
-            byte[] b;
-            try { b = Convert.FromBase64String(code); } catch { Status = "That is not a link code."; return false; }
-            if (b.Length != 18) { Status = "That is not a link code."; return false; }
+            var clean = new System.Text.StringBuilder();
+            foreach (char c in (code ?? "").ToUpperInvariant()) if (!char.IsWhiteSpace(c)) clean.Append(c);
+            byte[] b = FromCode(clean.ToString());
+            if (b == null || b.Length != 18) { Status = "That is not a link code. Copy your friend's code and paste it again."; return false; }
             if (b[0] != Version) { Status = "Your friend has a different version of the game."; return false; }
-            if ((b[1] == 1) == IsHost) { Status = IsHost ? "That is a host code: paste your friend's reply code." : "That is a reply code: paste your friend's host code."; return false; }
+            if ((b[1] == 1) == IsHost) { Status = IsHost ? "That is a host code. Paste your friend's reply code." : "That is a reply code. Paste your friend's host code."; return false; }
             _peerNonce = BitConverter.ToUInt32(b, 2);
             _candidates.Clear();
             _candidates.Add(new IPEndPoint(new IPAddress(new[] { b[6], b[7], b[8], b[9] }), (b[10] << 8) | b[11]));
@@ -166,7 +197,7 @@ namespace DW1Remake.Game
                         {
                             // no answer: home network only (both PCs on the same router)
                             MyCode = MakeCode(); Now = State.Ready;
-                            Status = "No internet address found: this code works only on the same home network.";
+                            Status = "No internet address was found. This code only works on the same home network.";
                             break;
                         }
                         SendStun(_stunTry % StunHosts.Length); _stunTry++; _stunSent = t;
@@ -174,12 +205,12 @@ namespace DW1Remake.Game
                     break;
                 case State.Linking:
                     if (t - _helloSent > 0.2f) { foreach (var c in _candidates) Raw(c, MsgHello, null); _helloSent = t; }
-                    if (t - _started > 30f) Fail("Could not reach your friend's PC (30 s). Check both codes, or try on the same home network.");
+                    if (t - _started > 30f) Fail("Your friend's PC could not be reached in 30 seconds. Check both codes, or try on the same home network.");
                     break;
                 case State.Linked:
                     foreach (var p in _unacked) if (t - p.Sent > 0.25f) { Raw(_peer, MsgData, p.Packet); p.Sent = t; }
                     if (t - _pingSent > 1f) { Raw(_peer, MsgPing, BitConverter.GetBytes(t)); _pingSent = t; }
-                    if (t - _lastHeard > 10f) Fail("The link was lost (nothing heard from your friend's PC for 10 s).");
+                    if (t - _lastHeard > 10f) Fail("The link was lost. Nothing came from your friend's PC for 10 seconds.");
                     break;
             }
         }
@@ -268,7 +299,7 @@ namespace DW1Remake.Game
                     if (type == 0x0020) { port ^= 0x2112; ip[0] ^= 0x21; ip[1] ^= 0x12; ip[2] ^= 0xA4; ip[3] ^= 0x42; }
                     _public = new IPEndPoint(new IPAddress(ip), port);
                     MyCode = MakeCode(); Now = State.Ready;
-                    Status = IsHost ? "Send this code to your friend, then paste their reply code." : "Send this reply code to your friend.";
+                    Status = IsHost ? "Send your code to your friend, then paste their reply code." : "Paste your friend's code, then send them your reply code.";
                     Debug.Log("[online] internet address " + _public + ", home " + _local);
                     return;
                 }

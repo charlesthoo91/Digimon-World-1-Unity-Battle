@@ -995,6 +995,18 @@ namespace DW1Remake.Game
             return false;
 #endif
         }
+        /// <summary>Escape on its own (ours: while the boy walks freely it offers the way back to the title screen; in menus it is still Triangle).</summary>
+        public static bool EscapeKey()
+        {
+#if ENABLE_INPUT_SYSTEM
+            var k = Keyboard.current; return k != null && k.escapeKey.wasPressedThisFrame;
+#elif ENABLE_LEGACY_INPUT_MANAGER
+            return Input.GetKeyDown(KeyCode.Escape);
+#else
+            return false;
+#endif
+        }
+
         // Triangle alone (Tab, C, Esc), for screens where Square has its own job (the Item Keeper)
         public static bool TriangleOnly()
         {

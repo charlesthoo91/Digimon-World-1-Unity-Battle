@@ -81,7 +81,6 @@ namespace DW1Remake.Game
         Mesh _quadMesh;
         readonly Dictionary<int, Material> _ovMat = new Dictionary<int, Material>();
         readonly Dictionary<int, Texture2D> _ovTex = new Dictionary<int, Texture2D>();
-        readonly Dictionary<int, RenderTexture> _ovRt = new Dictionary<int, RenderTexture>();     // mod Remastered maps: the enlarged copies
         readonly List<OvAnim> _ovAnims = new List<OvAnim>();
         float _ovAcc;
 
@@ -126,6 +125,7 @@ namespace DW1Remake.Game
         void Start()
         {
             DigimonAnimator.Paused = false;
+            if (s_toTitle) { s_toTitle = false; TitleScreen = true; QuickStart = false; NewGame = false; LoadSaveOnStart = false; }
 #if !UNITY_EDITOR && !DEVELOPMENT_BUILD
             // a player build always starts at the title screen (the scene's test ticks are for the editor), with no names over the Digimon
             TitleScreen = true; QuickStart = false; NewGame = false; LoadSaveOnStart = false; ShowNames = false;
@@ -2097,8 +2097,6 @@ namespace DW1Remake.Game
         {
             if (_overlayRoot != null) Destroy(_overlayRoot);
             foreach (var t in _ovTex.Values) if (t != null) Destroy(t);
-            foreach (var t in _ovRt.Values) if (t != null) { t.Release(); Destroy(t); }
-            _ovRt.Clear();
             foreach (var m in _ovMat.Values) if (m != null) Destroy(m);
             _ovTex.Clear(); _ovMat.Clear(); _ovAnims.Clear();
             _overlayRoot = null; _overlay = null;
@@ -2122,14 +2120,12 @@ namespace DW1Remake.Game
             tex.SetPixels32(_overlay.BuildObject(obj, _map.GetPalette(_curPalette), layer));
             tex.Apply();
             m = new Material(sh);
-            var rt = MapRemaster.Make(tex);          // mod Remastered maps: the piece's enlarged copy (null when the mod is off)
-            if (rt != null) _ovRt[key] = rt;
-            m.SetTexture("_BaseMap", rt != null ? (Texture)rt : tex);
+            m.SetTexture("_BaseMap", tex);
             m.SetVector("_Texel", new Vector4(1f / tex.width, 1f / tex.height, 0, 0));
             m.SetFloat("_BlurMax", Hd2D ? TiltShiftBlur : 0f);
             m.SetFloat("_FocusCenter", FocusCenter);
             m.SetFloat("_FocusHalf", FocusHalfHeight);
-            m.SetFloat("_Sharpen", Hd2D && rt == null ? Sharpen : 0f);
+            m.SetFloat("_Sharpen", Hd2D ? Sharpen : 0f);
             if (layer == 2) MmdModel.SetPsxBlend(m, o.Trans);
             _ovTex[key] = tex; _ovMat[key] = m;
             return m;
@@ -2288,8 +2284,6 @@ namespace DW1Remake.Game
                 if (!_overlay.UsesMapPalette(kv.Key / 4)) continue;
                 kv.Value.SetPixels32(_overlay.BuildObject(kv.Key / 4, pal, kv.Key % 4));
                 kv.Value.Apply();
-                RenderTexture rt;
-                if (_ovRt.TryGetValue(kv.Key, out rt)) MapRemaster.Into(kv.Value, rt);
             }
         }
 
@@ -2320,19 +2314,18 @@ namespace DW1Remake.Game
             quad.transform.position = _cam.transform.position + fU * BackdropDistance;
             quad.transform.rotation = _cam.transform.rotation;
             quad.transform.localScale = new Vector3(_map.PixelWidth * BackdropDistance / _h, _map.PixelHeight * BackdropDistance / _h, 1f);
-            Texture tex = BackdropTexture(_curPalette);
+            Texture2D tex = _map.BuildTexture(_curPalette);
             Shader bs = Hd2D ? Shader.Find("DW1Remake/Backdrop") : null;
             Material mat;
             if (bs != null)
             {
                 mat = new Material(bs);
                 mat.SetTexture("_BaseMap", tex);
-                // the blur and sharpening work in the original picture's pixels, so they look the same on an enlarged copy
-                mat.SetVector("_Texel", new Vector4(1f / _map.PixelWidth, 1f / _map.PixelHeight, 0, 0));
+                mat.SetVector("_Texel", new Vector4(1f / tex.width, 1f / tex.height, 0, 0));
                 mat.SetFloat("_BlurMax", TiltShiftBlur);
                 mat.SetFloat("_FocusCenter", FocusCenter);
                 mat.SetFloat("_FocusHalf", FocusHalfHeight);
-                mat.SetFloat("_Sharpen", tex is RenderTexture ? 0f : Sharpen);
+                mat.SetFloat("_Sharpen", Sharpen);
             }
             else
             {
@@ -2341,16 +2334,6 @@ namespace DW1Remake.Game
             }
             quad.GetComponent<MeshRenderer>().sharedMaterial = mat;
             _backdrop = quad;
-        }
-
-        // the painted map for one time of day; with the mod Remastered maps its enlarged copy instead (the small one is not kept)
-        Texture BackdropTexture(int palette)
-        {
-            Texture2D tex = _map.BuildTexture(palette);
-            var rt = MapRemaster.Make(tex);
-            if (rt == null) return tex;
-            Destroy(tex);
-            return rt;
         }
 
         // converts a screen direction (x right, y up) into a walking direction on the ground, using the real camera
@@ -2507,7 +2490,7 @@ namespace DW1Remake.Game
             {
                 if (!AutoClock || _care == null || _changing || _intro || _runner != null || _partner == null || _pFrozen) return false;
                 if (_setup != null && _setup.Active) return false;
-                return (_menus == null || !_menus.Active) && (_battle == null || !_battle.Active);
+                return (_menus == null || !_menus.Active) && (_battle == null || !_battle.Active) && !(_onlineOn && !_onlineMatch);
             }
         }
 
@@ -2541,8 +2524,7 @@ namespace DW1Remake.Game
                     _curPalette = pal;
                     var mat = _backdrop.GetComponent<MeshRenderer>().sharedMaterial;
                     var old = mat.GetTexture("_BaseMap");
-                    mat.SetTexture("_BaseMap", BackdropTexture(pal));
-                    if (old is RenderTexture) ((RenderTexture)old).Release();
+                    mat.SetTexture("_BaseMap", _map.BuildTexture(pal));
                     if (old != null) Destroy(old);
                     RefreshOverlayPalette();
                 }
@@ -2587,8 +2569,11 @@ namespace DW1Remake.Game
             if (_setup != null && _setup.Active) { _setup.Tick(MenuStep(), GameMenus.SideStep(), ActionPressed(), GameMenus.CancelKey()); return; }
             _state.PlayMinutes += Time.deltaTime / 60f;
             bool fighting = _battle != null && _battle.Active;
-            DigimonAnimator.Paused = _menus != null && _menus.Active && !fighting;      // the Triangle menu stops everyone at once; the item page in a fight does not
+            // the online battle screen (ours) stops the world as the Triangle menu does; its match does not
+            bool onlineScreen = _onlineOn && !_onlineMatch;
+            DigimonAnimator.Paused = (_menus != null && _menus.Active || onlineScreen) && !fighting;      // the Triangle menu stops everyone at once; the item page in a fight does not
             HideActors(_menus != null && _menus.HidesActors);
+            if (onlineScreen) return;
             if (_menus != null)
             {
                 _menus.Species = _partnerName; _menus.Day = _dayCount + 1;
@@ -2624,6 +2609,7 @@ namespace DW1Remake.Game
                 }
                 if (_runner == null && !_pBusy && !_routineOn)     // (not while our routine without a script runs: the online link screen takes typed codes) tamerTickWalkingState: the menu opens only while the boy walks freely, not during a partner scene (tamer state 6)
                 {
+                    if (GameMenus.EscapeKey()) { StartCoroutine(BackToTitle()); return; }      // ours: Escape while walking = back to the title screen
                     if (GameMenus.TriangleMenuKey()) { _menus.OpenMain(); return; }      // isKeyDown(Triangle): held and fresh
                     if (GameMenus.BagKey()) { _menus.OpenBag(); return; }
                     if (GameMenus.ShopKey() && !_routineOn) { StartCoroutine(Shop(i => i < _itemCatalog.Count && _itemCatalog[i].Price > 0 && _itemCatalog[i].Category <= 2, 0xFF)); return; }   // dev: a test shop with every priced item, the 0x4CE texts
@@ -3362,7 +3348,6 @@ namespace DW1Remake.Game
             DrawWorldItems();
             DrawTraining();
             DrawCurling();
-            DrawOnline();
             DrawTournament();
             DrawDebugMenu();        // last, so nothing covers it
         }

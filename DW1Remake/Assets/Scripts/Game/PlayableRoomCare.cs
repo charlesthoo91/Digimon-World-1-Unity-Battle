@@ -809,7 +809,7 @@ namespace DW1Remake.Game
         void DrawStatusBars()
         {
             var art = _battle != null ? _battle.Art : null;
-            if (art == null || _partner == null || _setup != null && _setup.Active || Event.current.type != EventType.Repaint || _arenaOn) return;
+            if (art == null || _partner == null || _setup != null && _setup.Active || Event.current.type != EventType.Repaint || _arenaOn || _onlineOn) return;      // (not under the online battle screen, ours)
             _statusAcc += Time.deltaTime;
             while (_statusAcc >= 0.05f) { _statusAcc -= 0.05f; _statusX = Mathf.Clamp(_statusX + (GameTimeRuns ? -50 : 50), 75, 240); }
             int x = _statusX, happy = _state.Happiness, disc = _state.Discipline;
@@ -842,7 +842,7 @@ namespace DW1Remake.Game
         void DrawClock()
         {
             var art = _battle != null ? _battle.Art : null;
-            if (art == null || _care == null || _partner == null || _setup != null && _setup.Active || _arenaOn) { if (_clockPlate != null) _clockPlate.Remove(); return; }
+            if (art == null || _care == null || _partner == null || _setup != null && _setup.Active || _arenaOn || _onlineOn) { if (_clockPlate != null) _clockPlate.Remove(); return; }
             if (Event.current.type != EventType.Repaint) return;
             _clockAcc += Time.deltaTime;
             while (_clockAcc >= 0.05f) { _clockAcc -= 0.05f; _clockX = Mathf.Clamp(_clockX + (GameTimeRuns ? 50 : -50), -220, -135); }
@@ -862,7 +862,8 @@ namespace DW1Remake.Game
             // our digital time under the dial: a UI box (the game's frame) with HH:MM in the game's font; it slides with the dial. The dial is cut off
             // at the picture's edge but the box is not, so it went on showing in the black bar while the dial was out (scripts, fights, scenes):
             // it is shown only while it is inside the picture, i.e. while game time runs and the dial is in
-            if (x + 9 < -160) { if (_clockPlate != null) _clockPlate.Remove(); return; }
+            // ours and not in the original: shown only with the mod Digital clock (title > MODS)
+            if (x + 9 < -160 || !ModSettings.DigitalClock) { if (_clockPlate != null) _clockPlate.Remove(); return; }
             if (_clockPlate == null) _clockPlate = FrameBox.Load(_disc, Battle.StatFont, 5);
             if (_clockPlate != null) _clockPlate.ShowText(new RectInt(x + 9, -46, 30, 10), hour.ToString("00") + ":" + _care.Minute.ToString("00"));
         }

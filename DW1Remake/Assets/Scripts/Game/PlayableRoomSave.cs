@@ -81,6 +81,21 @@ namespace DW1Remake.Game
             _mainState = 1;
             var info = DigimonStatsCatalog.Get(_disc, PartnerType);
             int menu = info != null && info.Level < 3 ? 0x46 : 0x3C;
+            // openSaveMachine: no memory card (MEMORY_CARD_ID / MEMORY_CARD_SLOT -1) = menu 0x44 (renderCantRegister, view 17): four lines,
+            // gone on Cross / Circle or after 0x79 frames; nothing is registered or saved
+            if (_noCard)
+            {
+                var s = new SysScreen();
+                for (int i = 0; i < 4; i++) s.Text(Exe(NoCardLines[i]), 0x22, 0x46 + 12 * i);
+                s.Box(0x18, 0x40, 0x110, 0x3A);
+                _sys = s;
+                float until = Time.time + 0x79 / 20f;
+                yield return null;
+                while (Time.time < until && !ActionPressed() && !GameMenus.CancelKey()) yield return null;
+                Snd(3);
+                _sys = null;
+                menu = -1;
+            }
             int slot = 0, scroll = 0, pos = 0;
             while (menu != -1)
             {
@@ -128,6 +143,8 @@ namespace DW1Remake.Game
             _saveMachineOn = false;
             AdvanceScript();        // ACTIVE_INSTRUCTION = 0: the script goes on
         }
+
+        static readonly uint[] NoCardLines = { 0x80131500, 0x8013151C, 0x80131538, 0x8013154C };     // view 17 (US)
 
         SysScreen YesNoScreen(string question, int x, int qy, int yesY, int noY, int curX, int curY)
         {
@@ -233,7 +250,7 @@ namespace DW1Remake.Game
                 int answer = 0;
                 yield return Ask(s, a => answer = a);
                 if (answer != 1) continue;
-                if (s.Pos == 1) SaveToFile();
+                if (s.Pos == 1 && !_noCard) SaveToFile();      // menu 0x28 -> 0x29: no memory card, no save
                 yield break;
             }
         }

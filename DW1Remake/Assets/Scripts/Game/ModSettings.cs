@@ -10,8 +10,8 @@ namespace DW1Remake.Game
     {
         const string Prefix = "DW1Remake.Mod.";
 
-        /// <summary>Map pictures and map pieces are upscaled on this PC when a map loads (MapRemaster); nothing is stored or shipped.</summary>
-        public static bool RemasteredMaps { get { return Get("RemasteredMaps"); } set { Set("RemasteredMaps", value); } }
+        /// <summary>The digital clock (hours:minutes) under the clock dial; ours, the original shows only the dial.</summary>
+        public static bool DigitalClock { get { return Get("DigitalClock"); } set { Set("DigitalClock", value); } }
 
         /// <summary>Greymon's arena (ROOM13 / ROOM19) offers a battle against a friend's Digimon on another PC (PlayableRoomOnline).</summary>
         public static bool OnlineBattle { get { return Get("OnlineBattle"); } set { Set("OnlineBattle", value); } }
