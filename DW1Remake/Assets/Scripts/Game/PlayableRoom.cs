@@ -2032,7 +2032,9 @@ namespace DW1Remake.Game
             // where the Digimon appears
             Vector3 want, face;
             bool atWarp = false; Vector3 partnerAt = Vector3.zero; int warpRot = 0;
-            if (arriveAtExit >= 0 && arriveAtExit < 10 && (_map.Warps[arriveAtExit].SpawnX != 0 || _map.Warps[arriveAtExit].SpawnZ != 0))
+            // loadMapEntities (tamer.c) takes the exit's point as it is, with no test for (0, 0): Birdramon's drop-offs use exit 9, which is all zeros on
+            // FRZL06 (the middle of the map, facing 0); ours took zeros for "no exit" and searched a free tile near the map's reference point
+            if (arriveAtExit >= 0 && arriveAtExit < 10)
             {
                 var w = _map.Warps[arriveAtExit];
                 // readMapWarps (tamer.c): setupTamerOnWarp puts the boy exactly on the exit's point, even on a blocked tile (OGRE10's Whamon
