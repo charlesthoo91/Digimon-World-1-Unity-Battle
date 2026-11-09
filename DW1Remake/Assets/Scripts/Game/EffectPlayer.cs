@@ -7,7 +7,7 @@ using UnityEngine;
 namespace DW1Remake.Game
 {
     /// <summary>One side of a technique, for the effect programs.</summary>
-    public sealed class EffectActor { public Transform T; public DigimonAnimator A; public int Type, Radius, Height, BoneCount; }
+    public sealed class EffectActor { public Transform T; public DigimonAnimator A; public int Type, Radius, Height, BoneCount, Original = -1; }     // Original: getOriginalType (an enemy variant's base type), -1 = Type
 
     /// <summary>
     /// The game's technique effects (ETCHI/EFEDAT.EFE, btl/battle_effect.c). Each technique has a 20480-byte block: a 52-byte header, then a small program with its data,
@@ -830,9 +830,10 @@ namespace DW1Remake.Game
             {
                 case 0:
                 {
-                    int e = Pop(), want = _ctx.Src.Type, first = e;
+                    // BTL_checkTechCompatibility: the entry for getOriginalType(source type); none = the program stops (EFE_ACTIVE_SECTION -1)
+                    int e = Pop(), want = _ctx.Src.Original >= 0 ? _ctx.Src.Original : _ctx.Src.Type;
                     while (S16(m, e) != want && S16(m, e) >= 0) e += 10;
-                    if (S16(m, e) < 0) e = first;     // a variant of a Digimon: the game maps it to the original type first
+                    if (S16(m, e) < 0) { _section = -1; _pc = 0; break; }
                     _ctx.BoneOffset = e + 2; break;
                 }
                 case 1:

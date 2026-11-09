@@ -149,7 +149,7 @@ namespace DW1Remake.Game
                     // a 1-3% of its max HP every 100 frames, shown in TEXT_COLORS[0xC]; the enemy's bar shows again (unk25 = 0)
                     f.PoisonFrames = 100;
                     int dmg = f.MaxHp * (_rng.Next(3) + 1) / 100;
-                    if (f != Partner) _barFrames = 0;
+                    if (f != Partner) f.BarFrames = 0;
                     f.Hp = Mathf.Max(0, f.Hp - dmg);
                     _pops.Add(new Pop { Text = dmg.ToString(), Pos = f.T.position + Vector3.up * 0.9f, Col = new Color(1f, 0f, 1f) });
                     Sync();

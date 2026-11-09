@@ -40,6 +40,7 @@ namespace DW1Remake.Game
             public int StunFrames, FlatTimer, FlatAttack, FlatSprite = -1, FlatFlip, FxKind; public bool Confused, Stunned, Flattened, Protected;
             public float HitUntil;              // stats.current.isHit: until its hit reaction is over nothing hits it again (the effects' hit subs skip it)
             public float ShownHp;               // the HP shown on screen: it drains smoothly after a hit (393, 379, 365 ...)
+            public byte BarFrames = 0xFF;       // the enemy life bar's frame count (player.unk1[i].unk25): 0 on a hit, shown while below 21; a byte, so it wraps (BTL_setupBattle sets 0xFF)
             public Vector3 Slot;
             public Vector3 FleeTo; public int Leaving;      // NPCEntity.flee (Unity); after the fight 0 getting up, 1 running off, 2 done
         }
@@ -48,7 +49,7 @@ namespace DW1Remake.Game
 
         sealed class Swing { public Fighter From, To; public float T; public bool Done; public Tech Tech; public Vector3 Start; public float Boost = 1f, Release, Length; public bool Effect, Landed, Fell; public int DrawnAtStart; public Vector3? HitAt; }
         sealed class Shot { public Fighter From, To; public Tech Tech; public Vector3 Pos, Dir; public float Travelled; public GameObject Go; public float Boost = 1f; }
-        sealed class Pop { public string Text; public Vector3 Pos; public float T; public Color Col; public int Icon; public bool Fixed; public Vector2 At; }     // Icon: addEntityText's icon, 1 HP, 2 MP
+        sealed class Pop { public string Text; public Vector3 Pos; public float T, Wait; public int Shift; public Color Col; public int Icon; public bool Fixed; public Vector2 At; }     // Icon: addEntityText's icon, 1 HP, 2 MP
         sealed class Fx { public GameObject Go; public Material Mat; public Vector3 Vel; public float T, Life, S0, S1; public Color Col; }
         readonly List<Fx> _fx = new List<Fx>();
         // addThrownItem / tickThrownItem (main.c): the item sits in the boy's hand (bone 9) until his animation 6 reaches frame 7, then flies to the partner in 24 frames:
@@ -292,7 +293,7 @@ namespace DW1Remake.Game
             _deathCount = 0; _cdTimer = -1; _fainted = false; _rising = false; _faintAcc = 0f;
 
             Partner.ShownHp = Partner.Hp; Enemy.ShownHp = Enemy.Hp;
-            _barFrames = 21; _lifeBarOn = false; _hudAcc = 0f;
+            _lifeBarOn = false; _hudAcc = 0f;
             SetupOrders();
             _order = CallOrder; _hover = _orders.Count; _shoutFrame = -1;
 
@@ -388,7 +389,7 @@ namespace DW1Remake.Game
             TickConditions(dt);
             Animate(Partner); Animate(Enemy);
             foreach (var x in Extras) Animate(x);
-            for (int i = _pops.Count - 1; i >= 0; i--) { _pops[i].T += dt; if (_pops[i].T >= 31f / 20f) _pops.RemoveAt(i); }     // renderEntityText: 31 frames
+            for (int i = _pops.Count - 1; i >= 0; i--) { if (_pops[i].Wait > 0f) { _pops[i].Wait -= dt; continue; } _pops[i].T += dt; if (_pops[i].T >= 31f / 20f) _pops.RemoveAt(i); }     // renderEntityText: 31 frames; a waiting one is not drawn yet
             foreach (var f in new[] { Partner, Enemy })
             {
                 if (f.A != null && f.A.Slot != WalkSlot && f.A.Slot != RunSlot && f.A.Slot != 2 && f.A.Slot != 4)      // the animation itself throws it back; it stays inside the fight
@@ -401,9 +402,10 @@ namespace DW1Remake.Game
             while (_hudAcc >= Frame)
             {
                 _hudAcc -= Frame;
-                DrainHp(Partner); DrainHp(Enemy);
-                bool thrown = Enemy.A != null && (Enemy.A.Slot == HitFrontSlot || Enemy.A.Slot == HitBackSlot);
-                if (!thrown && Enemy.ShownHp <= Enemy.Hp && _barFrames < 21) _barFrames++;
+                DrainHp(Partner);
+                // the arena draws its own HP (ArenaScreens), so there the number just drains
+                if (Tournament) DrainHp(Enemy);
+                else if (_phase == Phase.Fight || _phase == Phase.Win) foreach (var f in Enemies()) TickEnemyBar(f);
             }
             if (_phase == Phase.Fight && GameMenus.SelectKey()) _lifeBarOn = !_lifeBarOn;
             TickFx(dt);
@@ -686,7 +688,7 @@ namespace DW1Remake.Game
         bool NextEnemy()
         {
             foreach (var x in Extras)
-                if (x.Hp > 0) { Extras.Remove(x); Extras.Add(Enemy); Enemy = x; _barFrames = 0; return true; }
+                if (x.Hp > 0) { Extras.Remove(x); Extras.Add(Enemy); Enemy = x; return true; }
             return false;
         }
 
@@ -1329,7 +1331,7 @@ namespace DW1Remake.Game
                     }
                 }
                 // an effect that put nothing on the screen would leave the shot invisible: use the plain shot instead and say so
-                if (sw.Effect && !sw.Landed && !sw.Fell && Effects != null && sw.T >= sw.Release + 0.4f && Effects.Drawn == sw.DrawnAtStart)
+                if (ranged && sw.Effect && !sw.Landed && !sw.Fell && Effects != null && sw.T >= sw.Release + 0.4f && Effects.Drawn == sw.DrawnAtStart)
                 {
                     sw.Fell = true; sw.Effect = false; sw.Landed = true;
                     Debug.LogWarning("[effect] " + sw.Tech.Name + ": its program drew nothing in 0.4 s, using the plain shot (runs " + Effects.Running + ")");
@@ -1357,7 +1359,7 @@ namespace DW1Remake.Game
 
         EffectActor ActorFor(Fighter f)
         {
-            return new EffectActor { T = f.T, A = f.A, Type = f.Info != null ? f.Info.Type : 0, Radius = f.Info != null ? f.Info.Radius : 120, Height = f.Info != null ? f.Info.Height : 200, BoneCount = f.Info != null ? f.Info.BoneCount : 2 };
+            return new EffectActor { T = f.T, A = f.A, Type = f.Info != null ? f.Info.Type : 0, Original = f.Info != null ? OriginalType(f.Info.Type) : -1, Radius = f.Info != null ? f.Info.Radius : 120, Height = f.Info != null ? f.Info.Height : 200, BoneCount = f.Info != null ? f.Info.BoneCount : 2 };
         }
 
         // where a blow lands when no effect part said so: the target's bone 1 (ours; the game always has the effect's attack object)
@@ -1385,14 +1387,13 @@ namespace DW1Remake.Game
                     // BTL_addAttackObjectToTarget: the attack object sits where the effect part touched; the hit effect starts there
                     Fighter f = who.ContainsKey(victim) ? who[victim] : sw.To;
                     if (f == sw.To) sw.HitAt = at;
-                    if (sw.Tech.Melee) return;
                     if (f == sw.To) { if (sw.Landed) return; sw.Landed = true; }
                     Apply(sw.From, f, sw.Tech, sw.Boost, at);
                 }, a => who.ContainsKey(a) && who[a].Hp > 0);
             }
             catch (Exception e) { Debug.LogWarning("Effect of " + sw.Tech.Name + ": " + e.Message); }
             Debug.Log("[effect] start " + sw.Tech.Name + " (technique " + sw.Tech.Id + ") by " + sw.From.Name + ": " + (ok ? "program running" : "no program, plain shot"));
-            sw.Effect = ok && !sw.Tech.Melee;
+            sw.Effect = ok;      // BTL_tickMeleeAttack only starts the move: a blow, like a shot, lands through its program's hit subs (addAttackObject)
         }
 
         void Fire(Swing sw)
@@ -1558,7 +1559,7 @@ namespace DW1Remake.Game
             if (!tech.Melee) return;
             int chip = Mathf.Max(1, Mathf.RoundToInt(v * (10 + _rng.Next(21)) / 100f));
             d.Hp = Mathf.Max(0, d.Hp - chip);
-            if (d == Enemy) _barFrames = 0;
+            if (d != Partner) d.BarFrames = 0;
             _pops.Add(new Pop { Text = chip.ToString(), Pos = d.T.position + Vector3.up * 0.9f, T = 0f, Col = Color.white });
             Sync();
         }
@@ -1579,8 +1580,13 @@ namespace DW1Remake.Game
                 case 30: off = f.Off / 4; def = f.Def * 3 / 20; spd = f.Spd * 3 / 20; break;
             }
             f.Off = Mathf.Min(999, f.Off + off); f.Def = Mathf.Min(999, f.Def + def); f.Spd = Mathf.Min(999, f.Spd + spd);
-            int shown = off + def + spd;
-            if (shown > 0) _pops.Add(new Pop { Text = "+" + shown, Pos = f.T.position + Vector3.up * 1.2f, Col = new Color(0f, 1f, 0f) });     // BTL_buffStats: colour 0xB
+            // BTL_buffStats -> addEntityText: one number per stat, colour 0xB, icon 3 Off / 4 Def / 5 Speed, each called even for 0.
+            // renderEntityText: each later number starts 4 pixels right and down (activeElements x 4) and waits until the one before has risen 11 frames
+            int[] gain = t.Id == 41 ? new[] { off } : t.Id == 34 ? new[] { def, spd } : new[] { off, def, spd };
+            int[] icon = t.Id == 41 ? new[] { 3 } : t.Id == 34 ? new[] { 4, 5 } : new[] { 3, 4, 5 };
+            if (t.Id != 41 && t.Id != 42 && t.Id != 34 && t.Id != 21 && t.Id != 30) return;
+            for (int i = 0; i < gain.Length; i++)
+                _pops.Add(new Pop { Text = gain[i].ToString(), Pos = f.T.position + Vector3.up * 1.2f, Col = new Color(0f, 1f, 0f), Icon = icon[i], Shift = i * 4, Wait = i * 11f / 20f });
         }
 
         // the hit code (battle_main.c): from FLEE_TIMER 0x13 on, every attack object is still taken off its target but does nothing (no hit, no miss, no buff)
@@ -1601,7 +1607,7 @@ namespace DW1Remake.Game
             _anyHit = true;      // HAS_TAKEN_DAMAGE: any landed technique hit in the fight
             if (Tournament && OnTechHit != null) OnTechHit(d);
             d.Hp = Mathf.Max(0, d.Hp - dmg);
-            if (d == Enemy) _barFrames = 0;
+            if (d != Partner) d.BarFrames = 0;
             if (d == Partner && dmg * 100 / Partner.MaxHp >= 20) _bigHits++;
             _pops.Add(new Pop { Text = dmg.ToString(), Pos = d.T.position + Vector3.up * 0.9f, T = 0f, Col = Color.white });
             Vector3 away = Flat(d.T.position - a.T.position); if (away.sqrMagnitude < 0.01f) away = Vector3.left;
@@ -1811,7 +1817,7 @@ namespace DW1Remake.Game
             if (_phase != Phase.Notice && !Tournament) Hud();      // the arena draws its own (ArenaScreens)
             if (EndView != null && EndView.Showing) EndView.Draw(() => DrawStatsBox(Art, -88, -78, 176, _shown, _left, Raised(), false), BitsContent, FinalContent);
             if (_phase == Phase.Fight && _cdTimer >= 0 && cam != null && !Tournament) DrawCountdown(cam);
-            if (cam != null && (_phase == Phase.Fight || _phase == Phase.Win) && !Tournament) EnemyBar(cam);
+            if (cam != null && (_phase == Phase.Fight || _phase == Phase.Win) && !Tournament) foreach (var f in Enemies()) EnemyBar(cam, f);
             if (cam != null && _phase == Phase.Fight && _shoutFrame >= 0 && _player != null && !Tournament) DrawShout(cam);
             if (cam != null && (_phase == Phase.Fight || _phase == Phase.Win)) DrawConditions2D(cam);
             if (cam != null) foreach (var p in _pops) DrawPop(cam, p);
@@ -1843,8 +1849,8 @@ namespace DW1Remake.Game
             for (int i = 0; i < 20; i++) { _hopOff[i] = (sbyte)btl[0x80072E54 - 0x80052AE0 + i]; _dropOff[i] = (sbyte)btl[0x80072E68 - 0x80052AE0 + i]; }
             uint load = BitConverter.ToUInt32(exe, 0x18);
             for (int i = 0; i < 24; i++) _textRise[i] = (sbyte)exe[(int)(0x8012AA28 - load + 0x800) + i];
-            _iconU = new int[4];
-            for (int i = 0; i < 4; i++) _iconU[i] = exe[(int)(0x801343EC - load + 0x800) + i];      // ENTITY_TEXT_ICON_U
+            _iconU = new int[5];     // 1 HP, 2 MP, 3 Off, 4 Def, 5 Speed
+            for (int i = 0; i < 5; i++) _iconU[i] = exe[(int)(0x801343EC - load + 0x800) + i];      // ENTITY_TEXT_ICON_U
             Func<uint, string> str = a => { int p = (int)(a - load + 0x800), j = p; while (exe[j] != 0) j++; return System.Text.Encoding.ASCII.GetString(exe, p, j - p); };
             for (int i = 0; i < 6; i++) _statNames[i] = str(0x80124C0C + (uint)(i * 12));
             _bitsLabel = str(0x801344D4);
@@ -1997,12 +2003,12 @@ namespace DW1Remake.Game
         void DrawPop(Camera cam, Pop p)
         {
             int n;
-            if (!int.TryParse(p.Text, out n) || Art == null || _textRise == null) return;
+            if (p.Wait > 0f || !int.TryParse(p.Text, out n) || Art == null || _textRise == null) return;
             int frame = Mathf.Min((int)(p.T * 20f), 30), rise = 0;
             for (int i = 0; i <= Mathf.Min(frame, 20); i++) rise += _textRise[i];
             Vector2 at = p.Fixed ? p.At : Ps1Of(cam, p.Pos);
             var o = GUI.color; GUI.color = p.Col;
-            float x0 = Mathf.Round(at.x) - 14, y0 = Mathf.Round(at.y) - 8 + rise;
+            float x0 = Mathf.Round(at.x) - 14 + p.Shift, y0 = Mathf.Round(at.y) - 8 + rise + p.Shift;
             Art.Digits(n, 4, x0, y0);
             GUI.color = o;
             // drawEntityTextIcon: 8 x 8 at u ENTITY_TEXT_ICON_U[icon - 1] (exe 0x801343EC), v 0xB8 of the same page, colour set 6, 8 pixels left of the number
@@ -2366,16 +2372,33 @@ namespace DW1Remake.Game
             return r;
         }
 
-        // BTL_renderEnemyHPBars: a green outline with a line down to the enemy, the tinted strip and its HP. It shows for a moment after each hit; Select keeps it on.
-        int _barFrames;
+        // BTL_renderEnemyHPBars: one bar per enemy (fighters 1 to ENEMY_COUNT): a green outline with a line down to the enemy, the tinted strip and its HP.
+        // Each shows for 21 frames after it is hit (its own BarFrames); Select (BATTLE_TOGGLE_LIFEBAR) keeps every living enemy's bar on.
         bool _lifeBarOn;
         float _hudAcc;
 
-        void EnemyBar(Camera cam)
+        bool BarShown(Fighter f)
         {
-            if (Art == null || (_barFrames >= 21 && (!_lifeBarOn || Enemy.Hp <= 0))) return;
-            Transform at = Enemy.A != null ? Enemy.A.Node(1) : null;
-            Vector3 v = cam.WorldToViewportPoint(at != null ? at.position : Enemy.T.position + Vector3.up);
+            if (!_lifeBarOn) return f.BarFrames < 21;
+            return f.BarFrames < 21 || f.Hp > 0;
+        }
+
+        // the counting half of BTL_renderEnemyHPBars, once a game frame: the count goes up only while the bar is drawn,
+        // the enemy is not knocked back and its damage has finished draining (damageTick); at 0 HP the drain is dropped
+        void TickEnemyBar(Fighter f)
+        {
+            if (!BarShown(f)) return;
+            if (f.Hp == 0) f.ShownHp = f.Hp;
+            bool thrown = f.A != null && (f.A.Slot == HitFrontSlot || f.A.Slot == HitBackSlot);
+            if (!thrown && f.ShownHp <= f.Hp) f.BarFrames++;
+            DrainHp(f);
+        }
+
+        void EnemyBar(Camera cam, Fighter f)
+        {
+            if (Art == null || f.T == null || !BarShown(f)) return;
+            Transform at = f.A != null ? f.A.Node(1) : null;
+            Vector3 v = cam.WorldToViewportPoint(at != null ? at.position : f.T.position + Vector3.up);
             if (v.z <= 0f) return;
             float px = (v.x - 0.5f) * 320f, py = (0.5f - v.y) * 240f;
             float y = py < -0x4a ? -0x64 : py - 0x1a, x = px >= 0x42 ? 0x55 : px + 0x14;
@@ -2384,8 +2407,8 @@ namespace DW1Remake.Game
             BattleArt.Line(x, y + 1, x, y + 6);
             BattleArt.Line(x, y + 6, x + 0x35, y + 6);
             BattleArt.Line(x, y + 6, px, py);
-            int hp = Mathf.RoundToInt(Enemy.ShownHp);
-            Art.LifeFill(hp * 50 / Enemy.MaxHp, x + 2, y + 2);
+            int hp = Mathf.RoundToInt(f.ShownHp);
+            Art.LifeFill(hp * 50 / f.MaxHp, x + 2, y + 2);
             Art.Digits(hp, 4, x + 0x21, y - 9);
         }
 

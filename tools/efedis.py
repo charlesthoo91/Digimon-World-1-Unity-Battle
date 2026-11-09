@@ -16,7 +16,7 @@ while todo:
         out[pc]=txt
         if op==7: todo.append(s16(pc+6)&0xffff)
         if op==13: todo.append(a&0xffff)
-        if op==12 and bb!=0 and (a&0xffff)>=0xc00: todo.append(a&0xffff)
+        if op==12 and bb!=0 and ((a&0xffff)>=0xc00 or start<=(a&0xffff)<I(20)): todo.append(a&0xffff)     # pushed code address (data addresses lie before start)
         if op==9: pc=a&0xffff; continue
         if op==15: break
         pc+=sz
