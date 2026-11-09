@@ -2549,8 +2549,18 @@ namespace DW1Remake.Game
             }
         }
 
+        // main.c: the game's loop waits VSync(3), every third screen refresh of a 60 Hz TV, so the picture changes 20 times a second; the title
+        // and memory-card menus wait VSync(0) (60). The mod Smooth 60 FPS (ours) keeps 60 everywhere. Unity's vSync is off so the limit holds
+        void LimitFrameRate()
+        {
+            int want = _title != null || _movie != null || _picker != null || ModSettings.Smooth60 ? 60 : 20;
+            if (QualitySettings.vSyncCount != 0) QualitySettings.vSyncCount = 0;
+            if (Application.targetFrameRate != want) Application.targetFrameRate = want;
+        }
+
         void Update()
         {
+            LimitFrameRate();
             GameMenus.TickRepeat();
             if (_title != null || _picker != null || _movie != null) return;      // the title screen reads its own buttons (Title); the disc screen has its own
             HandleDebugAndSaveKeys();

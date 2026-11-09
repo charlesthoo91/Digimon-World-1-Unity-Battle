@@ -16,6 +16,9 @@ namespace DW1Remake.Game
         /// <summary>Greymon's arena (ROOM13 / ROOM19) offers a battle against a friend's Digimon on another PC (PlayableRoomOnline).</summary>
         public static bool OnlineBattle { get { return Get("OnlineBattle"); } set { Set("OnlineBattle", value); } }
 
+        /// <summary>The picture is drawn up to 60 times a second instead of the original 20 (the game's own clock stays at 20 either way).</summary>
+        public static bool Smooth60 { get { return Get("Smooth60"); } set { Set("Smooth60", value); } }
+
         static bool Get(string key) { try { return PlayerPrefs.GetInt(Prefix + key, 0) != 0; } catch { return false; } }
 
         static void Set(string key, bool on)

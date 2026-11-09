@@ -1,0 +1,334 @@
+using System.Collections;
+using System.Collections.Generic;
+using System.IO;
+using System.Text;
+using DW1Remake.Formats;
+using UnityEngine;
+
+namespace DW1Remake.Game
+{
+    /// <summary>
+    /// Ours (mod "Online battle"; not in the original game): the match between two friends' partners, as one tournament match in Greymon's arena
+    /// (the arena world, introductions, BATTLE text, HUD, cameras, WIN / LOSE: PlayableRoomTournament / PlayableRoomArena). Neither player gives
+    /// orders (script flag 2, Battle.Tamerless): both Digimon fight by their own Brains, as tournament opponents do.
+    /// The host's PC runs the real fight (Battle). Twenty times a second it sends both fighters' place, facing, animation, HP, MP and finishing
+    /// gauge, plus the counter; it also sends every technique started (its picture), every number over a head, the knock-out and the result.
+    /// The friend's PC runs Battle as a copy (Battle.Puppet) and shows all of that. Its world is the host's turned half round the arena's middle,
+    /// so each player sees their own Digimon on their own side.
+    /// Messages (after MsgProfile = 1): 2 ready, 3 start, 4 state (sent once, may be lost), 5 technique, 6 number, 7 knock-out, 8 end (sure).
+    /// Sides in messages are the host's: 0 the host's partner, 1 the friend's partner.
+    /// </summary>
+    public sealed partial class PlayableRoom
+    {
+        const byte MsgReady = 2, MsgStart = 3, MsgState = 4, MsgSwing = 5, MsgPop = 6, MsgKo = 7, MsgEnd = 8, MsgOrder = 9, MsgIntroDone = 10;
+        bool _onlineOrders, _friendIntroDone;      // orders on (the host chooses; MsgStart carries it); the friend has finished the introductions
+        bool _meReady, _friendReady, _onlineMatch, _onlineHost, _endSent, _netBattleSeen;
+        float _stateAcc;
+        readonly Vector3[] _netPos = new Vector3[2];
+        readonly Quaternion[] _netRot = new Quaternion[2];
+        readonly bool[] _netHave = new bool[2];
+        string _onlineResult;
+
+        // ---------------------------------------------------------------- the match (both PCs)
+
+        IEnumerator OnlineMatch(bool host)
+        {
+            bool orders = _onlineOrders; _friendIntroDone = false;
+            _onlineMatch = true; _onlineHost = host; _endSent = false; _netBattleSeen = false; _stateAcc = 0f; _onlineResult = null;
+            _netHave[0] = _netHave[1] = false;
+            _tourOn = true;
+            _line = null; _choiceOpts = null;
+            // a friendly match changes nothing in the game: the partner's numbers, techniques, Bits, condition and mood are put back afterwards
+            var statsBack = (ushort[])_state.Stats.Clone(); var techsBack = (bool[])_state.Techs.Clone();
+            int moneyBack = _state.Money, happyBack = _state.Happiness, discBack = _state.Discipline;
+            int condBack = _state.Para.Condition, tiredBack = _state.Para.Tiredness;
+            bool flag2 = _state.GetFlag(2);
+            _state.SetFlag(2, !orders);             // orders off: IS_TAMERLESS_BATTLE (no orders, no items, no finishing-move button) on both PCs
+            // both start with full HP and MP (the friend's numbers come as its maximums)
+            _state.Stats[6] = _state.Stats[4]; _state.Stats[7] = _state.Stats[5];
+            // the arena moves and re-lenses the main camera; the room's painted picture hangs on the map camera, so it is put back afterwards
+            Vector3 camPos = _cam.transform.position; Quaternion camRot = _cam.transform.rotation;
+            float camFov = _cam.fieldOfView, camFocal = _cam.focalLength; Vector2 camSensor = _cam.sensorSize, camShift = _cam.lensShift;
+            bool camPhys = _cam.usePhysicalProperties; var camGate = _cam.gateFit;
+            yield return TourFade(1f, 5);
+            if (_audio != null) { _audio.SetMapSounds(0x10); _audio.BattleSounds(); }
+            int arena = _mapId == 0x6A ? 1 : 0;
+            int music = arena == 0 ? 0x1E : 0x20;
+            _tourHidden.Clear();
+            foreach (var n in _npcs) if (n.T != null && n.T.gameObject.activeSelf) { n.T.gameObject.SetActive(false); _tourHidden.Add(n); }
+            bool boyShown = _player.gameObject.activeSelf;
+            _player.gameObject.SetActive(false);
+            Vector3 home = _partner.position; Quaternion homeRot = _partner.rotation;
+            ArenaOn(arena, 0);
+            _p1 = Fighter(_partner, _partnerAnim, PartnerType, true);
+            _arenaScr.InitBracket();
+            _camState = 10; _camTimer = 0;
+            Npc foe = SpawnFriend(_friend);
+            int result = 0;
+            if (foe != null)
+            {
+                _battle.Puppet = !host;
+                _battle.EnemyCommanded = host && orders;
+                if (!host && orders) _battle.NetOrder = o => { if (_net != null) _net.SendSure(OrderMessage(o)); };
+                if (host)
+                {
+                    _battle.NetSwing = (f, tech, to) => { if (_net != null) _net.SendSure(new[] { MsgSwing, (byte)SideOf(f), (byte)tech }); };
+                    _battle.NetKnockOut = f => { if (_net != null) _net.SendSure(new[] { MsgKo, (byte)SideOf(f) }); };
+                }
+                yield return TourFade(0f, 5);
+                yield return OnlineRunMatch(foe, arena, music, r => result = r);
+                _arena.ShowScene(0);
+                if (foe.T != null) Destroy(foe.T.gameObject);
+            }
+            else Debug.LogWarning("[online] the friend's Digimon could not be made (type " + (_friend != null ? _friend.Type : -1) + ")");
+            _tourFoe = null; _p2 = null;
+            _battle.Puppet = false; _battle.NetSwing = null; _battle.NetKnockOut = null; _battle.NetOrder = null; _battle.EnemyCommanded = false;
+            // as STD_deinitializeTournament: back to the room
+            if (_audio != null) { _audio.StopMusic(); _audio.StopSound(); }
+            yield return TourFade(1f, 1);
+            yield return ArenaFrames(0xB);
+            ArenaOff();
+            _cam.transform.SetPositionAndRotation(camPos, camRot);
+            _cam.usePhysicalProperties = camPhys; _cam.gateFit = camGate; _cam.sensorSize = camSensor; _cam.focalLength = camFocal; _cam.lensShift = camShift;
+            if (!camPhys) _cam.fieldOfView = camFov;
+            _partner.gameObject.SetActive(true);
+            if (_tourView != null) _tourView.ShowTimer = false;
+            _p1 = null;
+            _partner.position = home; _partner.rotation = homeRot;
+            if (_partnerAnim != null) { _partnerAnim.TakeBodyMove(); _partnerAnim.SetSlot(IdleSlot); }
+            _player.gameObject.SetActive(boyShown);
+            foreach (var n in _tourHidden) if (n.T != null) n.T.gameObject.SetActive(true);
+            _tourHidden.Clear();
+            if (_audio != null && _mapId >= 0 && _mapId < _mapFlags.Count) { _audio.SetMapSounds(_mapFlags[_mapId] & 0x1F); _audio.RestoreBgm(); }
+            _state.SetFlag(2, flag2);
+            System.Array.Copy(statsBack, _state.Stats, statsBack.Length); System.Array.Copy(techsBack, _state.Techs, techsBack.Length);
+            _state.Money = moneyBack; _state.Happiness = happyBack; _state.Discipline = discBack;
+            _state.Para.Condition = condBack; _state.Para.Tiredness = tiredBack;
+            _onlineResult = result == 1 ? "You won!" : result == -1 ? "You lost." : "A draw (or the link was lost).";
+            yield return TourFade(0f, 5);
+            _onlineMatch = false; _tourOn = false; _meReady = _friendReady = false;
+        }
+
+        // RunMatch (STD_runMatch) with one stop: the fight starts only when both PCs are past the introductions (each skips its own with Cross)
+        IEnumerator OnlineRunMatch(Npc foe, int which, int music, System.Action<int> done)
+        {
+            _tourFoe = foe;
+            _p2 = Fighter(foe.T, foe.Anim, foe.Data.Type, false);
+            if (_partner != null) _partner.gameObject.SetActive(true);
+            yield return RunIntro(which, music);
+            if (_net != null) _net.SendSure(new[] { MsgIntroDone });
+            float waited = 0f;
+            while (!_friendIntroDone && _net != null && _net.Now == NetLink.State.Linked && waited < 120f)
+            {
+                if (waited > 0.5f) Say("Waiting for your friend to finish the introductions...");
+                waited += Time.deltaTime;
+                yield return null;
+            }
+            _camState = 1;
+            int result = 0;
+            yield return Combat(foe, music, r => result = r);
+            RemoveCameraIntro();
+            _camState = 10;
+            done(result);
+        }
+
+        byte[] OrderMessage(string order)
+        {
+            var t = Encoding.UTF8.GetBytes(order ?? "");
+            var b = new byte[1 + t.Length]; b[0] = MsgOrder; t.CopyTo(b, 1);
+            return b;
+        }
+
+        // the friend's partner, made like a tournament opponent (SpawnOpponent) but with the friend's own numbers and techniques
+        Npc SpawnFriend(FriendProfile p)
+        {
+            if (p == null) return null;
+            if (_entries == null) _entries = new List<DigimonEntry>(DigimonCatalog.Load(_disc));
+            if (_allTim == null) _allTim = _disc.ReadFile("/CHDAT/ALLTIM.TIM");
+            DigimonEntry entry = null;
+            foreach (var e in _entries) if (e.Type == p.Type) { entry = e; break; }
+            var info = DigimonStatsCatalog.Get(_disc, p.Type);
+            if (entry == null || info == null) return null;
+            GameObject go;
+            try
+            {
+                MmdModel.UseLit = Hd2D && UseMapLights;
+                MmdModel.Brightness = Hd2D && UseMapLights ? CharacterBrightness : 1f;
+                go = MmdModel.Parse(_disc.ReadFile(entry.MmdPath)).Build(entry, _allTim);
+            }
+            finally { MmdModel.UseLit = false; MmdModel.Brightness = 1f; }
+            go.transform.SetParent(transform, false);
+            var d = new MapDigimon { Type = p.Type, Script = 0xFF, Hp = p.Hp, Mp = p.Mp, Off = p.Off, Def = p.Def, Spd = p.Spd, Brain = p.Brain };
+            for (int k = 0; k < 4; k++)
+            {
+                d.MoveSlots[k] = 0xFF;
+                int at = p.Techs[k] != 0xFF ? info.Moves.IndexOf(p.Techs[k]) : -1;
+                if (at >= 0) d.MoveSlots[k] = at + DigimonStats.FirstMoveSlot;
+            }
+            if (d.MoveSlots[0] == 0xFF) d.MoveSlots[0] = DigimonStats.FirstMoveSlot;
+            // the technique chances: the arena's record 0, as for a tournament opponent in that place (STD_initializeOpponent)
+            if (_map != null && _map.Npcs.Count > 0) for (int k = 0; k < 4; k++) d.MoveChance[k] = _map.Npcs[0].MoveChance[k];
+            else for (int k = 0; k < 4; k++) d.MoveChance[k] = 1;
+            string name = string.IsNullOrEmpty(p.Name) ? entry.Name : p.Name;
+            var n = new Npc { Data = d, T = go.transform, Anim = go.GetComponent<DigimonAnimator>(), Name = name, Record = -1 };
+            if (n.Anim != null) { n.Anim.DigimonType = p.Type; n.Anim.SetSlot(Battle.IdleSlot); }
+            return n;
+        }
+
+        // ---------------------------------------------------------------- every frame while the match runs
+
+        void OnlineFrame()
+        {
+            if (_battle == null) return;
+            if (_battle.Active) _netBattleSeen = true;
+            if (_onlineHost)
+            {
+                if (_battle.Active && _netBattleSeen)
+                {
+                    _stateAcc += Time.deltaTime;
+                    if (_stateAcc >= 0.05f) { _stateAcc = 0f; _net.SendFast(StateMessage()); }
+                    var cols = new List<Color>(); var icons = new List<int>();
+                    var pops = _battle.TakeNewPops(cols, icons);
+                    for (int i = 0; i < pops.Count; i++) _net.SendSure(PopMessage(pops[i].Key, pops[i].Value, cols[i], icons[i]));
+                }
+                else if (_netBattleSeen && !_endSent)
+                {
+                    _endSent = true;
+                    _net.SendSure(new[] { MsgEnd, (byte)(sbyte)_battle.Result, (byte)Mathf.Max(0, _battle.WinnerSide) });
+                }
+                return;
+            }
+            // the friend's PC: glide to the host's places (sent 20 times a second) so the movement looks smooth
+            if (_battle.Active && _battle.Puppet)
+            {
+                if (_net.Now != NetLink.State.Linked) { _battle.PuppetEnd(0, 2); return; }      // the link was lost: the copy cannot go on
+                float k = 1f - Mathf.Exp(-15f * Time.deltaTime);
+                for (int s = 0; s < 2; s++)
+                {
+                    var f = NetSide(s);
+                    if (f == null || f.T == null || !_netHave[s]) continue;
+                    f.T.position = Vector3.Lerp(f.T.position, _netPos[s], k);
+                    f.T.rotation = Quaternion.Slerp(f.T.rotation, _netRot[s], k);
+                }
+            }
+        }
+
+        // ---------------------------------------------------------------- the messages
+
+        void ReadMatch(byte[] m)
+        {
+            switch (m[0])
+            {
+                case MsgReady: _friendReady = true; break;
+                case MsgStart:
+                    if (_onlineRole == 0 && !_onlineMatch && _friend != null) { _onlineOrders = m.Length >= 2 && m[1] != 0; StartCoroutine(OnlineMatch(false)); }
+                    break;
+                case MsgIntroDone: _friendIntroDone = true; break;
+                case MsgOrder: if (_onlineHost && _onlineMatch && _battle != null && _battle.Active) _battle.RemoteOrder(Encoding.UTF8.GetString(m, 1, m.Length - 1)); break;
+                case MsgState: if (!_onlineHost && _onlineMatch) ReadState(m); break;
+                case MsgSwing:
+                    if (!_onlineHost && _onlineMatch && m.Length >= 3 && _battle != null && _battle.Active)
+                        _battle.PuppetSwing(NetSide(m[1]), m[2], NetSide(m[1] == 0 ? 1 : 0));
+                    break;
+                case MsgPop: if (!_onlineHost && _onlineMatch && _battle != null && _battle.Active) ReadPop(m); break;
+                case MsgKo: if (!_onlineHost && _onlineMatch && m.Length >= 2 && _battle != null) _battle.PuppetKnockOut(NetSide(m[1])); break;
+                case MsgEnd:
+                    if (!_onlineHost && _onlineMatch && m.Length >= 3 && _battle != null && _battle.Active)
+                    {
+                        // the host's result is the other way round here: its partner is this PC's enemy
+                        int r = (sbyte)m[1], w = m[2];
+                        _battle.PuppetEnd(-r, w == 0 ? 1 : w == 1 ? 0 : w);
+                    }
+                    break;
+            }
+        }
+
+        // side 0 = the host's partner, 1 = the friend's partner
+        Battle.Fighter NetSide(int s)
+        {
+            if (_battle == null) return null;
+            if (_onlineHost) return s == 0 ? _battle.Partner : _battle.Enemy;
+            return s == 0 ? _battle.Enemy : _battle.Partner;
+        }
+
+        int SideOf(Battle.Fighter f) { return f == _battle.Partner ? 0 : 1; }
+
+        // places travel in the arena's game units; the friend's world is the host's turned half round the arena's middle (it is its own inverse)
+        Vector3 NetOut(Vector3 unity) { return ArenaStage.ToGame(unity); }
+        Vector3 NetIn(Vector3 game) { return ArenaStage.ToUnity(_onlineHost ? game : new Vector3(-game.x, game.y, -game.z)); }
+
+        byte[] StateMessage()
+        {
+            var ms = new MemoryStream(); var w = new BinaryWriter(ms);
+            w.Write(MsgState);
+            w.Write((byte)Mathf.Clamp(_battle.Timer, 0, 255));
+            w.Write((byte)((_battle.TimeUpWord ? 1 : 0) | (_battle.TimeUpBox ? 2 : 0)));
+            w.Write((ushort)Mathf.Clamp(_battle.TourDamage[0], 0, 65535)); w.Write((ushort)Mathf.Clamp(_battle.TourDamage[1], 0, 65535));
+            for (int s = 0; s < 2; s++)
+            {
+                var f = NetSide(s);
+                Vector3 g = NetOut(f.T.position);
+                w.Write(g.x); w.Write(g.y); w.Write(g.z);
+                w.Write(f.T.rotation.eulerAngles.y);
+                w.Write((byte)(f.A != null ? f.A.Slot : 0)); w.Write((byte)(f.A != null && f.A.PlaysOnce ? 1 : 0));
+                w.Write((ushort)Mathf.Clamp(f.Hp, 0, 65535)); w.Write((ushort)Mathf.Clamp(f.Mp, 0, 65535)); w.Write((ushort)Mathf.Clamp(f.Finish, 0, 65535));
+            }
+            return ms.ToArray();
+        }
+
+        void ReadState(byte[] m)
+        {
+            if (_battle == null || !_battle.Active || !_battle.Puppet) return;
+            var r = new BinaryReader(new MemoryStream(m));
+            try
+            {
+                r.ReadByte();
+                _battle.Timer = r.ReadByte();
+                int flags = r.ReadByte();
+                _battle.TimeUpWord = (flags & 1) != 0; _battle.TimeUpBox = (flags & 2) != 0;
+                int d0 = r.ReadUInt16(), d1 = r.ReadUInt16();
+                _battle.TourDamage[0] = d1; _battle.TourDamage[1] = d0;          // [0] = what this PC's partner lost
+                for (int s = 0; s < 2; s++)
+                {
+                    var g = new Vector3(r.ReadSingle(), r.ReadSingle(), r.ReadSingle());
+                    float yaw = r.ReadSingle();
+                    int slot = r.ReadByte(); bool once = r.ReadByte() != 0;
+                    int hp = r.ReadUInt16(), mp = r.ReadUInt16(), fin = r.ReadUInt16();
+                    var f = NetSide(s);
+                    if (f == null) continue;
+                    _netPos[s] = NetIn(g);
+                    _netRot[s] = Quaternion.Euler(0f, yaw + (_onlineHost ? 0f : 180f), 0f);
+                    if (!_netHave[s] && f.T != null) { f.T.position = _netPos[s]; f.T.rotation = _netRot[s]; }
+                    _netHave[s] = true;
+                    if (f.A != null && f.A.Slot != slot && f.A.HasSlot(slot)) f.A.SetSlot(slot, once);
+                    _battle.PuppetNumbers(f, hp, mp, fin);
+                }
+            }
+            catch (EndOfStreamException) { }
+        }
+
+        byte[] PopMessage(Vector3 pos, string text, Color col, int icon)
+        {
+            var ms = new MemoryStream(); var w = new BinaryWriter(ms);
+            w.Write(MsgPop);
+            Vector3 g = NetOut(pos);
+            w.Write(g.x); w.Write(g.y); w.Write(g.z);
+            w.Write((byte)Mathf.Clamp(Mathf.RoundToInt(col.r * 255f), 0, 255)); w.Write((byte)Mathf.Clamp(Mathf.RoundToInt(col.g * 255f), 0, 255));
+            w.Write((byte)Mathf.Clamp(Mathf.RoundToInt(col.b * 255f), 0, 255)); w.Write((byte)icon);
+            var t = Encoding.UTF8.GetBytes(text ?? ""); w.Write(t);
+            return ms.ToArray();
+        }
+
+        void ReadPop(byte[] m)
+        {
+            if (m.Length < 17) return;
+            var r = new BinaryReader(new MemoryStream(m));
+            r.ReadByte();
+            var g = new Vector3(r.ReadSingle(), r.ReadSingle(), r.ReadSingle());
+            var col = new Color(r.ReadByte() / 255f, r.ReadByte() / 255f, r.ReadByte() / 255f, 1f);
+            int icon = r.ReadByte();
+            string text = Encoding.UTF8.GetString(m, 17, m.Length - 17);
+            _battle.PuppetPop(text, NetIn(g), col, icon);
+        }
+    }
+}

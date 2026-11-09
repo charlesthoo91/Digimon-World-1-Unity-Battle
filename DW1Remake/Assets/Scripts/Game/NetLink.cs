@@ -19,7 +19,7 @@ namespace DW1Remake.Game
     {
         public enum State { Starting, Ready, Linking, Linked, Failed, Closed }
 
-        const byte Version = 1;
+        const byte Version = 2;           // 2: profiles carry techniques, the match messages
         static readonly string[] StunHosts = { "stun.l.google.com", "stun1.l.google.com", "stun.cloudflare.com" };
         static readonly int[] StunPorts = { 19302, 19302, 3478 };
         const byte MsgHello = 1, MsgHelloAck = 2, MsgData = 3, MsgAck = 4, MsgPing = 5, MsgPong = 6, MsgBye = 7;

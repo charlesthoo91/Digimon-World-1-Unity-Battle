@@ -170,17 +170,19 @@ namespace DW1Remake.Game
                 // the game's letters are about 11 pixels wide: the names start at 0x1C and ON / OFF at 0xD8, in a box 0xF0 wide
                 s.Text("REMASTERED MAPS", 0x1C, 0x37); s.Text(ModSettings.RemasteredMaps ? "ON" : "OFF", 0xD8, 0x37);
                 s.Text("ONLINE BATTLE", 0x1C, 0x37 + 12); s.Text(ModSettings.OnlineBattle ? "ON" : "OFF", 0xD8, 0x37 + 12);
-                s.Text("BACK", 0x1C, 0x37 + 24);
-                s.Box(0x12, 0x32, 0xF0, 0x2E);
+                s.Text("SMOOTH 60 FPS", 0x1C, 0x37 + 24); s.Text(ModSettings.Smooth60 ? "ON" : "OFF", 0xD8, 0x37 + 24);
+                s.Text("BACK", 0x1C, 0x37 + 36);
+                s.Box(0x12, 0x32, 0xF0, 0x2E + 12);
                 s.Cursor(System.BitConverter.ToInt16(exe, h + 8) - (0x52 - 0x1C), System.BitConverter.ToInt16(exe, h + 10), 0xE6,
-                         System.BitConverter.ToInt16(exe, h + 14), System.BitConverter.ToInt16(exe, h + 6), 3);
+                         System.BitConverter.ToInt16(exe, h + 14), System.BitConverter.ToInt16(exe, h + 6), 4);
                 s.Pos = pos;
                 int answer = 0;
                 yield return Ask(s, a => answer = a);
                 pos = s.Pos;
-                if (answer != 1 || pos == 2) yield break;
+                if (answer != 1 || pos == 3) yield break;
                 if (pos == 0) ModSettings.RemasteredMaps = !ModSettings.RemasteredMaps;
-                else ModSettings.OnlineBattle = !ModSettings.OnlineBattle;
+                else if (pos == 1) ModSettings.OnlineBattle = !ModSettings.OnlineBattle;
+                else ModSettings.Smooth60 = !ModSettings.Smooth60;
             }
         }
 

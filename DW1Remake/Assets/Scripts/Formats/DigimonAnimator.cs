@@ -31,6 +31,7 @@ namespace DW1Remake.Formats
         public int Slot { get { return _slot; } }
         int _pending = -1; bool _pendingOnce;    // next scripted animation, waits until the current play-once animation has finished (like the game's per-actor command queue)
         public void ReleaseLoop() { if (_sim != null) _sim.ReleaseLoop(); }
+        public bool PlaysOnce { get { return _once; } }      // the animation was started to play once (SetSlot(slot, true))
         public bool Busy { get { return _once && !_held && _sim != null && !_sim.Endless; } }   // an endless loop (lying asleep) never blocks the next animation
 
         /// <summary>Scripted animation: starts now, or right after the current play-once animation ends.</summary>

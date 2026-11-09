@@ -43,13 +43,16 @@ namespace DW1Remake.Game
             public byte BarFrames = 0xFF;       // the enemy life bar's frame count (player.unk1[i].unk25): 0 on a hit, shown while below 21; a byte, so it wraps (BTL_setupBattle sets 0xFF)
             public Vector3 Slot;
             public Vector3 FleeTo; public int Leaving;      // NPCEntity.flee (Unity); after the fight 0 getting up, 1 running off, 2 done
+            // the order it follows: the partner always; with the mod Online battle and orders on, also the friend's Digimon on the host's PC
+            // (its orders come from the friend's PC). Others are enemies and use the enemy AI (PickEnemy)
+            public bool Commanded; public string Order = "Your Call"; public bool WantFinish;
         }
 
         static Vector3 FleeOf(MapDigimon d, Transform t) { return new Vector3(d.Flee.x * 0.01f, t.position.y, d.Flee.z * 0.01f); }
 
         sealed class Swing { public Fighter From, To; public float T; public bool Done; public Tech Tech; public Vector3 Start; public float Boost = 1f, Release, Length; public bool Effect, Landed, Fell; public int DrawnAtStart; public Vector3? HitAt; }
         sealed class Shot { public Fighter From, To; public Tech Tech; public Vector3 Pos, Dir; public float Travelled; public GameObject Go; public float Boost = 1f; }
-        sealed class Pop { public string Text; public Vector3 Pos; public float T, Wait; public int Shift; public Color Col; public int Icon; public bool Fixed; public Vector2 At; }     // Icon: addEntityText's icon, 1 HP, 2 MP
+        sealed class Pop { public string Text; public Vector3 Pos; public float T, Wait; public int Shift; public Color Col; public int Icon; public bool Fixed, Sent; public Vector2 At; }     // Icon: addEntityText's icon, 1 HP, 2 MP
         sealed class Fx { public GameObject Go; public Material Mat; public Vector3 Vel; public float T, Life, S0, S1; public Color Col; }
         readonly List<Fx> _fx = new List<Fx>();
         // addThrownItem / tickThrownItem (main.c): the item sits in the boy's hand (bone 9) until his animation 6 reaches frame 7, then flies to the partner in 24 frames:
@@ -139,6 +142,25 @@ namespace DW1Remake.Game
         public System.Action<Fighter> OnTechHit;            // a landed blow (STD_tickAttackHits: STD_setRandomViewpoint on the one hit)
         public System.Action<Fighter> OnKnockOut;           // STD_selectRandomCamera(loser, 5, 0): the WIN / LOSE scene and the knock-out camera
         public System.Action OnVersus; public System.Func<bool> VersusBusy;     // a draw: the draw letters (STD_addVersusModelScene) and whether they still run
+
+        // ---- mod Online battle (ours; PlayableRoomOnline). The host's PC runs the fight and reports it: every technique started, every knock-out.
+        // The friend's PC runs this class as a copy (Puppet): no thinking, moving or damage; positions, animations, HP and the rest come from the host
+        public bool Puppet;
+        public System.Action<Fighter, int, Fighter> NetSwing;      // a technique starts (who, technique, at whom)
+        public System.Action<Fighter> NetKnockOut;                 // the arena's knock-out (OnKnockOut)
+        public System.Action<string> NetOrder;                     // the copy: an order the friend gave (to the host)
+        public bool EnemyCommanded;                                // the host with orders on: the friend's Digimon (Enemy) follows the friend's orders
+        public const string FinishOrderName = "#finish";
+        float _shoutAcc;
+
+        /// <summary>The host: the friend gave its Digimon (the Enemy here, made Commanded) an order.</summary>
+        public void RemoteOrder(string order)
+        {
+            if (Enemy == null || !Enemy.Commanded || _phase != Phase.Fight) return;
+            if (order == FinishOrderName) { if (Enemy.Finisher != null && Enemy.Finish >= Enemy.FinishMax) { Enemy.WantFinish = true; Enemy.Pending = null; Enemy.Wait = 0; } return; }
+            if (order == RunOrder || order == ChangeOrder) return;
+            Enemy.Order = order;
+        }
         bool _tVersus; readonly HashSet<Fighter> _tKo = new HashSet<Fighter>();
         // what the arena's own HUD (ArenaScreens) shows: the commands as the game numbers them (0xB the finishing move, 2 Attack, 3 Your Call,
         // 4 Moderate, 5 Distance, 6 Defensive, 8-10 the techniques), the one under the cursor, the finishing move's charge
@@ -176,7 +198,8 @@ namespace DW1Remake.Game
         public Func<Vector3, bool> Walkable;     // the room's walking grid
         readonly Dictionary<Transform, float> _still = new Dictionary<Transform, float>();
         readonly List<string> _orders = new List<string>();
-        string _order = CallOrder;
+        // the partner's order (it lives on the partner's Fighter, so the online friend's Digimon can have its own)
+        string _order { get { return Partner != null ? Partner.Order : CallOrder; } set { if (Partner != null) Partner.Order = value; } }
         int _hover = 1, _shoutFrame = -1; string _shout;       // the order under the cursor; numbers count from 1 as the game's do (0 is the finishing move)
         public BattleArt Art;
         readonly List<Swing> _swings = new List<Swing>();
@@ -272,6 +295,7 @@ namespace DW1Remake.Game
                 MaxHp = Mathf.Max(1, _s.Stats[4]), MaxMp = _s.Stats[5], Hp = _s.Stats[6], Mp = _s.Stats[7]
             };
             if (Partner.Hp <= 0) Partner.Hp = 1;
+            Partner.Commanded = true;
             SetupTechs(Partner, partnerInfo, null);
             Enemy = new Fighter
             {
@@ -282,6 +306,7 @@ namespace DW1Remake.Game
             _enemyBits = enemyData.Bits;
             Enemy.FleeTo = FleeOf(enemyData, enemy);
             SetupTechs(Enemy, enemyInfo, enemyData);
+            Enemy.Commanded = EnemyCommanded;
             _seen.Clear(); _learned = null; _dropped = null; _dropName = null; DropItem = -1; _endStep = -1; _anyHit = false; _drops.Clear();
             foreach (var f in new[] { Partner, Enemy })
             {
@@ -383,6 +408,7 @@ namespace DW1Remake.Game
         public void Tick(int side, bool action, bool triangle, bool cancel)
         {
             if (!Active) return;
+            if (Puppet) { PuppetTick(side, action); return; }
             float dt = Time.deltaTime; _time += dt;
             if (Effects != null) Effects.Tick(dt, Camera.main);
             TickAura(dt);
@@ -540,6 +566,67 @@ namespace DW1Remake.Game
             }
         }
 
+        // ---------------------------------------------------------------- mod Online battle: the friend's copy of the host's fight (ours)
+
+        // the copy keeps time, effects, numbers over the heads and the HP drain; the fighters' bodies do not move by their animations here (the host's
+        // positions are set from outside), so what an animation would have moved is thrown away
+        void PuppetTick(int side, bool action)
+        {
+            float dt = Time.deltaTime; _time += dt;
+            // orders on: the friend picks orders on its own copy of the list (its own partner's Brains and techniques, as on the host's PC) and
+            // they go to the host (NetOrder); Square with a full gauge orders the finishing move
+            if (_phase == Phase.Fight && !Tamerless && NetOrder != null)
+            {
+                if (SquarePressed() && Partner.Finisher != null && Partner.Finish >= Partner.FinishMax) { Snd(3); Shout(Partner.Finisher.Name); NetOrder(FinishOrderName); }
+                if (side != 0) { Snd(2); MoveHover(side); }
+                if (action && _hover >= 1 && _hover <= _orders.Count) { Snd(3); Choose(_hover - 1); NetOrder(_order); }
+            }
+            if (_shoutFrame >= 0) { _shoutAcc += dt; while (_shoutAcc >= Frame && _shoutFrame >= 0) { _shoutAcc -= Frame; if (++_shoutFrame > 20) _shoutFrame = -1; } }
+            if (Effects != null) Effects.Tick(dt, Camera.main);
+            for (int i = _pops.Count - 1; i >= 0; i--) { if (_pops[i].Wait > 0f) { _pops[i].Wait -= dt; continue; } _pops[i].T += dt; if (_pops[i].T >= 31f / 20f) _pops.RemoveAt(i); }
+            foreach (var f in new[] { Partner, Enemy }) if (f != null && f.A != null) f.A.TakeBodyMove();
+            _hudAcc += dt;
+            while (_hudAcc >= Frame) { _hudAcc -= Frame; DrainHp(Partner); DrainHp(Enemy); }
+            TickFx(dt);
+            if (_phase == Phase.Banner && TournamentStartDone) SetPhase(Phase.Fight);
+        }
+
+        /// <summary>The host's numbers for one fighter (the copy's own Partner or Enemy).</summary>
+        public void PuppetNumbers(Fighter f, int hp, int mp, int finish)
+        {
+            if (f == null) return;
+            f.Hp = hp; f.Mp = mp; f.Finish = Mathf.Min(finish, f.FinishMax);
+            if (f.ShownHp < f.Hp) f.ShownHp = f.Hp;      // healing shows at once; damage drains as on the host
+        }
+
+        /// <summary>A technique the host's fight started: only its picture (the hits come as numbers and animations).</summary>
+        public void PuppetSwing(Fighter from, int tech, Fighter to)
+        {
+            if (Effects == null || from == null || to == null) return;
+            var t = MakeTech(tech, IsFinisherId(tech));
+            if (Tournament && OnTechStart != null) OnTechStart(from, tech);      // the arena's camera choice, as on the host
+            if (t.Self) return;
+            try { Effects.Start(tech, ActorFor(from), ActorFor(to), new List<EffectActor> { ActorFor(to) }, a => false, (at, v) => { }, a => true); }
+            catch (Exception e) { Debug.LogWarning("[online] effect " + tech + ": " + e.Message); }
+        }
+
+        /// <summary>A number over a head on the host's screen (damage, healing, power-ups).</summary>
+        public void PuppetPop(string text, Vector3 pos, Color col, int icon) { _pops.Add(new Pop { Text = text, Pos = pos, Col = col, Icon = icon, Sent = true }); }
+
+        /// <summary>The numbers over heads added since the last call (the host sends them).</summary>
+        public List<KeyValuePair<Vector3, string>> TakeNewPops(List<Color> cols, List<int> icons)
+        {
+            var r = new List<KeyValuePair<Vector3, string>>();
+            foreach (var p in _pops) if (!p.Sent && !p.Fixed && p.Wait <= 0f) { p.Sent = true; r.Add(new KeyValuePair<Vector3, string>(p.Pos, p.Text)); cols.Add(p.Col); icons.Add(p.Icon); }
+            return r;
+        }
+
+        /// <summary>The host's fight is over: result 1 the copy's own partner won, -1 lost; winner side as WinnerSide (0 partner, 1 enemy, 2 a draw).</summary>
+        public void PuppetEnd(int result, int winnerSide) { Result = result; WinnerSide = winnerSide; Active = false; }
+
+        /// <summary>The knock-out on the host's screen, for the copy's camera and WIN / LOSE scene.</summary>
+        public void PuppetKnockOut(Fighter loser) { if (OnKnockOut != null && loser != null) OnKnockOut(loser); }
+
         // STD_tickFighterCounter: while the counter runs, BATTLE_FRAME_COUNT counts every frame and, while neither side lies in 0x2B, the counter
         // goes down one every 20th frame
         void TickTimer(float dt)
@@ -562,7 +649,7 @@ namespace DW1Remake.Game
                 if (f.Hp > 0 || f.AnimReset != 0f) continue;
                 if (f.A != null && f.A.HasSlot(DownSlot) && f.A.Slot != DownSlot) f.A.SetSlot(DownSlot, true);
                 // STD_tickPartnerAI / STD_tickEnemyAI: the one that faints calls STD_selectRandomCamera(it, 5, 0) when the other one still stands
-                if (_tKo.Add(f)) { var other = f == Partner ? Enemy : Partner; if (other.Hp > 0 && OnKnockOut != null) OnKnockOut(f); }
+                if (_tKo.Add(f)) { var other = f == Partner ? Enemy : Partner; if (other.Hp > 0 && OnKnockOut != null) OnKnockOut(f); if (other.Hp > 0 && NetKnockOut != null) NetKnockOut(f); }
             }
             bool partnerDown = Fallen(Partner), enemyDown = Fallen(Enemy);
             if (partnerDown)
@@ -619,6 +706,7 @@ namespace DW1Remake.Game
             TimeUpBox = false;
             var loser = _tLoser == 0 ? Partner : Enemy;
             if (OnKnockOut != null) OnKnockOut(loser);
+            if (NetKnockOut != null) NetKnockOut(loser);
             StartCheer(_tLoser == 0 ? 1 : 0);
         }
 
@@ -828,10 +916,12 @@ namespace DW1Remake.Game
             if (foe.Hp <= 0 || _time < me.NextAct || me.Stunned || FlatBusy(me) || me.Pending != null || me.Wait > 1 || me.Cool > 1 || (me == Partner && _running)) return;
             foreach (var sw in _swings) if (sw.From == me) return;
             if (me == Partner && _wantFinish && me.Finisher != null) { _wantFinish = false; me.Pending = me.Finisher; me.PendingTarget = foe; return; }
-            if (me != Partner && me.Finish >= me.FinishMax && me.Finisher != null) { me.Pending = me.Finisher; me.PendingTarget = foe; return; }
+            // mod Online battle: the friend ordered its finishing move (its gauge was checked when the order came)
+            if (me != Partner && me.Commanded && me.WantFinish && me.Finisher != null) { me.WantFinish = false; me.Pending = me.Finisher; me.PendingTarget = foe; return; }
+            if (me != Partner && !me.Commanded && me.Finish >= me.FinishMax && me.Finisher != null) { me.Pending = me.Finisher; me.PendingTarget = foe; return; }
             me.Blind = me.Confused && _rng.Next(10) < 7;       // a confused fighter mostly fires at nothing, in the way it happens to face
             if (me.Blind) me.T.rotation *= Quaternion.Euler(0f, _rng.Next(-45, 45), 0f);
-            Tech t = me.Confused ? PickAny(me) : me == Partner ? PickPartner(me, foe) : PickEnemy(me);
+            Tech t = me.Confused ? PickAny(me) : me.Commanded ? PickPartner(me, foe) : PickEnemy(me);
             if (t == null) { me.Wait = EmptyWait; return; }
             me.Pending = t;
             me.PendingTarget = foe;
@@ -847,10 +937,10 @@ namespace DW1Remake.Game
         // Your Call (code 0x8006061C). Style 0, the one the partner has: technique weights by rank of power; empty slots take a little of the roll (and then it waits).
         Tech PickPartner(Fighter me, Fighter foe)
         {
-            foreach (var t in me.Moves) if (t != null && t.Name == _order) return Usable(me, t) ? t : null;
-            me.Style = _order == ModerateOrder ? 2 : 0;
-            if (_order == AttackOrder) return PickBest(me, foe, true);
-            if (_order == ModerateOrder) return PickBest(me, foe, false);
+            foreach (var t in me.Moves) if (t != null && t.Name == me.Order) return Usable(me, t) ? t : null;
+            me.Style = me.Order == ModerateOrder ? 2 : 0;
+            if (me.Order == AttackOrder) return PickBest(me, foe, true);
+            if (me.Order == ModerateOrder) return PickBest(me, foe, false);
             int[] w = new int[3];
             bool any = false;
             for (int i = 0; i < 3; i++) if (Usable(me, me.Moves[i])) any = true;
@@ -937,10 +1027,10 @@ namespace DW1Remake.Game
             }
             // the finishing move (STD_handleCommands / BTL: Square sets the command to 0xB) replaces the order until it has gone off
             bool finishing = me.Pending != null && me.Pending.Finisher;
-            if (me == Partner && !finishing)
+            if (me.Commanded && !finishing)
             {
-                if (_order == DefensiveOrder) { Hold(me, foe, dt); return; }
-                if (_order == DistanceOrder)
+                if (me.Order == DefensiveOrder) { Hold(me, foe, dt); return; }
+                if (me.Order == DistanceOrder)
                 {
                     float keep = MaxReachSq(foe) + 640000f + (moving ? 160000f : 0f);
                     if (dSq < keep) BackAway(me, foe, dt, walk); else { me.Collided = false; Hold(me, foe, dt); }
@@ -1162,6 +1252,7 @@ namespace DW1Remake.Game
             StartEffect(swing);      // BTL_setupMoveExecution starts the effect (BTL_startEFE) the moment the move starts; its program times itself
             swing.DrawnAtStart = Effects != null ? Effects.Drawn : 0;
             if (Tournament && OnTechStart != null) OnTechStart(me, tech.Id);
+            if (NetSwing != null) NetSwing(me, tech.Id, foe);
             Play(me, slot, length);
             Sync();
         }
@@ -1636,7 +1727,7 @@ namespace DW1Remake.Game
         /// <summary>Items used from the bag during the fight change the stats; this picks them up and starts the boy's throw.</summary>
         public void ReadBack()
         {
-            if (Partner == null) return;
+            if (Partner == null || Puppet) return;      // the online copy: the numbers come from the host's PC
             int dh = _s.Stats[6] - Partner.Hp, dm = _s.Stats[7] - Partner.Mp;
             Partner.Hp = _s.Stats[6]; Partner.Mp = _s.Stats[7]; Partner.MaxHp = Mathf.Max(1, _s.Stats[4]); Partner.MaxMp = _s.Stats[5];
         }

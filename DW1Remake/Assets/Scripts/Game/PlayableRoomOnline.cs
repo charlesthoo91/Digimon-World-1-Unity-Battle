@@ -10,12 +10,12 @@ namespace DW1Remake.Game
     /// Ours (mod "Online battle", ModSettings.OnlineBattle; not in the original game). In Greymon's arena (ROOM13 / ROOM19, map Digimon
     /// record 0, script 5) talking to Greymon first asks: online battle, tournament (the original script) or leave. Online battle opens the
     /// link screen: one PC hosts and gives a code, the friend pastes it and gives a reply code, the host pastes that, and the two PCs link
-    /// directly (NetLink). Once linked they swap their partners' profiles. The battle itself is the next step (not written yet).
+    /// directly (NetLink). Once linked they swap their partners' profiles; when both press Battle! the match runs (PlayableRoomOnlineMatch).
     /// The link screen is used with the mouse and keyboard (copy / paste of the codes).
     /// </summary>
     public sealed partial class PlayableRoom
     {
-        sealed class FriendProfile { public int Type, Hp, Mp, Off, Def, Spd, Brain; public string Name = ""; }
+        sealed class FriendProfile { public int Type, Hp, Mp, Off, Def, Spd, Brain; public int[] Techs = { 0xFF, 0xFF, 0xFF, 0xFF }; public string Name = ""; }   // Techs: three techniques and the finishing move (0xFF none)
 
         NetLink _net;
         bool _onlineOn, _profileSent;
@@ -56,7 +56,7 @@ namespace DW1Remake.Game
             if (pick == 1) { _routineOn = false; original(); yield break; }
             if (pick != 0) { _routineOn = false; yield break; }
 
-            _onlineOn = true; _onlineRole = -1; _friendCode = ""; _friend = null; _profileSent = false;
+            _onlineOn = true; _onlineRole = -1; _friendCode = ""; _friend = null; _profileSent = false; _meReady = _friendReady = false;
             // a linked game must keep running when its window is not in front (a player build stops otherwise, and the link times out)
             bool wasBackground = Application.runInBackground;
             Application.runInBackground = true;
@@ -68,6 +68,9 @@ namespace DW1Remake.Game
                     if (_net.Now == NetLink.State.Linked && !_profileSent) { _net.SendSure(MyProfile()); _profileSent = true; }
                     byte[] m;
                     while ((m = _net.Receive()) != null) ReadOnline(m);
+                    // both pressed Battle!: the host says start, and both PCs go to the arena
+                    if (_onlineRole == 1 && _meReady && _friendReady && _friend != null && !_onlineMatch) { _net.SendSure(new[] { MsgStart, (byte)(_onlineOrders ? 1 : 0) }); StartCoroutine(OnlineMatch(true)); }
+                    if (_onlineMatch) OnlineFrame();
                 }
                 yield return null;
             }
@@ -103,27 +106,46 @@ namespace DW1Remake.Game
 
         // ---------------------------------------------------------------- what the two PCs tell each other
 
-        // profile: message 1, then type, max HP, max MP, Off, Def, Speed, Brains (u16 each) and the partner's name (UTF-8)
+        // profile: message 1, then type, max HP, max MP, Off, Def, Speed, Brains (u16 each), the three techniques and the finishing move (a byte
+        // each, 0xFF none) and the partner's name (UTF-8)
         byte[] MyProfile()
         {
             var name = Encoding.UTF8.GetBytes(_state.PartnerName ?? "");
-            var b = new byte[1 + 14 + name.Length];
+            var b = new byte[1 + 14 + 4 + name.Length];
             b[0] = MsgProfile;
             int[] v = { PartnerType, _state.Stats[4], _state.Stats[5], _state.Stats[0], _state.Stats[1], _state.Stats[2], _state.Stats[3] };
             for (int i = 0; i < v.Length; i++) { b[1 + 2 * i] = (byte)(v[i] >> 8); b[2 + 2 * i] = (byte)v[i]; }
-            name.CopyTo(b, 15);
+            int[] t = MyTechs();
+            for (int i = 0; i < 4; i++) b[15 + i] = (byte)t[i];
+            name.CopyTo(b, 19);
             return b;
+        }
+
+        // the partner's fight techniques as Battle.SetupTechs picks them (known ones in the Techset, up to three) and its finishing move
+        int[] MyTechs()
+        {
+            var r = new[] { 0xFF, 0xFF, 0xFF, 0xFF };
+            var info = DigimonStatsCatalog.Get(_disc, PartnerType);
+            if (info == null) return r;
+            int n = 0;
+            for (int i = 0; i < info.Learnable.Count && n < 3; i++)
+                if (_state.Techs[info.Learnable[i]] && (!_state.TechSet.Exists(x => x >= 0) || _state.TechSet.Contains(info.Learnable[i]))) r[n++] = info.Learnable[i];
+            if (n == 0 && info.Learnable.Count > 0) r[0] = info.Learnable[0];
+            if (info.SignatureId >= 0) r[3] = info.SignatureId;
+            return r;
         }
 
         void ReadOnline(byte[] m)
         {
             if (m.Length < 1) return;
-            if (m[0] == MsgProfile && m.Length >= 15)
+            if (m[0] == MsgProfile && m.Length >= 19)
             {
                 System.Func<int, int> u16 = i => (m[1 + 2 * i] << 8) | m[2 + 2 * i];
-                _friend = new FriendProfile { Type = u16(0), Hp = u16(1), Mp = u16(2), Off = u16(3), Def = u16(4), Spd = u16(5), Brain = u16(6), Name = Encoding.UTF8.GetString(m, 15, m.Length - 15) };
+                _friend = new FriendProfile { Type = u16(0), Hp = u16(1), Mp = u16(2), Off = u16(3), Def = u16(4), Spd = u16(5), Brain = u16(6), Name = Encoding.UTF8.GetString(m, 19, m.Length - 19) };
+                for (int i = 0; i < 4; i++) _friend.Techs[i] = m[15 + i];
                 Debug.Log("[online] friend's partner: " + _friend.Name + " (type " + _friend.Type + ")");
             }
+            else ReadMatch(m);
         }
 
         // ---------------------------------------------------------------- the link screen (mouse and keyboard)
@@ -139,7 +161,7 @@ namespace DW1Remake.Game
 
         void DrawOnline()
         {
-            if (!_onlineOn) return;
+            if (!_onlineOn || _onlineMatch) return;
             OnlineStyles();
             float w = Mathf.Min(900f, Screen.width - 40f), h = 520f;
             var r = new Rect((Screen.width - w) / 2f, (Screen.height - h) / 2f, w, h);
@@ -180,6 +202,7 @@ namespace DW1Remake.Game
                 if (_net.Now == NetLink.State.Linked)
                 {
                     GUILayout.Label("Ping: " + _net.PingMs + " ms", _onLabel);
+                    if (_onlineResult != null) GUILayout.Label("Last match: " + _onlineResult, _onLabel);
                     if (_friend == null) GUILayout.Label("Waiting for your friend's Digimon...", _onLabel);
                     else
                     {
@@ -187,12 +210,19 @@ namespace DW1Remake.Game
                         GUILayout.Label("Your friend's partner: " + _friend.Name + " (" + (info != null ? info.Name : "type " + _friend.Type) + ")", _onLabel);
                         GUILayout.Label("HP " + _friend.Hp + "   MP " + _friend.Mp + "   Off " + _friend.Off + "   Def " + _friend.Def + "   Speed " + _friend.Spd + "   Brains " + _friend.Brain, _onLabel);
                         GUILayout.Space(6);
-                        GUILayout.Label("The online battle itself comes in the next update: this test checks that your two PCs can link.", _onLabel);
+                        if (_onlineRole == 1)
+                        {
+                            if (GUILayout.Button("Orders: " + (_onlineOrders ? "ON - each player gives orders to their own Digimon" : "OFF - both Digimon fight by their own judgement"), _onButton, GUILayout.Height(40)))
+                                _onlineOrders = !_onlineOrders;
+                        }
+                        else GUILayout.Label("The host chooses whether players give orders. A tournament match; the host's PC runs the fight.", _onLabel);
+                        if (!_meReady) { if (GUILayout.Button("Battle!", _onButton, GUILayout.Height(44))) { _meReady = true; _net.SendSure(new[] { MsgReady }); } }
+                        else GUILayout.Label(_friendReady ? "Starting..." : "Waiting for your friend to press Battle!...", _onLabel);
                     }
                 }
                 if (_net.Now == NetLink.State.Failed || _net.Now == NetLink.State.Closed)
                 {
-                    if (GUILayout.Button("Try again", _onButton, GUILayout.Height(40))) { _net.Dispose(); _net = null; _onlineRole = -1; _friendCode = ""; _friend = null; _profileSent = false; }
+                    if (GUILayout.Button("Try again", _onButton, GUILayout.Height(40))) { _net.Dispose(); _net = null; _onlineRole = -1; _friendCode = ""; _friend = null; _profileSent = false; _meReady = _friendReady = false; }
                 }
                 GUILayout.FlexibleSpace();
                 if (GUILayout.Button("Close", _onButton, GUILayout.Height(40))) _onlineOn = false;
