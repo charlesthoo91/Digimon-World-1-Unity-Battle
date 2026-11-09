@@ -108,6 +108,7 @@ namespace DW1Remake.Game
                     if (a2 == 1 && c.Pos == 0) { try { File.Delete(SavePath); } catch (System.Exception e) { Debug.LogWarning("[title] " + e.Message); } }
                 }
                 // BATTLE MODE (pos 3): the VS mode is not ported
+                else if (s.Pos == 4) yield return ModsPage();    // ours: the optional mods (ModSettings)
             }
             yield return TitleFade(true);
 
@@ -144,11 +145,43 @@ namespace DW1Remake.Game
                 if ((i == 1 || i == 2) && !hasSave) s.DimText(label, 0x52, 0x37 + 12 * i);
                 else s.Text(label, 0x52, 0x37 + 12 * i);
             }
-            s.Box(0x48, 0x32, 0xB0, 0x3A);
+            // ours: a fifth row, MODS, under the game's four; the box and the cursor's range grow by one row
+            s.Text(ModsLabel, 0x52, 0x37 + 12 * 4);
+            s.Box(0x48, 0x32, 0xB0, 0x3A + 12);
             int h = at(0x801316B8);
             s.Cursor(System.BitConverter.ToInt16(exe, h + 8), System.BitConverter.ToInt16(exe, h + 10), System.BitConverter.ToInt16(exe, h + 12),
-                     System.BitConverter.ToInt16(exe, h + 14), System.BitConverter.ToInt16(exe, h + 6), (sbyte)exe[h + 1]);
+                     System.BitConverter.ToInt16(exe, h + 14), System.BitConverter.ToInt16(exe, h + 6), (sbyte)exe[h + 1] + 1);
             return s;
+        }
+
+        // ------------------------------------------------------------------ ours: the MODS page (not in the original game)
+        const string ModsLabel = "MODS";
+
+        // one row per mod (Cross switches it), then BACK; Triangle / Circle also go back. Same box and cursor as the title menu
+        IEnumerator ModsPage()
+        {
+            byte[] exe = _disc.ReadFile("/SLUS_010.32");
+            uint load = System.BitConverter.ToUInt32(exe, 0x18);
+            int h = (int)(0x801316B8 - load + 0x800);
+            int pos = 0;
+            while (true)
+            {
+                var s = new SysScreen();
+                // the game's letters are about 11 pixels wide: the names start at 0x1C and ON / OFF at 0xD8, in a box 0xF0 wide
+                s.Text("REMASTERED MAPS", 0x1C, 0x37); s.Text(ModSettings.RemasteredMaps ? "ON" : "OFF", 0xD8, 0x37);
+                s.Text("ONLINE BATTLE", 0x1C, 0x37 + 12); s.Text(ModSettings.OnlineBattle ? "ON" : "OFF", 0xD8, 0x37 + 12);
+                s.Text("BACK", 0x1C, 0x37 + 24);
+                s.Box(0x12, 0x32, 0xF0, 0x2E);
+                s.Cursor(System.BitConverter.ToInt16(exe, h + 8) - (0x52 - 0x1C), System.BitConverter.ToInt16(exe, h + 10), 0xE6,
+                         System.BitConverter.ToInt16(exe, h + 14), System.BitConverter.ToInt16(exe, h + 6), 3);
+                s.Pos = pos;
+                int answer = 0;
+                yield return Ask(s, a => answer = a);
+                pos = s.Pos;
+                if (answer != 1 || pos == 2) yield break;
+                if (pos == 0) ModSettings.RemasteredMaps = !ModSettings.RemasteredMaps;
+                else ModSettings.OnlineBattle = !ModSettings.OnlineBattle;
+            }
         }
 
         // renderPressStartToContinue / renderMainMenuBackground: the 320 x 240 picture (two quads, 256 + 64 wide) and, on the landing screen,

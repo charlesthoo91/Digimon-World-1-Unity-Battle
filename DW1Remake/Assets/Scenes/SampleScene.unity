@@ -454,8 +454,8 @@ MonoBehaviour:
   PlayerNameText: A
   PartnerNameText: B
   QuickStart: 0
-  LoadSaveOnStart: 1
-  TitleScreen: 0
+  LoadSaveOnStart: 0
+  TitleScreen: 1
 --- !u!4 &559601211
 Transform:
   m_ObjectHideFlags: 0
