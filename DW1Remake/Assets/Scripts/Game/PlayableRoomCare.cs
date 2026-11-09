@@ -542,6 +542,17 @@ namespace DW1Remake.Game
             var info = DigimonStatsCatalog.Get(_disc, PartnerType);
             float start = Time.time;
             System.Func<int> timer = () => (int)((Time.time - start) * 20f);
+            if (natural)
+            {
+                // routine 3 (partnerTickDying): an old-age death is not MURD. Once beside the boy DOOA_tick starts with lives left: frame 0,
+                // animation 1, its own iris (DOOA_hasIrisClosed / DOOA_renderIrisWindow: closed by 0x21), and at 0x23 straight on into the dissolve
+                // (death map, the partner turns into shards and is gone); the death map's section 71 (the egg) runs after it
+                _irisOn = true;
+                while (timer() < 0x23) { IrisStep(info, timer(), 0x21); yield return null; }
+                _irisOn = false; IrisFront(false);
+                yield return DeathScene(section, late);
+                yield break;
+            }
             // phase 0: the iris
             _irisOn = true;
             while (timer() < 0x23) { IrisStep(info, timer()); yield return null; }
@@ -578,7 +589,8 @@ namespace DW1Remake.Game
             // phase 7: 0xA0 to 0, the death map comes up out of the black
             while (timer() < 0xB9) { _murdFade = PsLerp(0xA0, 0, 0x91, 0xB9, timer()); yield return null; }
             _murdFade = 0;
-            StartScript(section, null);
+            // tamerTickSicknessLostLife / tamerTickBattleLostLife set SOME_SCRIPT_SYNC_BIT (our Finish): section 72, started on arrival (0x7B) and
+            // waiting at 4A D5, goes on; it is not started again
         }
 
         int _murdFade;      // MURD_renderFullscreenFade's colour (0 = none)
@@ -588,14 +600,14 @@ namespace DW1Remake.Game
         Camera _frontCam; RenderTexture _frontRt; bool _front;
         const int FrontLayer = 30;
 
-        void IrisStep(DigimonStats info, int t)
+        void IrisStep(DigimonStats info, int t, int end = 0x23)
         {
             if (_partner == null || _cam == null) return;
             int h = info != null ? info.Height : 100, r = info != null ? info.Radius : 50;
             // the middle of the partner (half its height up); the hole's half size is lerp(200, 0, 0, 35, t) * 32 * 256 / 4096 pixels
             Vector3 v = _cam.WorldToViewportPoint(_partner.position + Vector3.up * (h / 2f * Unit));
             _irisX = v.x * 320f; _irisY = (1f - v.y) * 240f;
-            int scale = PsLerp(0xC8, 0, 0, 0x23, t) * 4096 / 128;
+            int scale = PsLerp(0xC8, 0, 0, end, Mathf.Min(t, end)) * 4096 / 128;
             _irisR = (scale << 8) / 4096f;
             // the partner's size on screen: its box diagonal (getDistance of 2r, h, 2r) at its distance
             float size = Mathf.Sqrt(8f * r * r + h * h) * Unit;

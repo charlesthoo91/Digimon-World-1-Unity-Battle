@@ -152,10 +152,10 @@ namespace DW1Remake.Formats
         {
             double now = Time.realtimeSinceStartupAsDouble;
             double dt = now - _last; _last = now;
-            if (_sim == null || !Playing) return;
+            if (_sim == null) return;
             if (Paused && Application.isPlaying) return;
             if (_blend < 1f) { _blend = Mathf.Min(1f, _blend + (float)dt / Mathf.Max(0.01f, BlendSeconds)); Apply(); }
-            if (_held) return;
+            if (_held || !Playing) return;      // Playing off = animFlag bit 0 clear (tickAnimation does nothing): the pose stays
             double tick = 1.0 / TicksPerSecond;
             int ticks = 0;
             if (Application.isPlaying) ticks = SharedTicks(tick);

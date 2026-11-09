@@ -341,7 +341,13 @@ namespace DW1Remake.Game
             HideWorld(true);
             _partner.gameObject.SetActive(true);
             _partner.position = oldPos; _partner.rotation = oldRot;
-            if (_partnerAnim != null && _partnerAnim.HasSlot(0x2C)) _partnerAnim.SetSlot(0x2C);
+            // DOOA_tickDissolve phase 0: with lives left (old age) animation 1; none left 0x2C with animFlag bit 0 cleared, so it holds its first pose
+            bool livesLeft = _state.Life != 0;
+            if (_partnerAnim != null)
+            {
+                if (livesLeft) { if (_partnerAnim.HasSlot(1)) _partnerAnim.SetSlot(1); }
+                else if (_partnerAnim.HasSlot(0x2C)) { _partnerAnim.SetSlot(0x2C); _partnerAnim.Playing = false; }
+            }
             _evoCam = true; _evoEye = oldView.Eye; _evoLook = oldView.Look; _evoFov = oldView.Fov; _evoShift = oldView.Shift;
             _dooa.Clear(); _shardState = 0; _shardPrev = 0; _shardFlicker = false; _shardsOn = true; _shardCol = new Color(0x50 / 128f, 0x50 / 128f, 0x50 / 128f, 1f);
             CollectEvoParts(); _wireTotal = 16;
@@ -365,6 +371,14 @@ namespace DW1Remake.Game
                         _storedY = 0f;
                         oldView = newView;
                         CutsceneCamera(oldView, height, 0, 0x64, 0x63);
+                    }
+                    // phase 2's first frame: with lives left animation 0x0C; at the top of each tick, once 0x0C has played to its end, animation 1 again
+                    // and the partner's height and place are stored (DOOA_storeDigimonY)
+                    if (frame == 0x56 && livesLeft && _partnerAnim != null && _partnerAnim.HasSlot(0x0C)) _partnerAnim.SetSlot(0x0C, true);
+                    else if (livesLeft && _partnerAnim != null && _partnerAnim.Slot == 0x0C && !_partnerAnim.Busy && _partner.gameObject.activeSelf)
+                    {
+                        if (_partnerAnim.HasSlot(1)) _partnerAnim.SetSlot(1);
+                        _storedY = ToGameV(_partner.position).y;
                     }
                     if (frame == 0x69 && _audio != null) _audio.Play(8, 0);
                     if (frame == 0x8C && _audio != null) _audio.StopSound();
@@ -433,7 +447,23 @@ namespace DW1Remake.Game
             // phase 4: the camera back to the map; the stage stays dark until the rebirth
             if (first != null && first.T != null) SetTint(first.T, 1f);
             _evoCam = false;
-            StartScript(section, null);
+            StartCoroutine(ShardsAfterDissolve());
+            // the end of the sequence: partnerTickDying sets SOME_SCRIPT_SYNC_BIT (our Finish), and the death map's section, already started on
+            // arrival by SECTION_ON_EXIT (0x7B in DG.SCN 0 section 0x4DE) and waiting at 4A D5, goes on; it is not started again
+        }
+
+        // DOOA_initShardEffect adds the shards as their own object (0x608: DOOA_updateShards / DOOA_renderShards); the dissolve's end does not
+        // remove it, so they lie flickering on the floor while the death map's section talks, until the rebirth takes them (DOOA_removeShardEffect)
+        IEnumerator ShardsAfterDissolve()
+        {
+            int map = _mapId; float acc = 0f;
+            while (_shardsOn && !_eggOn && _dooa.Count > 0 && _mapId == map)
+            {
+                acc += Time.deltaTime;
+                while (acc >= 0.05f) { acc -= 0.05f; TickShards(); }
+                DrawDooaShards();
+                yield return null;
+            }
         }
 
         // DOOA_getSequenceState / DOOA_tickRebirth (script routine 4)

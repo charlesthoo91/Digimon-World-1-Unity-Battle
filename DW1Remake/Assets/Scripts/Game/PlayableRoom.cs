@@ -573,7 +573,10 @@ namespace DW1Remake.Game
                     foreach (var n in _npcs) if (n.Data.Script == a.Actor && n.T != null) { n.T.gameObject.SetActive(false); break; }
                     break;
                 case 0x67: _wait = a.Frames / 20f; return _wait > 0f;
-                case 0x4A: _waitFor = a.Actor; _waitAll = BusyFor(_waitFor); return _waitAll;
+                case 0x4A:
+                    // WAIT_FOR_ENTITY 0xD5 first clears SOME_SCRIPT_SYNC_BIT, then waits for a scene to set it (the death map's sections 71-73 wait for DOOA / MURD)
+                    if (a.Actor == 0xD5) _syncBit = false;
+                    _waitFor = a.Actor; _waitAll = BusyFor(_waitFor); return _waitAll;
                 case 0x26:
                     // SET_TEXTBOX_SIZE: scriptPauseGame(0xFF), then scriptSetTextboxSize makes box 0 of its own size (Shell's newspaper, the fishing
                     // and dirt-job explanations); the texts after it go into that box until a 0x1B or 0x10

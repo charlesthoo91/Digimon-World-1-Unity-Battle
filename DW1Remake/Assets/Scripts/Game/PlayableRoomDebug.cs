@@ -306,7 +306,7 @@ namespace DW1Remake.Game
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("Evolve now")) _state.Para.EvoTimer = 200;
             if (GUILayout.Button("Virus full")) _state.Para.Virus = 16;
-            if (GUILayout.Button("Lifespan 1 h")) _state.Para.Lifetime = 1;
+            if (GUILayout.Button("Lifespan 2 h")) _state.Para.Lifetime = 2;
             if (GUILayout.Button("Lose a life")) { _state.Life = Mathf.Max(0, _state.Life - 1); _care.WantLifeLost = true; }
             GUILayout.EndHorizontal();
             GUILayout.BeginHorizontal();
