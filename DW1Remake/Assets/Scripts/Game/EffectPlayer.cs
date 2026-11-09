@@ -21,7 +21,7 @@ namespace DW1Remake.Game
         const float Unit = 0.01f;
         sealed class Ctx { public int Inst, Some, Instance, Parent, BoneOffset; public EffectActor Src, Tgt; }
         // Attr = GsSPRITE attribute >> 28: bit 2 semi-transparent, bits 0-1 the blend mode (0 half, 1 add, 2 subtract, 3 quarter add)
-        sealed class Sprite { public Vector3 Pos; public float W, H, Roll; public Rect Uv; public int Row, Attr = 5; public Color Col; }
+        sealed class Sprite { public Vector3 Pos; public float W, H, Roll; public Vector2 Mid; public Rect Uv; public int Row, Attr = 5; public Color Col; }     // Mid: the picture's middle from its turning point (GsSPRITE mx, my), right and down
         sealed class Model { public int Object; public Matrix4x4 M; }
 
         sealed class Run
@@ -1222,7 +1222,7 @@ namespace DW1Remake.Game
         // the same GTE value by 4 to get the depth). So the sprite is w x scale / 32 game units wide; 4096 means w x 128.
         void Sprite3D()
         {
-            int row = Pop(), attr = Pop(), rotate = Pop(); Pop(); Pop();
+            int row = Pop(), attr = Pop(), rotate = Pop(), my = Pop(), mx = Pop();
             int h = Pop(), w = Pop(), v = Pop(), u = Pop(), sy = Pop(), sx = Pop(), col = Pop(), pos = Pop();
             var a = AssetOf(_r.Tech);
             if (a.Width == 0) return;
@@ -1230,6 +1230,7 @@ namespace DW1Remake.Game
             _r.Sprites.Add(new Sprite
             {
                 Pos = ToUnity((int)p.x, (int)p.y, (int)p.z), W = w * sx / 32f * Unit, H = h * sy / 32f * Unit, Roll = rotate, Row = row, Attr = attr & 7,
+                Mid = new Vector2((w / 2f - mx) * sx / 32f * Unit, (h / 2f - my) * sy / 32f * Unit),
                 Uv = new Rect(u / (float)a.Width, v / (float)a.Height, w / (float)a.Width, h / (float)a.Height),
                 Col = new Color(I32(m, col) / 128f, I32(m, col + 4) / 128f, I32(m, col + 8) / 128f, 1f)
             });
@@ -1296,7 +1297,9 @@ namespace DW1Remake.Game
                 Color c = s.Col;
                 if ((s.Attr & 4) != 0 && (s.Attr & 3) == 0) c.a = 0.5f;            // half and half
                 else if ((s.Attr & 4) != 0 && (s.Attr & 3) == 3) c.a = 0.25f;      // a quarter added
-                DrawQuad(TextureOf(a, s.Row), s.Pos, s.W, s.H, s.Roll, s.Uv, c, cam, SpriteMaterial(s.Attr));
+                // GsSortSprite: the projected point is the sprite's turning point (mx, my), not its middle; it turns round that point
+                Vector3 mid = s.Pos + cam.transform.rotation * Quaternion.Euler(0, 0, s.Roll) * new Vector3(s.Mid.x, -s.Mid.y, 0f);
+                DrawQuad(TextureOf(a, s.Row), mid, s.W, s.H, s.Roll, s.Uv, c, cam, SpriteMaterial(s.Attr));
             }
             Drawn += r.Sprites.Count;
             DrawEmitters(r, cam);
