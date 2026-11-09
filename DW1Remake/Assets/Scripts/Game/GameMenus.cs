@@ -186,6 +186,9 @@ namespace DW1Remake.Game
         // tickInventoryUI: Cross / Circle go to box 3 (sort or drop) if it is open, else to box 2 (Use, Move, Sort, Drop), else to the list
         void TickInv(int step, int side, bool action, bool cancel)
         {
+            // isInventoryButtonPressed: the list's up / down, the option and sort boxes and the drop box's left / right repeat while held;
+            // the list's left / right (POLLED_INPUT & ~POLLED_INPUT_PREVIOUS) do not
+            step = InvRepeatStep(); int sideRep = InvRepeatSide();
             var o = BoyOrigin != null ? BoyOrigin() : new RectInt(-5, -5, 10, 10);
             if (!_invOpened) { Inv.InBattle = InBattle != null && InBattle(); Inv.Open(o); _invOpened = true; }
             var v = Inv;
@@ -200,7 +203,7 @@ namespace DW1Remake.Game
                 }
                 else
                 {
-                    v.MoveDrop(side);
+                    v.MoveDrop(sideRep);
                     if (action && v.DropPick == 0)
                     {
                         // action 7: both boxes close, then every one of the item goes
@@ -796,9 +799,13 @@ namespace DW1Remake.Game
         public static bool TriangleKey()
         {
 #if ENABLE_INPUT_SYSTEM
-            var k = Keyboard.current; return k != null && (k.tabKey.wasPressedThisFrame || k.cKey.wasPressedThisFrame);
+            var k = Keyboard.current; bool r = k != null && (k.tabKey.wasPressedThisFrame || k.cKey.wasPressedThisFrame);
+            if (r) _triFresh = false;
+            return r;
 #elif ENABLE_LEGACY_INPUT_MANAGER
-            return Input.GetKeyDown(KeyCode.Tab) || Input.GetKeyDown(KeyCode.C);
+            bool r = Input.GetKeyDown(KeyCode.Tab) || Input.GetKeyDown(KeyCode.C);
+            if (r) _triFresh = false;
+            return r;
 #else
             return false;
 #endif
@@ -831,13 +838,58 @@ namespace DW1Remake.Game
             }
         }
         static readonly KeyRepeat _repUp = new KeyRepeat(), _repDown = new KeyRepeat(), _repCross = new KeyRepeat(), _repCircle = new KeyRepeat();
-        public static void TickRepeat() { _repUp.Tick(KeyHeld(0)); _repDown.Tick(KeyHeld(1)); _repCross.Tick(KeyHeld(2)); _repCircle.Tick(CircleHeld()); }
+        public static void TickRepeat() { _repUp.Tick(KeyHeld(0)); _repDown.Tick(KeyHeld(1)); _repCross.Tick(KeyHeld(2)); _repCircle.Tick(CircleHeld()); TickInvRepeat(); if (!TriangleHeld()) _triFresh = true; }
+
+        // the bag's own repeat (inventory.c): updateInventoryInputRepeatCounter counts the game frames the pad has not changed (any change sets it
+        // to 0); isInventoryButtonPressed is a new press, or the button held once that count is 11 or more (then every frame). Bits: 1 up, 2 down, 4 left, 8 right
+        static int _invPad, _invPrevTick = -1, _invCount, _invFired; static float _invAcc;
+        static void TickInvRepeat()
+        {
+            int pad = (KeyHeld(0) ? 1 : 0) | (KeyHeld(1) ? 2 : 0) | (KeyHeld(3) ? 4 : 0) | (KeyHeld(4) ? 8 : 0) | (KeyHeld(2) ? 16 : 0) | (TriangleHeld() ? 32 : 0);
+            _invFired = pad & ~_invPad & 15;          // a new press counts at once
+            _invPad = pad;
+            _invAcc += Time.unscaledDeltaTime;
+            while (_invAcc >= 0.05f)
+            {
+                _invAcc -= 0.05f;
+                if (pad == _invPrevTick) _invCount++; else _invCount = 0;
+                _invPrevTick = pad;
+                if (_invCount >= 11) _invFired |= pad & 15;
+            }
+        }
+        /// <summary>Bag up / down with isInventoryButtonPressed's repeat (-1 up, 1 down).</summary>
+        public static int InvRepeatStep() { return (_invFired & 1) != 0 ? -1 : (_invFired & 2) != 0 ? 1 : 0; }
+        /// <summary>Bag left / right with the same repeat (the drop box: -1 left, 1 right).</summary>
+        public static int InvRepeatSide() { return (_invFired & 4) != 0 ? -1 : (_invFired & 8) != 0 ? 1 : 0; }
+
+        // isKeyDown (script_common.c): true while the button is held and still "fresh" (INPUT_FRESH_MASK), and it uses the freshness up; the button is
+        // fresh again only once released. So Triangle held through a partner scene opens the menu the moment the boy can walk (tamerTickWalkingState),
+        // but a Triangle press that closed something else does not open the menu again while it stays held
+        static bool _triFresh = true;
+        public static bool TriangleHeld()
+        {
+#if ENABLE_INPUT_SYSTEM
+            var k = Keyboard.current; return k != null && (k.tabKey.isPressed || k.cKey.isPressed);
+#elif ENABLE_LEGACY_INPUT_MANAGER
+            return Input.GetKey(KeyCode.Tab) || Input.GetKey(KeyCode.C);
+#else
+            return false;
+#endif
+        }
+        /// <summary>isKeyDown(Triangle) for opening the menu: held and fresh; uses the freshness up.</summary>
+        public static bool TriangleMenuKey()
+        {
+            if (!TriangleHeld()) { _triFresh = true; return false; }
+            if (!_triFresh) return false;
+            _triFresh = false;
+            return true;
+        }
         /// <summary>Up / down with the repeat (-1 up, 1 down).</summary>
         public static int RepeatStep() { return _repUp.Fired ? -1 : _repDown.Fired ? 1 : 0; }
         public static bool CrossRepeat { get { return _repCross.Fired; } }
         public static bool CircleRepeat { get { return _repCircle.Fired; } }
 
-        // 0 up (Up / W), 1 down (Down / S), 2 Cross (Space)
+        // 0 up (Up / W), 1 down (Down / S), 2 Cross (Space), 3 left (Left / A), 4 right (Right / D)
         static bool KeyHeld(int which)
         {
 #if ENABLE_INPUT_SYSTEM
@@ -845,10 +897,14 @@ namespace DW1Remake.Game
             if (k == null) return false;
             if (which == 0) return k.upArrowKey.isPressed || k.wKey.isPressed;
             if (which == 1) return k.downArrowKey.isPressed || k.sKey.isPressed;
+            if (which == 3) return k.leftArrowKey.isPressed || k.aKey.isPressed;
+            if (which == 4) return k.rightArrowKey.isPressed || k.dKey.isPressed;
             return k.spaceKey.isPressed;
 #elif ENABLE_LEGACY_INPUT_MANAGER
             if (which == 0) return Input.GetKey(KeyCode.UpArrow) || Input.GetKey(KeyCode.W);
             if (which == 1) return Input.GetKey(KeyCode.DownArrow) || Input.GetKey(KeyCode.S);
+            if (which == 3) return Input.GetKey(KeyCode.LeftArrow) || Input.GetKey(KeyCode.A);
+            if (which == 4) return Input.GetKey(KeyCode.RightArrow) || Input.GetKey(KeyCode.D);
             return Input.GetKey(KeyCode.Space);
 #else
             return false;
@@ -928,9 +984,13 @@ namespace DW1Remake.Game
         public static bool CancelKey()
         {
 #if ENABLE_INPUT_SYSTEM
-            var k = Keyboard.current; return k != null && (k.tabKey.wasPressedThisFrame || k.cKey.wasPressedThisFrame || k.escapeKey.wasPressedThisFrame || k.xKey.wasPressedThisFrame || k.iKey.wasPressedThisFrame);
+            var k = Keyboard.current; bool r = k != null && (k.tabKey.wasPressedThisFrame || k.cKey.wasPressedThisFrame || k.escapeKey.wasPressedThisFrame || k.xKey.wasPressedThisFrame || k.iKey.wasPressedThisFrame);
+            if (r && (k.tabKey.wasPressedThisFrame || k.cKey.wasPressedThisFrame)) _triFresh = false;     // isKeyDown: the press is used up
+            return r;
 #elif ENABLE_LEGACY_INPUT_MANAGER
-            return Input.GetKeyDown(KeyCode.Tab) || Input.GetKeyDown(KeyCode.C) || Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.X) || Input.GetKeyDown(KeyCode.I);
+            bool r = Input.GetKeyDown(KeyCode.Tab) || Input.GetKeyDown(KeyCode.C) || Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.X) || Input.GetKeyDown(KeyCode.I);
+            if (Input.GetKeyDown(KeyCode.Tab) || Input.GetKeyDown(KeyCode.C)) _triFresh = false;
+            return r;
 #else
             return false;
 #endif
@@ -939,9 +999,13 @@ namespace DW1Remake.Game
         public static bool TriangleOnly()
         {
 #if ENABLE_INPUT_SYSTEM
-            var k = Keyboard.current; return k != null && (k.tabKey.wasPressedThisFrame || k.cKey.wasPressedThisFrame || k.escapeKey.wasPressedThisFrame);
+            var k = Keyboard.current; bool r = k != null && (k.tabKey.wasPressedThisFrame || k.cKey.wasPressedThisFrame || k.escapeKey.wasPressedThisFrame);
+            if (r) _triFresh = false;
+            return r;
 #elif ENABLE_LEGACY_INPUT_MANAGER
-            return Input.GetKeyDown(KeyCode.Tab) || Input.GetKeyDown(KeyCode.C) || Input.GetKeyDown(KeyCode.Escape);
+            bool r = Input.GetKeyDown(KeyCode.Tab) || Input.GetKeyDown(KeyCode.C) || Input.GetKeyDown(KeyCode.Escape);
+            if (r) _triFresh = false;
+            return r;
 #else
             return false;
 #endif

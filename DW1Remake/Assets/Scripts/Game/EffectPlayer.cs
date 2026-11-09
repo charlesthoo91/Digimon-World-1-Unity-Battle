@@ -1178,7 +1178,7 @@ namespace DW1Remake.Game
             _flashes.Add(new Flash { Pos = at, Max = Mathf.Max(1, frames), Mode = mode, S0 = scaleMin, S1 = scaleMax, C0 = colourMin, C1 = colourMax, Front = depth < 0x40 });
         }
 
-        static int PsLerp(int a, int b, int t0, int t1, int t)
+        internal static int PsLerp(int a, int b, int t0, int t1, int t)
         {
             if (t1 == t0) return 0;
             int range = b - a, r = range * (t - t0) / (t1 - t0);

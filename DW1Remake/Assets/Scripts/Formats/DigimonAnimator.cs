@@ -53,6 +53,10 @@ namespace DW1Remake.Formats
 
         int _forward;
 
+        /// <summary>animFlag bit 4 (NPCEntityTickBattle): the animation is ticked twice a game frame, so it plays and carries the body twice as fast.
+        /// The battle sets it on Digimon running off to their flee point and clears it when they are off the map.</summary>
+        public bool DoubleSpeed;
+
         /// <summary>
         /// How far this animation has carried the body forward since the last call, in metres. In the original nothing moves by a set speed: every walk and run moves by
         /// the forward value keyed in bone 0 of its animation (entityMoveForward), which is why each step lands on its step sound.
@@ -160,6 +164,7 @@ namespace DW1Remake.Formats
                 _acc += System.Math.Min(dt, 0.25);
                 while (_acc >= tick) { _acc -= tick; ticks++; }
             }
+            if (DoubleSpeed) ticks *= 2;
             bool moved = false;
             while (ticks-- > 0)
             {

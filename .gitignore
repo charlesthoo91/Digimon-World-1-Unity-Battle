@@ -58,3 +58,6 @@ desktop.ini
 .claude/settings.local.json
 
 reference/
+
+# Python
+__pycache__/

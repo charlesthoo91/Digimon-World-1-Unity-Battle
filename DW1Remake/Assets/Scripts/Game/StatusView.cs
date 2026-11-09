@@ -411,7 +411,7 @@ namespace DW1Remake.Game
                 if (mv == null) continue;
                 Words(5, 0, -0x7C, j * 15 - 0x42, 0x78, 0, j * 12 + 0x18);
                 Number(5, 0, 0x10, j * 15 - 0x43, 3, mv.Power);
-                Number(5, 0, 0x39, j * 15 - 0x43, 3, mv.Mp * 3);
+                Number(5, 0, 0x39, j * 15 - 0x43, 3, mv.Mp);      // mpCost * 3: Tech.Mp is already the times-3 cost (DigimonStats)
                 if (mv.Range != 0) Words(5, 0, 0x65, j * 15 - 0x42, 12, (mv.Range - 1) * 0x24, 0x78);
                 if (mv.Status != 0) SysIcon(5, 0x7D, j * 15 - 0x43, 12, 12, (mv.Status - 1) * 12, 0x8C, 0);
             }
@@ -535,7 +535,7 @@ namespace DW1Remake.Game
             if (mv == null) return;
             Words(3, 0, panel * 0x9D - 0x8A, 9, 0x78, 0, 0x84);
             Number(3, 0, panel * 0xCB - 0x64, 0x1B, 3, mv.Power);
-            Number(3, 0, panel * 0xCB - 0x64, 0x2C, 3, mv.Mp * 3);
+            Number(3, 0, panel * 0xCB - 0x64, 0x2C, 3, mv.Mp);      // mpCost * 3 (Tech.Mp already holds it)
             Words(3, 0, panel * 0xCB - 0x64, 0x3E, 0x24, (mv.Range - 1) * 0x24, 0x78);
             int[] su = { 0, 0x84, 0xA0, 0xBC, 0xDB }, sw = { 0, 0x1A, 0x1C, 0x20, 0x1E };
             if (mv.Status >= 1 && mv.Status <= 4) Words(3, 0, panel * 0xCB - 0x64, 0x4F, sw[mv.Status], su[mv.Status], 0x6C);

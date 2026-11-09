@@ -16,6 +16,8 @@ namespace DW1Remake.Game
     {
         public readonly UiBox Box = new UiBox { Id = 0 };
         public int Owner = -1;                      // CURRENT_DIALOGUE_OWNER the box was set up for (-1: none open)
+        public bool Custom;                         // set up by 0x26 (scriptSetTextboxSize): tickCustomSizedTextbox / renderCustomSizedTextbox
+        int _rowsShown = 4;                         // registerTextbox's rows: 4 for setupDialogueBox, 0x26's rows for a custom box
 
         // setupDialogueBox: rect (-0x82, 0x2A, 0x106, 0x3B), flags 0x21 (| 0x80 when it grows out of the speaker)
         static readonly RectInt BoxRect = new RectInt(-0x82, 0x2A, 0x106, 0x3B);
@@ -43,7 +45,7 @@ namespace DW1Remake.Game
         public void Setup(int owner, RectInt? origin)
         {
             CloseNow(Box);
-            Owner = owner;
+            Owner = owner; Custom = false; _rowsShown = 4;
             if (origin.HasValue) Open(Box, BoxRect, origin.Value, Flags | 0x80);
             else OpenStatic(Box, BoxRect, Flags);
             Clear();
@@ -53,13 +55,26 @@ namespace DW1Remake.Game
         public void SetupAt(RectInt rect, int flags, RectInt origin)
         {
             CloseNow(Box);
-            Owner = 0xFE;
+            Owner = 0xFE; Custom = false; _rowsShown = 4;
             Open(Box, rect, origin, flags);
             Clear();
         }
 
+        /// <summary>scriptSetTextboxSize (command 0x26): a box cols x 12 + 10 wide and rows x 13 + 7 high in the middle of the screen, flags 0x21
+        /// (| 0x80 when it grows out of the origin's square), showing 'rows' rows (registerTextbox(0, 0, rows, 1, 0)). Shell's newspaper: 21 x 8-10.</summary>
+        public void SetupCustom(int cols, int rows, RectInt? origin)
+        {
+            CloseNow(Box);
+            int w = cols * 12 + 10, h = rows * 13 + 7;
+            var rect = new RectInt((0x140 - w) / 2 - 0xA0, (0xF0 - h) / 2 - 0x78, w, h);
+            Owner = 0xFF; Custom = true; _rowsShown = rows;
+            if (origin.HasValue) Open(Box, rect, origin.Value, Flags | 0x80);
+            else OpenStatic(Box, rect, Flags);
+            Clear();
+        }
+
         /// <summary>closeAllTextboxes / closeBox at the end of a script: gone at once.</summary>
-        public void Shut() { CloseNow(Box); Owner = -1; Clear(); }
+        public void Shut() { CloseNow(Box); Owner = -1; Custom = false; _rowsShown = 4; Clear(); }
 
         public void Clear() { _rows.Clear(); _name = null; _choiceRow = -1; _choices = 0; Waiting = false; }
 
@@ -121,7 +136,9 @@ namespace DW1Remake.Game
         void DrawText()
         {
             int z = 6 - Box.Id, x = Box.Rect.x + 5, y = Box.Rect.y + 4;
-            for (int i = 0; i < 4; i++) String(z, x, y + i * 13, 0xFC, 0, i * 12);
+            for (int i = 0; i < _rowsShown; i++) String(z, x, y + i * 13, 0xFC, 0, i * 12);
+            // renderCustomSizedTextbox: only the rows, no cursor and no "next" mark
+            if (Custom) return;
             if (_choiceRow >= 0)
             {
                 // renderDialogueSelectionCursor (US): (x - 1, y + cursorOffsetY + current x 13 - 2), cursorOffsetY 13 when a name is shown

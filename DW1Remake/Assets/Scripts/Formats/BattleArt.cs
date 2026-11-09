@@ -100,6 +100,29 @@ namespace DW1Remake.Formats
             Graphics.DrawTexture(new Rect(MiddleX + x * Scale, MiddleY + y * Scale, dw * Scale, dh * Scale), t, uv, 0, 0, 0, 0, m);
         }
 
+        readonly Texture2D[,] _hudLayer = new Texture2D[16, 3];
+        readonly Material[,] _hudMat = new Material[16, 4];
+
+        /// <summary>Hud, drawn as a semi-transparent PS1 sprite (as ConditionPs): colours without the STP bit solid, the STP ones with blend mode abr.</summary>
+        public void HudPs(int row, int abr, float u, float v, float w, float h, float x, float y, float dw, float dh)
+        {
+            if (_hudLayer[row, 1] == null) { _hudLayer[row, 1] = _hudTim.ToTextureLayer(row, 1); _hudLayer[row, 2] = _hudTim.ToTextureLayer(row, 2); }
+            Draw(_hudLayer[row, 1], u, v, w, h, x, y, dw, dh);
+            if (Event.current.type != EventType.Repaint) return;
+            var m = _hudMat[row, abr & 3];
+            if (m == null)
+            {
+                var sh = Shader.Find("DW1Remake/GuiBlend");
+                if (sh == null) return;
+                m = new Material(sh) { mainTexture = _hudLayer[row, 2] };
+                MmdModel.SetPsxBlend(m, abr & 3);
+                _hudMat[row, abr & 3] = m;
+            }
+            var t = _hudLayer[row, 2];
+            var uv = new Rect(u / 256f, 1f - (v + h) / t.height, w / 256f, h / t.height);
+            Graphics.DrawTexture(new Rect(MiddleX + x * Scale, MiddleY + y * Scale, dw * Scale, dh * Scale), t, uv, 0, 0, 0, 0, m);
+        }
+
         /// <summary>From VRAM page (320,0) v 128+ = ETCDAT/SYSTEM_W.TIM (VRAM 320,128); row = colour y - 488.</summary>
         public void Sys(int row, float u, float v, float w, float h, float x, float y)
         {

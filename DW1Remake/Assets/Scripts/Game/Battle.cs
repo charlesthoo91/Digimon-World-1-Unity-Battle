@@ -13,11 +13,11 @@ namespace DW1Remake.Game
     /// From the disc too: enemy numbers and techniques (map record), the damage formula, and learning a technique an enemy used.
     /// Our own (not decoded yet): stat gains, how often a fighter acts, what orders do, the look of each technique's effect.
     /// </summary>
-    public sealed class Battle
+    public sealed partial class Battle
     {
         public sealed class Tech
         {
-            public int Id; public string Name; public int Mp, Power, Element, Status, StatusChance, Stagger; public bool Melee, Finisher, Wide, Self; public Color Col;
+            public int Id; public string Name; public int Mp, Power, Element, Status, StatusChance, Stagger, Accuracy; public bool Melee, Finisher, Wide, Self; public Color Col;
             public string Spec { get { string[] n = { "", "poison", "confuse", "stun", "flat" }; return Status >= 0 && Status < n.Length ? n[Status] : ""; } }
         }
 
@@ -33,8 +33,11 @@ namespace DW1Remake.Game
             public int Wait, Stall, Bore, SelfUses, ConfuseFrames;
             public Tech[] Moves = new Tech[4]; public int[] Weights = new int[4];
             public Tech Pending; public Fighter PendingTarget;
-            public int Cool, Flat, PoisonFrames; public bool Poisoned, Blind; public float Adjust; public Vector3 Scale;
-            public float NextAct, AnimReset, StunUntil;
+            public int Cool, PoisonFrames; public bool Poisoned, Blind; public float Adjust; public Vector3 Scale;
+            public float NextAct, AnimReset;
+            // FighterData status fields (BTL_applyMoveStatus, BTL_tickStatusEffects; see BattleStatus.cs): stunTimer, flatTimer (-1 = waiting for the
+            // hit reaction to end), flatAttackTimer, entity.flatSprite (-1 = the model is drawn), statusFxId (the one condition effect over it)
+            public int StunFrames, FlatTimer, FlatAttack, FlatSprite = -1, FlatFlip, FxKind; public bool Confused, Stunned, Flattened, Protected;
             public float HitUntil;              // stats.current.isHit: until its hit reaction is over nothing hits it again (the effects' hit subs skip it)
             public float ShownHp;               // the HP shown on screen: it drains smoothly after a hit (393, 379, 365 ...)
             public Vector3 Slot;
@@ -93,6 +96,7 @@ namespace DW1Remake.Game
                         _throws.RemoveAt(i);
                         int h0 = _s.Stats[6], m0 = _s.Stats[7];
                         if (th.Apply != null) th.Apply();
+                        ItemConditions(th.Item);        // handleStatusItems (BattleStatus.cs)
                         ReadBack();
                         if (_s.Stats[6] > h0) _pops.Add(new Pop { Text = (_s.Stats[6] - h0).ToString(), Pos = Partner.T.position + Vector3.up * 0.9f, Col = new Color(0f, 1f, 0f), Icon = 1 });     // TEXT_COLORS[0xB], icon 1 (item.c)
                         if (_s.Stats[7] > m0) _pops.Add(new Pop { Text = (_s.Stats[7] - m0).ToString(), Pos = Partner.T.position + Vector3.up * 1.4f, Col = new Color(0f, 1f, 0f), Icon = 2 });
@@ -102,7 +106,7 @@ namespace DW1Remake.Game
             }
         }
 
-        enum Phase { Notice, Banner, Fight, Win, Lose, Fled, Leave }
+        enum Phase { Notice, Banner, Fight, Win, Lose, Fled, Leave, TimeUp, Cheer }
 
         // animation slots, from the battle code: stance 33, walk 35, hit from the front 40 and from behind 41, win 42, a technique = 46 + its place in the move list.
         // collapse 43: played when HP reaches 0 (code 0x8005AFDC).
@@ -118,6 +122,44 @@ namespace DW1Remake.Game
         public bool Fled { get; private set; }
         public bool NoFlee;                     // scripted fights (script variable 250 = 1): running away is locked
         public bool Tamerless;                  // script flag 2 at the start: the boy gives no orders and uses no items
+
+        // the arena (STD_REL.BIN, std/std_main.c, the arena's own copy of the fight code): one enemy, no Run, no Change, no items, the 99 counter,
+        // no result boxes and no life lost; the room runs the matches (PlayableRoomTournament) and sets these before Start
+        public bool Tournament;
+        public bool TournamentWeak;             // PARTNER_PARA.condition & 0x60: STD_initializeCombat takes a fifth off Offense, Defense, Speed and Brains for the fight
+        public int Timer;                       // STD_TIMER (STD_addFighterCounter(0x63))
+        public int Result;                      // STD_combatMain: 1 won, -1 lost (a draw is lost too: STD_deinitializeCombat(1, 1) returns -1)
+        public int WinnerSide = -1;             // STD_deinitializeCombat's a: 0 the partner, 1 the enemy, 2 nobody (a draw)
+        public bool TimeUpWord, TimeUpBox;      // STD_renderTimeoutText / STD_addTimeoutWindow are up
+        public readonly int[] TourDamage = new int[2];          // STD_DAMAGE: [0] what the partner lost, [1] what the enemy lost
+        public System.Action<int> TournamentMusic;          // playMusic(STD_MUSIC, track)
+        public bool TournamentStartDone;        // STD_combatSetup: the room's arena BATTLE text has come together and burst; the fight begins
+        public System.Action<Fighter, int> OnTechStart;     // STD_setupMoveExecution's camera choice (the technique's id)
+        public System.Action<Fighter> OnTechHit;            // a landed blow (STD_tickAttackHits: STD_setRandomViewpoint on the one hit)
+        public System.Action<Fighter> OnKnockOut;           // STD_selectRandomCamera(loser, 5, 0): the WIN / LOSE scene and the knock-out camera
+        public System.Action OnVersus; public System.Func<bool> VersusBusy;     // a draw: the draw letters (STD_addVersusModelScene) and whether they still run
+        bool _tVersus; readonly HashSet<Fighter> _tKo = new HashSet<Fighter>();
+        // what the arena's own HUD (ArenaScreens) shows: the commands as the game numbers them (0xB the finishing move, 2 Attack, 3 Your Call,
+        // 4 Moderate, 5 Distance, 6 Defensive, 8-10 the techniques), the one under the cursor, the finishing move's charge
+        public int[] TourCommands = new int[0], TourCommandElement = new int[0];
+        public int Hover { get { return _hover; } }
+        public bool InFight { get { return _phase == Phase.Fight; } }
+        public bool PartnerCharging { get { return _charging && _chargeBy == Partner; } }
+        public int ChargeCount { get { return _chargeCount; } }
+        public bool FinisherOrdered { get { return _wantFinish || (_charging && _chargeBy == Partner); } }
+        // STD_tickBattle's camera test: someone attacking (FIGHTER_FLAG_ATTACKING, until its technique's animation is over: STD_tickAttackState)
+        // or thrown back (FIGHTER_FLAG_KNOCKED_BACK); the effect still flying does not count
+        public bool Acting
+        {
+            get
+            {
+                if (_charging) return true;
+                foreach (var sw in _swings) if (sw.T < sw.Length) return true;
+                foreach (var f in new[] { Partner, Enemy }) if (f != null && _time < f.HitUntil) return true;
+                return false;
+            }
+        }
+        int _tFrames, _tStartHp0, _tStartHp1, _tCount, _tLoser = -1, _tCheer; float _tAcc, _tTimerAcc; bool _tPress;
         public Fighter Partner, Enemy;           // Enemy = the one the partner is after; the others wait in Extras (up to three enemies, "Change target!")
         public readonly List<Fighter> Extras = new List<Fighter>();
         public BattleIcons Icons; public ItemIcons Items;
@@ -265,6 +307,25 @@ namespace DW1Remake.Game
             Stand(Enemy);
             Partner.T.rotation = _face(Enemy.T.position - Partner.T.position);     // BTL_handleBattleIntro: nobody takes a place, the partner just turns to the enemy
             foreach (var f in new[] { Partner, Enemy }) if (f.A != null) f.A.BodyMovesItself = true;
+            if (Tournament) StartTournament();
+        }
+
+        // STD_initializeCombat: the counter at 99 (it runs once STD_combatSetup is over), each side's HP at the start (STD_STARTING_HP); the partner's
+        // finishing gauge, power-ups and orders come from its numbers before the condition's fifth is taken off
+        void StartTournament()
+        {
+            NoFlee = true; _boyDone = true;
+            Timer = 99; _tFrames = 1; _tTimerAcc = 0f; Result = 0; WinnerSide = -1; TimeUpWord = TimeUpBox = false; TourDamage[0] = TourDamage[1] = 0;
+            _tCount = 0; _tLoser = -1; _tCheer = 0; _tAcc = 0f; _tPress = false;
+            _tStartHp0 = Partner.Hp; _tStartHp1 = Enemy.Hp;
+            _tVersus = false; _tKo.Clear(); TournamentStartDone = false;
+            _phase = Phase.Banner; _phaseStart = _time;         // no angry enemy, no BTL word: the arena's start text runs (the room draws it)
+            if (TournamentWeak)
+            {
+                Partner.Off -= Partner.Off / 5; Partner.Def -= Partner.Def / 5;
+                Partner.Spd -= Partner.Spd / 5; Partner.Brain -= Partner.Brain / 5;
+            }
+            if (TournamentMusic != null) TournamentMusic(2);       // STD_combatMain: playMusic(STD_MUSIC, 2)
         }
 
         // the order list by Brains, in the game's menu order (code 0x80056F4C). From 500 Brains Attack and Moderate go and the three Techset techniques take their place.
@@ -272,8 +333,8 @@ namespace DW1Remake.Game
         {
             _orders.Clear();
             int b = Partner.Brain;
-            _orders.Add(RunOrder);                                            // shown in a scripted fight too, but the cursor jumps over it
-            if (b >= 300) _orders.Add(ChangeOrder);
+            if (!Tournament) _orders.Add(RunOrder);                           // shown in a scripted fight too, but the cursor jumps over it (none in the arena)
+            if (b >= 300 && !Tournament) _orders.Add(ChangeOrder);            // STD_initializeCombat has no Change either
             if (b >= 400) _orders.Add(DefensiveOrder);
             if (b >= 300) _orders.Add(DistanceOrder);
             if (b >= 500) { for (int i = Partner.Techs.Count - 1; i >= 0; i--) _orders.Add(Partner.Techs[i].Name); }
@@ -283,6 +344,17 @@ namespace DW1Remake.Game
                 if (b >= 100) _orders.Add(AttackOrder);
             }
             _orders.Add(CallOrder);
+            if (!Tournament) return;
+            // STD_initializeCombat: availableCommands[0] = 0xB, then by Brains (the same list as ours without Run and Change)
+            TourCommands = new int[_orders.Count + 1]; TourCommandElement = new int[_orders.Count + 1];
+            TourCommands[0] = 0xB;
+            for (int i = 0; i < _orders.Count; i++)
+            {
+                string o = _orders[i]; int c = 3, el = 0;
+                if (o == AttackOrder) c = 2; else if (o == ModerateOrder) c = 4; else if (o == DistanceOrder) c = 5; else if (o == DefensiveOrder) c = 6; else if (o == CallOrder) c = 3;
+                else for (int k = 0; k < Partner.Techs.Count; k++) if (Partner.Techs[k].Name == o) { c = 8 + k; el = Partner.Techs[k].Element; }
+                TourCommands[i + 1] = c; TourCommandElement[i + 1] = el;
+            }
         }
 
 
@@ -313,6 +385,7 @@ namespace DW1Remake.Game
             float dt = Time.deltaTime; _time += dt;
             if (Effects != null) Effects.Tick(dt, Camera.main);
             TickAura(dt);
+            TickConditions(dt);
             Animate(Partner); Animate(Enemy);
             foreach (var x in Extras) Animate(x);
             for (int i = _pops.Count - 1; i >= 0; i--) { _pops[i].T += dt; if (_pops[i].T >= 31f / 20f) _pops.RemoveAt(i); }     // renderEntityText: 31 frames
@@ -321,7 +394,7 @@ namespace DW1Remake.Game
                 if (f.A != null && f.A.Slot != WalkSlot && f.A.Slot != RunSlot && f.A.Slot != 2 && f.A.Slot != 4)      // the animation itself throws it back; it stays inside the fight
                 {
                     Vector3 next = f.T.position - f.T.forward * f.A.TakeBodyMove();
-                    if (!LeavesScreen(f.T.position, next, 280, 200, RadiusOf(f))) OnGround(f.T, next - f.T.position);     // not into a wall (Glitch FAQ C2, see OnGround)
+                    if (Tournament || !LeavesScreen(f.T.position, next, 280, 200, RadiusOf(f))) OnGround(f.T, next - f.T.position);     // not into a wall (Glitch FAQ C2, see OnGround); the arena has only its ring's walls
                 }
             }
             _hudAcc += dt;
@@ -342,10 +415,22 @@ namespace DW1Remake.Game
                 case Phase.Notice:   // the enemy gets angry
                     TickBoy();
                     TickRunners();
-                    if (inPhase > 1.3f) SetPhase(Phase.Banner);
+                    // STD_combatSetup: the arena's start text runs at least 60 frames before sound 0x11 and its burst (no angry enemy there)
+                    if (inPhase > (Tournament ? 60 * Frame : 1.3f)) SetPhase(Phase.Banner);
                     break;
                 case Phase.Banner:   // BATTLE; everyone takes their place
                 {
+                    if (Tournament)
+                    {
+                        TickRunners();
+                        if (TournamentStartDone)
+                        {
+                            Enemy.T.rotation = _face(Partner.T.position - Enemy.T.position);
+                            Partner.T.rotation = _face(Enemy.T.position - Partner.T.position);
+                            SetPhase(Phase.Fight);
+                        }
+                        break;
+                    }
                     bool c = TickBoy();
                     bool wordDone = TickWord(dt);
                     bool gone = TickRunners();          // the fight waits for the runners to leave the screen
@@ -359,11 +444,12 @@ namespace DW1Remake.Game
                     break;
                 }
                 case Phase.Fight:
+                    if (Tournament) TickTimer(dt);
                     // IS_TAMERLESS_BATTLE (script flag 2, battle_setup.c): handleCommands returns at once (no cursor, no order, no Run, no finishing
                     // move) and tamerTickBattle opens no item box. FRZL08's second Garurumon fight ("Only Digimon will fight")
                     if (Tamerless) { triangle = false; side = 0; action = false; }
                     if (!Tamerless && !_charging && SquarePressed() && Partner.Finisher != null && Partner.Finish >= Partner.FinishMax) { _wantFinish = true; Partner.Pending = null; Partner.Wait = 0; Snd(3); Shout(Partner.Finisher.Name); }     // battle_tick.c: command 0xB and its shout
-                    if (triangle) { if (OnOpenBag != null) OnOpenBag(); }
+                    if (triangle && !Tournament) { if (OnOpenBag != null) OnOpenBag(); }     // STD_handleCommands has no item page
                     if (side != 0) { Snd(2); MoveHover(side); }
                     if (action) { Snd(3); if (_playerA != null) _playerA.SetSlot(14, true); Choose(_hover - 1); }
                     if (_charging) { HoldOthers(_chargeBy); TickCharge(dt); TickSwings(dt); TickShots(dt); break; }
@@ -372,6 +458,13 @@ namespace DW1Remake.Game
                     while (_acc >= Frame)
                     {
                         _acc -= Frame; _frame++;
+                        // tamerTickBattle: every frame of the fight, unless the order is Run (command 1), the boy faces the partner
+                        // (entityLookAtLocation, at once); also during a finishing move. The arena has its own tamer code (STD)
+                        if (!_running && !Tournament && _player != null && Partner != null && Partner.T != null)
+                        {
+                            Vector3 look = Partner.T.position - _player.position; look.y = 0f;
+                            if (look.sqrMagnitude > 0.0001f) _player.rotation = _face(look);
+                        }
                         if (_running)
                         {
                             // battle_tick.c, each frame of the Run order, whatever the partner is doing: handleFleeing moves the boy, FLEE_TIMER counts;
@@ -386,6 +479,7 @@ namespace DW1Remake.Game
                     if (finishing != null) HoldOthers(finishing);
                     else { Move(Partner, Enemy, dt); Move(Enemy, Partner, dt); foreach (var x in Extras) if (x.Hp > 0) Move(x, Partner, dt); }
                     TickSwings(dt); TickShots(dt);
+                    if (Tournament) { TournamentEnd(); break; }
                     if (Enemy.Hp <= 0) { if (!NextEnemy() && AllFallen()) Finish(true); }
                     else if (TickFaint(dt)) Finish(false);
                     break;
@@ -425,7 +519,7 @@ namespace DW1Remake.Game
                     }
                     break;
                 case Phase.Leave:
-                    // ours: a 10-second limit, in case a flee point is on the screen (the game would wait for ever)
+                    // ours: a 10-second safety limit (the game has none; running straight on, every enemy leaves the screen)
                     if (TickLeave() || inPhase > 10f) End();
                     break;
                 case Phase.Lose:
@@ -434,7 +528,136 @@ namespace DW1Remake.Game
                 case Phase.Fled:
                     if (inPhase > 0.8f) End();
                     break;
+                case Phase.TimeUp:
+                case Phase.Cheer:
+                    TickSwings(dt); TickShots(dt);
+                    if (action) _tPress = true;
+                    _tAcc += dt;
+                    while (_tAcc >= Frame && Active) { _tAcc -= Frame; if (_phase == Phase.TimeUp) TickTimeUp(_tPress); else TickCheer(); _tPress = false; }
+                    break;
             }
+        }
+
+        // STD_tickFighterCounter: while the counter runs, BATTLE_FRAME_COUNT counts every frame and, while neither side lies in 0x2B, the counter
+        // goes down one every 20th frame
+        void TickTimer(float dt)
+        {
+            _tTimerAcc += dt;
+            while (_tTimerAcc >= Frame)
+            {
+                _tTimerAcc -= Frame;
+                _tFrames++;
+                bool down = (Partner.A != null && Partner.A.Slot == DownSlot) || (Enemy.A != null && Enemy.A.Slot == DownSlot);
+                if (!down && _tFrames % 20 == 0 && Timer != 0) Timer--;
+            }
+        }
+
+        // STD_checkEndCondition (with STD_tickPartnerAI / STD_tickEnemyAI's faint at 0 HP: STD_faintDigimon, animation 0x2B)
+        void TournamentEnd()
+        {
+            foreach (var f in new[] { Partner, Enemy })
+            {
+                if (f.Hp > 0 || f.AnimReset != 0f) continue;
+                if (f.A != null && f.A.HasSlot(DownSlot) && f.A.Slot != DownSlot) f.A.SetSlot(DownSlot, true);
+                // STD_tickPartnerAI / STD_tickEnemyAI: the one that faints calls STD_selectRandomCamera(it, 5, 0) when the other one still stands
+                if (_tKo.Add(f)) { var other = f == Partner ? Enemy : Partner; if (other.Hp > 0 && OnKnockOut != null) OnKnockOut(f); }
+            }
+            bool partnerDown = Fallen(Partner), enemyDown = Fallen(Enemy);
+            if (partnerDown)
+            {
+                if (Enemy.Hp > 0) { StartCheer(1); return; }        // -1: STD_deinitializeCombat(1, 0)
+                if (enemyDown) StartCheer(2);                      // 2: both down, STD_deinitializeCombat(1, 1)
+                return;
+            }
+            if (enemyDown)
+            {
+                if (Partner.Hp > 0) StartCheer(0);                 // 1: STD_deinitializeCombat(0, 1); else wait for the partner's 0x2B
+                return;
+            }
+            if (Timer != 0 || Partner.Hp <= 0 || Enemy.Hp <= 0) return;
+            // time up: the side that lost more HP than it took off the other loses; the same amount is a draw
+            TourDamage[0] = _tStartHp0 - Partner.Hp;
+            TourDamage[1] = _tStartHp1 - Enemy.Hp;
+            ClearShots();
+            _tLoser = TourDamage[0] > TourDamage[1] ? 0 : TourDamage[0] < TourDamage[1] ? 1 : 2;
+            _tCount = 0; _tAcc = 0f; _tPress = false;
+            if (OnStopMusic != null) OnStopMusic();
+            TimeUpWord = true;
+            SetPhase(Phase.TimeUp);
+            if (_tLoser == 2) { Stand(Partner); Stand(Enemy); }     // handleBattleIdle for both
+            else
+            {
+                var winner = _tLoser == 0 ? Enemy : Partner; var loser = _tLoser == 0 ? Partner : Enemy;
+                Stand(winner);
+                if (loser.A != null && loser.A.HasSlot(DownSlot)) loser.A.SetSlot(DownSlot, true);     // STD_faintDigimon
+            }
+        }
+
+        // STD_tickBattleResultScreen, one frame: a draw shows the box after two frames for up to 61 frames (Cross ends it); a win on damage shows the
+        // box at frame 60 and ends at 121 (Cross from frame 61)
+        void TickTimeUp(bool press)
+        {
+            if (_tLoser == 2)
+            {
+                if (_tCount == 2) { TimeUpWord = false; TimeUpBox = true; }
+                if (_tCount >= 2 && (press || _tCount - 2 >= 0x3D)) { TimeUpBox = false; StartCheer(2); return; }
+            }
+            else
+            {
+                if (_tCount >= 0x3D && press) { TimeUpOver(); return; }
+                if (_tCount == 0x3C) { TimeUpWord = false; TimeUpBox = true; }
+                if (_tCount >= 0x79) { TimeUpOver(); return; }
+            }
+            _tCount++;
+        }
+
+        // the end of STD_tickBattleResultScreen with a loser: STD_selectRandomCamera(loser, 5, 0) (the WIN / LOSE scene), the box goes
+        void TimeUpOver()
+        {
+            TimeUpBox = false;
+            var loser = _tLoser == 0 ? Partner : Enemy;
+            if (OnKnockOut != null) OnKnockOut(loser);
+            StartCheer(_tLoser == 0 ? 1 : 0);
+        }
+
+        // STD_deinitializeCombat(a, b): the winner a plays 0x2A for 100 frames (the partner) or 120 (the enemy) to playMusic(STD_MUSIC, 3 / 4);
+        // a draw has no winner. 20 more frames, then the partner's Offense, Defense, Speed and Brains are back (ours only lowered the fight's
+        // copy) and it gets a fifth of its HP and MP back. Not ported: the versus picture (STD_addVersusModelScene) after a draw that was not a time-up.
+        void StartCheer(int winner)
+        {
+            ClearShots();
+            WinnerSide = winner;
+            Result = winner == 0 ? 1 : -1;
+            Won = Result == 1;
+            _tCheer = winner == 2 ? 0 : (winner == 0 ? 100 : 120);
+            _tCount = 0; _tAcc = 0f;
+            if (OnStopMusic != null) OnStopMusic();
+            if (winner == 2 && OnVersus != null) { OnVersus(); _tVersus = true; }      // STD_addVersusModelScene, waited for until it is over
+            if (winner != 2)
+            {
+                var f = winner == 0 ? Partner : Enemy;
+                if (f.A != null && f.A.HasSlot(CheerSlot)) f.A.SetSlot(CheerSlot, true);
+                if (TournamentMusic != null) TournamentMusic(winner == 0 ? 3 : 4);
+            }
+            SetPhase(Phase.Cheer);
+        }
+
+        void TickCheer()
+        {
+            if (_tVersus) { if (VersusBusy != null && VersusBusy()) return; _tVersus = false; }
+            _tCount++;
+            if (_tCount <= _tCheer)
+            {
+                var f = WinnerSide == 0 ? Partner : Enemy;
+                if (f.A != null && !f.A.Busy && f.A.HasSlot(CheerSlot)) f.A.SetSlot(CheerSlot, true);
+                return;
+            }
+            if (_tCount < _tCheer + 20) return;
+            if (OnStopMusic != null) OnStopMusic();
+            Partner.Hp = Mathf.Min(Partner.MaxHp, Mathf.Max(0, Partner.Hp) + Partner.MaxHp / 5);
+            Partner.Mp = Mathf.Min(Partner.MaxMp, Mathf.Max(0, Partner.Mp) + Partner.MaxMp / 5);
+            Sync();
+            End();
         }
 
         bool HasLeft() { foreach (int v in _left) if (v > 0) return true; return false; }
@@ -490,13 +713,14 @@ namespace DW1Remake.Game
                 {
                     if (f.A != null && f.A.Busy) { done = false; continue; }
                     if (NoFlee) { if (f.A != null && f.A.HasSlot(0x21)) f.A.SetSlot(0x21); f.Leaving = 2; continue; }
-                    if (f.A != null && f.A.HasSlot(0x24)) f.A.SetSlot(0x24);
+                    // BTL_handleVictorySequence: run 0x24 at double speed (animFlag 4) and entityLookAtLocation(flee) once, when it starts;
+                    // after that it is never turned again, so it runs straight on past its flee point until it is off the screen
+                    if (f.A != null && f.A.HasSlot(0x24)) { f.A.SetSlot(0x24); f.A.DoubleSpeed = true; }
+                    Vector3 d = f.FleeTo - f.T.position; d.y = 0f;
+                    if (d.sqrMagnitude > 0.0001f) f.T.rotation = _face(d);
                     f.Leaving = 1;
                 }
                 if (f.Leaving != 1) continue;
-                // entityLookAtLocation(flee), then the run animation carries it
-                Vector3 d = f.FleeTo - f.T.position; d.y = 0f;
-                if (d.sqrMagnitude > 0.0001f) f.T.rotation = _face(d);
                 if (f.A != null) f.T.position -= f.T.forward * f.A.TakeBodyMove();
                 bool off = cam == null || OffScreen(cam, f.T.position, f.Info != null ? f.Info.Radius : 0, f.Info != null ? f.Info.Height : 0);
                 if (!off) done = false;
@@ -511,14 +735,17 @@ namespace DW1Remake.Game
             Active = false;
             foreach (var f in new[] { Partner, Enemy }) if (f.A != null) f.A.BodyMovesItself = false;
             foreach (var f in Extras) if (f.A != null) f.A.BodyMovesItself = false;
+            // BTL_deinitializeCombat: animFlag &= 0xFB (the double-speed run ends)
+            foreach (var f in Enemies()) if (f.A != null) f.A.DoubleSpeed = false;
         }
 
         // left moves on along the row, right back; Run is skipped in a scripted fight (main/battle_tick.c)
         void MoveHover(int side)
         {
             int last = _orders.Count;
-            if (side < 0) { _hover++; if (NoFlee && _hover == 1) _hover++; if (_hover > last) _hover = NoFlee ? 2 : 1; }
-            else { _hover--; if (NoFlee && _hover == 1) _hover--; if (_hover <= 0) _hover = last; }
+            bool skipRun = NoFlee && _orders.Count > 0 && _orders[0] == RunOrder;      // the arena's list has no Run to jump over
+            if (side < 0) { _hover++; if (skipRun && _hover == 1) _hover++; if (_hover > last) _hover = skipRun ? 2 : 1; }
+            else { _hover--; if (skipRun && _hover == 1) _hover--; if (_hover <= 0) _hover = last; }
         }
 
         void Choose(int i)
@@ -587,17 +814,6 @@ namespace DW1Remake.Game
             if (me.Hp <= 0) return;
             if (me.Finisher != null) me.Finish = Mathf.Min(me.FinishMax, me.Finish + 1);
             if (_frame % 20 == 0 && me.Bore > 0) me.Bore--;
-            if (me.Poisoned && --me.PoisonFrames <= 0)
-            {
-                me.PoisonFrames = 100;
-                int dmg = me.MaxHp * (_rng.Next(3) + 1) / 100;
-                if (me == Enemy) _barFrames = 0;
-                me.Hp = Mathf.Max(0, me.Hp - dmg);
-                _pops.Add(new Pop { Text = dmg.ToString(), Pos = me.T.position + Vector3.up * 0.9f, Col = new Color(1f, 0f, 1f) });     // TEXT_COLORS[0xC] (battle_main.c poison)
-                Sync();
-            }
-            if (me.Flat > 0 && --me.Flat == 0) me.T.localScale = me.Scale;
-            if (me.ConfuseFrames > 0) me.ConfuseFrames--;
             if (me.Brain <= 300 && me.Stall == 0 && _frame % ((me.Brain / 2 + 1) * 20) == 0)
             {
                 int chance = me == Partner ? 70 - _s.Discipline : (300 - me.Brain) / 4;
@@ -607,13 +823,13 @@ namespace DW1Remake.Game
             if (me.Wait > 1) me.Wait--;
             if (me.Cool > 1) me.Cool--;
             if (me.Stall > 0) { me.Stall--; return; }
-            if (foe.Hp <= 0 || _time < me.NextAct || _time < me.StunUntil || me.Flat > 0 || me.Pending != null || me.Wait > 1 || me.Cool > 1 || (me == Partner && _running)) return;
+            if (foe.Hp <= 0 || _time < me.NextAct || me.Stunned || FlatBusy(me) || me.Pending != null || me.Wait > 1 || me.Cool > 1 || (me == Partner && _running)) return;
             foreach (var sw in _swings) if (sw.From == me) return;
             if (me == Partner && _wantFinish && me.Finisher != null) { _wantFinish = false; me.Pending = me.Finisher; me.PendingTarget = foe; return; }
             if (me != Partner && me.Finish >= me.FinishMax && me.Finisher != null) { me.Pending = me.Finisher; me.PendingTarget = foe; return; }
-            me.Blind = me.ConfuseFrames > 0 && _rng.Next(10) < 7;       // a confused fighter mostly fires at nothing, in the way it happens to face
+            me.Blind = me.Confused && _rng.Next(10) < 7;       // a confused fighter mostly fires at nothing, in the way it happens to face
             if (me.Blind) me.T.rotation *= Quaternion.Euler(0f, _rng.Next(-45, 45), 0f);
-            Tech t = me.ConfuseFrames > 0 ? PickAny(me) : me == Partner ? PickPartner(me, foe) : PickEnemy(me);
+            Tech t = me.Confused ? PickAny(me) : me == Partner ? PickPartner(me, foe) : PickEnemy(me);
             if (t == null) { me.Wait = EmptyWait; return; }
             me.Pending = t;
             me.PendingTarget = foe;
@@ -702,8 +918,8 @@ namespace DW1Remake.Game
             if (me.Hp <= 0) return;
             foreach (var sw in _swings) if (sw.From == me) return;
             if (me.AnimReset > 0f || _time < me.NextAct) return;
-            if (me.Flat > 0) return;
-            if (_time < me.StunUntil) { if (me.A != null && me.A.Slot != StunSlot) me.A.SetSlot(StunSlot); return; }
+            if (FlatBusy(me)) { MoveFlat(me, foe, dt); return; }        // BTL_tickFlatState (BattleStatus.cs)
+            if (me.Stunned) { if (me.A != null && me.A.Slot != StunSlot) me.A.SetSlot(StunSlot); return; }     // BTL_tickStunState: animation 0x22, held
             if (me.Stall > 0) { if (me.A != null && me.A.Slot != StallSlot) me.A.SetSlot(StallSlot); return; }
             bool hurt = me.Poisoned || me.Hp <= me.MaxHp / 5;                    // walks when poisoned or under 20% HP, else runs
             int walk = me.A == null ? 2 : hurt && me.A.HasSlot(WalkSlot) ? WalkSlot : me.A.HasSlot(RunSlot) ? RunSlot : 2;
@@ -717,7 +933,9 @@ namespace DW1Remake.Game
                 if (me.Style == 2) BackAway(me, foe, dt, walk); else Maintain(me, foe, dt, walk, dSq, radii, moving);
                 return;
             }
-            if (me == Partner)
+            // the finishing move (STD_handleCommands / BTL: Square sets the command to 0xB) replaces the order until it has gone off
+            bool finishing = me.Pending != null && me.Pending.Finisher;
+            if (me == Partner && !finishing)
             {
                 if (_order == DefensiveOrder) { Hold(me, foe, dt); return; }
                 if (_order == DistanceOrder)
@@ -795,10 +1013,12 @@ namespace DW1Remake.Game
 
         static readonly int[] Cardinal = { 0, 1024, 2048, 3072 };
 
-        // BTL_findUnblockedRotation for the fight's edge (hit 11). A wall or another Digimon goes to collisionGrace, which is not ported: it stays (-1).
+        // BTL_findUnblockedRotation / STD_findUnblockedRotation: during the fight (GAME_STATE 4) a wall (10) counts as the fight's edge (11): the
+        // nearest free quarter turns are tried; anything else, or no way out, goes to collisionGrace
         int Unblocked(Fighter me, int rot, int hit, int orig)
         {
-            if (hit != 11) return -1;
+            if (hit == 10) hit = 11;
+            if (hit != 11) return Grace(me, orig);
             int b = Cardinal[(rot & 0xFFF) / 1024], i;
             int[] cand = { b, (b + 0x400) & 0xFFF, 0 };
             for (i = 0; i < 2; i++) if (Blocked(me, cand[i]) == -1) break;
@@ -810,16 +1030,41 @@ namespace DW1Remake.Game
                 if (Blocked(me, cand[k]) != -1) break;
             }
             if (i >= 2 && k == 3) { int back = (orig + 0x800) & 0xFFF; if (Blocked(me, back) == -1) return back; }
-            if (k != 3) return -1;           // collisionGrace
+            if (k != 3) return Grace(me, orig);
             int r = (cand[0] + _rng.Next(0x400)) & 0xFFF;
-            return Blocked(me, r) == -1 ? r : -1;
+            return Blocked(me, r) == -1 ? r : Grace(me, orig);
+        }
+
+        // collisionGrace (map.c): free ahead = as it is; else the first free of COLLISION_GRACE_ROTATION[heading / 512] (exe 0x801289F4, four
+        // headings each), turned towards by at most 0x50 a frame the shorter way; none free: 32 further round
+        int Grace(Fighter me, int start)
+        {
+            start &= 0xFFF;
+            if (Blocked(me, start) == -1) return start;
+            int dir = start / 512;
+            for (int i = 0; i < 4; i++)
+            {
+                int r = GraceRotation(dir, i);
+                if (r < 0 || Blocked(me, r) != -1) continue;
+                int cw = (start - r) & 0xFFF, ccw = (r - start) & 0xFFF;
+                if (cw - ccw < 0) return cw >= 0x51 ? (start + 0xFB0) & 0xFFF : (start - cw) & 0xFFF;
+                return ccw >= 0x51 ? (start + 0x50) & 0xFFF : (start + ccw) & 0xFFF;
+            }
+            return (start + 32) & 0xFFF;
+        }
+
+        int GraceRotation(int dir, int i)
+        {
+            if (Exe == null) return -1;
+            uint load = BitConverter.ToUInt32(Exe, 0x18);
+            return BitConverter.ToInt16(Exe, (int)(0x801289F4 - load + 0x800) + (dir * 4 + i) * 2) & 0xFFF;
         }
 
         // entityCheckCollision with the fight box (280 x 200): 11 = it would leave the fight area, 10 = a wall, -1 = free. Other Digimon are not tested here.
         int Blocked(Fighter me, int rot)
         {
             Vector3 next = me.T.position + Front(rot) * 0.2f;
-            if (LeavesScreen(me.T.position, next, 280, 200, RadiusOf(me))) return 11;
+            if (!Tournament && LeavesScreen(me.T.position, next, 280, 200, RadiusOf(me))) return 11;      // the arena's code has no fight box
             if (Walkable != null && !Walkable(next) && Walkable(me.T.position)) return 10;     // already in a wall: let it walk out (see OnGround)
             return -1;
         }
@@ -914,6 +1159,7 @@ namespace DW1Remake.Game
             _swings.Add(swing);
             StartEffect(swing);      // BTL_setupMoveExecution starts the effect (BTL_startEFE) the moment the move starts; its program times itself
             swing.DrawnAtStart = Effects != null ? Effects.Drawn : 0;
+            if (Tournament && OnTechStart != null) OnTechStart(me, tech.Id);
             Play(me, slot, length);
             Sync();
         }
@@ -1033,7 +1279,7 @@ namespace DW1Remake.Game
             foreach (var f in all)
             {
                 if (f == finishing || f.Hp <= 0 || f.A == null) continue;
-                bool acting = f.AnimReset > 0f || _time < f.NextAct || _time < f.StunUntil || f.Flat > 0 || f.Stall > 0;
+                bool acting = f.AnimReset > 0f || _time < f.NextAct || f.Stunned || FlatBusy(f) || f.Stall > 0;
                 foreach (var sw in _swings) if (sw.From == f) acting = true;
                 if (acting) continue;
                 if (f.A.Slot != IdleSlot && f.A.Slot != 0) Stand(f);
@@ -1187,6 +1433,7 @@ namespace DW1Remake.Game
 
         void ClearShots()
         {
+            ClearConditions();
             ShowRing(false);
             if (Effects != null) Effects.Clear();
             foreach (var s in _shots) if (s.Go != null) UnityEngine.Object.Destroy(s.Go);
@@ -1286,13 +1533,15 @@ namespace DW1Remake.Game
         // Else it blocks unless a roll falls under Accuracy - (Accuracy / 2) x (target Speed - attacker Speed / 10) / 999; a target standing in its stance gets 6/5 of that reduction.
         bool Blocks(Fighter a, Fighter d, Tech tech)
         {
-            if (tech.Finisher || (d.Info != null && d.Info.Level < 3) || _time < d.StunUntil || d.Stall > 0 || d.Flat > 0 || d.Energy <= 0) return false;
+            // BTL_calculateHitChance: 100 against a stunned or flattened (FIGHTER_FLAG_STUNNED | FIGHTER_FLAG_FLATTENED) target
+            if (tech.Finisher || (d.Info != null && d.Info.Level < 3) || d.Stunned || d.Flattened || d.Stall > 0 || d.Energy <= 0) return false;
             foreach (var sw in _swings) if (sw.From == d) return false;
             var row = DigimonStatsCatalog.TechOf(tech.Id);
-            if (row == null) return false;
-            int off = row.Accuracy / 2 * (d.Spd - a.Spd / 10) / 999;
+            if (row == null && tech.Id != FlatBulletTech) return false;
+            int accuracy = row != null ? row.Accuracy : tech.Accuracy;     // the flat bullet (0x79) is past the 121 rows the catalog reads
+            int off = accuracy / 2 * (d.Spd - a.Spd / 10) / 999;
             if (d.A != null && (d.A.Slot == 33 || d.A.Slot == 34)) off = off * 6 / 5;
-            return _rng.Next(100) >= Mathf.Clamp(row.Accuracy - off, 0, 100);
+            return _rng.Next(100) >= Mathf.Clamp(accuracy - off, 0, 100);
         }
 
         // a block (code 0x8005CADC): the pose of slot 37 facing the attacker. A short-range blow still does 10-30% of its damage; a long-range one nothing.
@@ -1350,6 +1599,7 @@ namespace DW1Remake.Game
             if (a != d && Blocks(a, d, tech)) { Block(a, d, tech, v, hitAt); return; }
             int dmg = Mathf.Max(1, Mathf.RoundToInt(v));
             _anyHit = true;      // HAS_TAKEN_DAMAGE: any landed technique hit in the fight
+            if (Tournament && OnTechHit != null) OnTechHit(d);
             d.Hp = Mathf.Max(0, d.Hp - dmg);
             if (d == Enemy) _barFrames = 0;
             if (d == Partner && dmg * 100 / Partner.MaxHp >= 20) _bigHits++;
@@ -1358,9 +1608,10 @@ namespace DW1Remake.Game
             // the reaction plays even on the last blow; the collapse follows when it ends (Animate)
             {
                 // the game picks the reaction by which side was hit; the fighter can do nothing until it ends. The model's front is -Z.
-                bool front = Vector3.Dot(d.T.forward, away) >= 0f;
+                bool front = Vector3.Dot(d.T.forward, away) >= 0f || d.Flattened;      // BTL_handleHitReaction: flattened, it faces the blow, plays 0x28 and shows flat picture 3
                 int slot = front ? HitFrontSlot : HitBackSlot;
-                d.T.rotation = _face(front ? -away : away);         // it turns to the blow (or away from it) and the reaction carries it from there
+                d.T.rotation = _face(front ? -away : away);
+                if (d.Flattened) d.FlatSprite = 3;         // it turns to the blow (or away from it) and the reaction carries it from there
                 // frozen for the technique's byte +7 in frames, then the reaction plays out; a hit stops a technique that has not let go yet
                 for (int i = _swings.Count - 1; i >= 0; i--) if (_swings[i].From == d && !_swings[i].Done) _swings.RemoveAt(i);
                 float length = (d.A != null ? d.A.SecondsOf(slot) : 0f) + tech.Stagger / 20f;
@@ -1370,14 +1621,7 @@ namespace DW1Remake.Game
             }
             // BTL_startHitAnimation: createParticleFX(MOVE_DATA.special, 1, attack position, the hit Digimon, MOVE_DATA.iframes + 0x10)
             if (Effects != null) Effects.AddHitFx(tech.Element, 1, hitAt, ActorFor(d), tech.Stagger + 0x10);
-            if (tech.Status > 0 && d.Hp > 0 && _rng.Next(100) < tech.StatusChance)
-            {
-                // the game's timers in frames (code 0x8005C4A0): stun 200-240 (no action at all), confuse 200-300. Poison's and flat's effects are not decoded.
-                if (tech.Status == 1 && !d.Poisoned) { d.Poisoned = true; d.PoisonFrames = 100; }
-                if (tech.Status == 4 && d.Flat == 0) { d.Flat = 224 + _rng.Next(81); d.T.localScale = new Vector3(d.Scale.x, d.Scale.y * 0.3f, d.Scale.z); }
-                if (tech.Status == 3) { d.NextAct = Mathf.Max(d.NextAct, _time + (200 + _rng.Next(41)) / 20f); d.StunUntil = d.NextAct; }
-                if (tech.Status == 2 && d.ConfuseFrames == 0) d.ConfuseFrames = 200 + _rng.Next(101);
-            }
+            if (d.Hp > 0) ApplyMoveStatus(d, tech);       // BTL_applyMoveStatus (BattleStatus.cs)
             Sync();
         }
 
@@ -1562,13 +1806,14 @@ namespace DW1Remake.Game
             if (_mapPops.Count > 0) DrawMapText();
             if (!Active || Partner == null) return;
             UiKit.Begin();
-            if (_phase == Phase.Notice && cam != null) AngerIcon(cam);
-            if (_phase == Phase.Banner) Banner();
-            if (_phase != Phase.Notice) Hud();
+            if (_phase == Phase.Notice && cam != null && !Tournament) AngerIcon(cam);
+            if (_phase == Phase.Banner && !Tournament) Banner();
+            if (_phase != Phase.Notice && !Tournament) Hud();      // the arena draws its own (ArenaScreens)
             if (EndView != null && EndView.Showing) EndView.Draw(() => DrawStatsBox(Art, -88, -78, 176, _shown, _left, Raised(), false), BitsContent, FinalContent);
-            if (_phase == Phase.Fight && _cdTimer >= 0 && cam != null) DrawCountdown(cam);
-            if (cam != null && (_phase == Phase.Fight || _phase == Phase.Win)) EnemyBar(cam);
-            if (cam != null && _phase == Phase.Fight && _shoutFrame >= 0 && _player != null) DrawShout(cam);
+            if (_phase == Phase.Fight && _cdTimer >= 0 && cam != null && !Tournament) DrawCountdown(cam);
+            if (cam != null && (_phase == Phase.Fight || _phase == Phase.Win) && !Tournament) EnemyBar(cam);
+            if (cam != null && _phase == Phase.Fight && _shoutFrame >= 0 && _player != null && !Tournament) DrawShout(cam);
+            if (cam != null && (_phase == Phase.Fight || _phase == Phase.Win)) DrawConditions2D(cam);
             if (cam != null) foreach (var p in _pops) DrawPop(cam, p);
             UiKit.End();
             if (cam != null)
@@ -1647,7 +1892,22 @@ namespace DW1Remake.Game
                 else if (total >= 900) { if (old < 900) pct = _endExtra[3]; }
                 else if (total >= 800) { if (old < 800) pct = _endExtra[4]; }
                 else if (old < 700) pct = _endExtra[5];
-                if (pct.Length > 0) v.Append(_endStr[MpBonus] + _endStr[ReducedBy] + pct + _endExtra[6], 4);
+                // BTL_appendMPBonusText (US): "#C1MP Consumption Bonus!" + "reduced by" + pct + "%!#W", counted as 4 rows, with no row break
+                // and no spaces between the pieces, so it ran off the box and froze the game (glitch Q). Ours (user's request 2026-11-09): the
+                // same words split into rows that fit, a space between the pieces, and the row count it really has
+                if (pct.Length > 0)
+                {
+                    string colour = "", bonus = _endStr[MpBonus], end = _endExtra[6];
+                    if (bonus.StartsWith("#C") && bonus.Length >= 3) { colour = bonus.Substring(0, 3); bonus = bonus.Substring(3); }
+                    if (end.EndsWith("#W")) end = end.Substring(0, end.Length - 2);
+                    var words = new List<string>(bonus.Split(' '));
+                    words.AddRange(_endStr[ReducedBy].Split(' '));
+                    // the US font has no '%' glyph (drawGlyph falls on a button icon): "percent" instead (user's decision 2026-11-09)
+                    words.Add(pct);
+                    words.Add(end.Replace("%", "percent"));
+                    int rows;
+                    v.Append(colour + v.WrapRows(words.ToArray(), out rows) + "#W", rows);
+                }
             }
             if (_learned != null) v.Append(yellow + _learned + _endStr[Learned], 2);
         }
@@ -1788,7 +2048,10 @@ namespace DW1Remake.Game
         readonly List<Runner> _runners = new List<Runner>();
         public void AddRunner(Transform t, DigimonAnimator a, Vector3 fleeTo, int height, int radius = 0)
         {
-            if (a != null && a.HasSlot(0x24)) a.SetSlot(0x24);
+            // BTL_handleBattleIntro: run 0x24 at double speed (animFlag 4), entityLookAtLocation(flee) once; it is never turned again
+            if (a != null && a.HasSlot(0x24)) { a.SetSlot(0x24); a.DoubleSpeed = true; }
+            Vector3 d = fleeTo - t.position; d.y = 0f;
+            if (d.sqrMagnitude > 0.0001f) t.rotation = _face(d);
             _runners.Add(new Runner { T = t, A = a, To = fleeTo, Height = height, Radius = radius });
         }
 
@@ -1820,16 +2083,17 @@ namespace DW1Remake.Game
             foreach (var r in _runners)
             {
                 if (r.T == null || !r.T.gameObject.activeSelf) continue;
-                Vector3 d = r.To - r.T.position; d.y = 0f;
-                if (d.sqrMagnitude > 0.0001f) r.T.rotation = _face(d);
+                // straight on along the heading it was given (past its flee point if that is on the screen); a model's front is -Z
                 float step = r.A != null ? r.A.TakeForward() : 0f;
-                r.T.position += d.normalized * Mathf.Min(step, d.magnitude);
+                Vector3 fwd = -r.T.forward; fwd.y = 0f;
+                r.T.position += fwd.normalized * step;
                 if (cam != null && !OffScreen(cam, r.T.position, r.Radius, r.Height)) allOff = false;     // entityIsOffScreen(0x140, 0xF0)
             }
             return allOff;
         }
 
-        void RemoveRunners() { foreach (var r in _runners) if (r.T != null) r.T.gameObject.SetActive(false); _runners.Clear(); }
+        // BTL_handleBattleIntro: isOnMap = 0 and animFlag &= 0xFB
+        void RemoveRunners() { foreach (var r in _runners) { if (r.A != null) r.A.DoubleSpeed = false; if (r.T != null) r.T.gameObject.SetActive(false); } _runners.Clear(); }
 
         void AngerIcon(Camera cam)
         {

@@ -795,6 +795,10 @@ namespace DW1Remake.Game
             }
             for (int i = 0; i < 6; i++) g[i] = g[i] * bonus / 10;
             if (P.Tiredness == 100) for (int i = 0; i < 6; i++) if (g[i] > 0) g[i] = 1;
+            // TRN_award*TrainingGains: a gain of 1000 or more becomes 999, after the tiredness rule; only these (Offense and Defense training have no cap)
+            if (kind == 0 || kind == 2) g[0] = System.Math.Min(g[0], 999);
+            if (kind == 4 || kind == 5) g[1] = System.Math.Min(g[1], 999);
+            if (kind == 5) g[5] = System.Math.Min(g[5], 999);
             AdvanceTrainingTime(tired, 1, 1);
         }
 

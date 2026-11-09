@@ -87,7 +87,26 @@ namespace DW1Remake.Game
         // dev tool: a fight at once against an Agumon with the first fight's numbers (MAYO00: 400 HP, 300 MP, 30/30/30/50, 100 Bits, Spit Fire and Sonic Jab), the partner's FINISH gauge full
         void TestFight() { TestFight(1); }
 
-        // dev tool: the same with more Agumon at once; the extra ones join as in a scripted fight with several enemies (AddEnemy)
+        // dev tool: 10 more of every item in the Item Keeper's bank (ScriptState.Stored: one count per item number, saved with the game).
+        // The bank has a count for each of the 128 items, so everything fits; a count never goes past 99 (0x63, keeperMoveOne's limit).
+        void FillKeeperBank()
+        {
+            if ((_battle != null && _battle.Active) || _runner != null || _changing) { Say("Not now."); return; }
+            if (_itemCatalog == null) _itemCatalog = ItemCatalog.Load(_disc);
+            int filled = 0, full = 0;
+            foreach (var it in _itemCatalog)
+            {
+                if (string.IsNullOrEmpty(it.Name) || it.Id < 0 || it.Id >= _state.Stored.Length) continue;
+                int c = _state.Stored[it.Id];
+                if (c >= 0x63) { full++; continue; }
+                _state.Stored[it.Id] = (byte)Mathf.Min(0x63, c + 10);
+                filled++;
+            }
+            Debug.Log("[debug] Item Keeper bank: +10 of " + filled + " items" + (full > 0 ? ", " + full + " already at 99" : "") + " (of " + _itemCatalog.Count + ")");
+            Say(full > 0 ? "Item Keeper: +10 of " + filled + " items (" + full + " already at 99)." : "Item Keeper: +10 of every item (" + filled + ").");
+        }
+
+        // dev tool: the same with more Agumon at once;the extra ones join as in a scripted fight with several enemies (AddEnemy)
         void TestFight(int count)
         {
             if (_battle == null || _battle.Active || _runner != null || _player == null || _partner == null || _changing) { Say("Not now."); return; }
@@ -125,7 +144,10 @@ namespace DW1Remake.Game
         // dev tool: a fight against the Digimon of a map's record (its own numbers, techniques and chances, read from the map file), its finishing gauge FULL at the start.
         // The finisher exists only when the technique of its record's slot 3 is one of 0x3A-0x70 (Geremon of FACT09, record 3, has Party time; Psychemon of GOMI01 has none).
         // Extra records of the same map join as more enemies (count).
-        void TestFightRecord(string mapName, int record, int count = 1)
+        bool _condTough = true;
+        int _condHpBack = -1;
+
+        void TestFightRecord(string mapName, int record, int count = 1, bool fullGauge = true)
         {
             if (_battle == null || _battle.Active || _runner != null || _player == null || _partner == null || _changing) { Say("Not now."); return; }
             int mi = _mapNames.IndexOf(mapName);
@@ -161,6 +183,13 @@ namespace DW1Remake.Game
             _debugOpen = false;
             StartBattle(foes[0]);
             for (int k = 1; k < foes.Count; k++) _battle.AddEnemy(foes[k].T, foes[k].Anim, foes[k].Name, DigimonStatsCatalog.Get(_disc, foes[k].Data.Type), foes[k].Data);
+            if (!fullGauge)
+            {
+                // the condition fights: no finishers at the start (they would cut in), and the partner can last if asked
+                if (_condTough) { _condHpBack = _state.Stats[6]; _battle.Partner.MaxHp = 9999; _battle.Partner.Hp = 9999; _battle.Partner.ShownHp = 9999; }
+                Debug.Log("[testfight] " + foes[0].Name + " of " + mapName + " record " + record + ", HP " + _battle.Enemy.Hp);
+                return;
+            }
             _battle.Partner.Finish = _battle.Partner.FinishMax;
             foreach (var f in _battle.AllFightersPublic()) if (f.Finisher != null) f.Finish = f.FinishMax;
             Debug.Log("[testfight] " + foes[0].Name + " enemy finisher: " + (_battle.Enemy.Finisher != null ? _battle.Enemy.Finisher.Name : "none (its slot 3 is not a finishing move)"));
@@ -186,6 +215,12 @@ namespace DW1Remake.Game
 
         void HandleDebugAndSaveKeys()
         {
+            // a condition fight with the 9999 HP partner is over: its real HP comes back (the fight wrote the big number into the stats)
+            if (_condHpBack >= 0 && _battle != null && !_battle.Active)
+            {
+                _state.Stats[6] = (ushort)Mathf.Min(_condHpBack, _state.Stats[4]);
+                _condHpBack = -1;
+            }
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
 #if ENABLE_INPUT_SYSTEM
             var k = Keyboard.current; if (k == null) return;
@@ -218,6 +253,16 @@ namespace DW1Remake.Game
             if (GUILayout.Button("Test fight: Psychemon (GOMI01), finishing gauge full (Tremar, no finisher in the data)")) { TestFightRecord("GOMI01", 0); }
             if (GUILayout.Button("Test fight: Psychemon + two Geremon (Tremar hits the others too)")) { TestFightRecord("GOMI01", 0, 3); }
             if (GUILayout.Button("Test fight: Geremon of FACT09 (finisher Party time), gauge full")) { TestFightRecord("FACT09", 3); }
+            // condition test fights: one strong enemy per condition, picked from the map records by its technique chances x status chances and its HP
+            _condTough = GUILayout.Toggle(_condTough, "Condition fights: partner gets 9999 HP for the fight (ours, debug only)");
+            if (GUILayout.Button("Conditions: POISON - Kuwagamon of TRAI00 (9000 HP; Poison Claw 40%, Poison Powder 62%)")) { TestFightRecord("TRAI00", 2, 1, false); }
+            if (GUILayout.Button("Conditions: CONFUSION + stun - Airdramon of TWNA02 (4400 HP; Confused Storm 60%, Megalo Spark stun 23%)")) { TestFightRecord("TWNA02", 5, 1, false); }
+            if (GUILayout.Button("Conditions: STUN - IceDevimon of MGEN11 (4600 HP; Ice Statue 38%, Giga Freeze 10%)")) { TestFightRecord("MGEN11", 2, 1, false); }
+            if (GUILayout.Button("Conditions: FLAT - Giromon of FACT08A (5700 HP; Delete Program 50%, Reverse Prog 12%)")) { TestFightRecord("FACT08A", 0, 1, false); }
+            if (GUILayout.Button("Curling: Penguinmon (FRZL17, variable 0x7A = 0)")) { TestCurling(0); }
+            if (GUILayout.Button("Curling: MetalMamemon (FRZL17, variable 0x7A = 1)")) { TestCurling(1); }
+            if (GUILayout.Button("Arena: go to the File City Arena (ROOM13)")) { TestArena(); }
+            if (GUILayout.Button("Arena: start the Grade D Cup now (in ROOM13 / ROOM19 / BETL02)")) { TestTournament(0); }
             if (GUILayout.Button("Recruit Coelamon (flag 0xF9)")) { _state.SetFlag(0xF9, true); BuildNpcs(); }
             if (GUILayout.Button("Recruit EVERY Digimon (all recruit flags)")) { foreach (var f in RecruitFlags) _state.SetFlag(f, true); BuildNpcs(); Say("All recruit flags on."); }
             GUILayout.BeginHorizontal(); GUILayout.Label("Flag", GUILayout.Width(40)); _flagText = GUILayout.TextField(_flagText, GUILayout.Width(80));
@@ -235,6 +280,7 @@ namespace DW1Remake.Game
             if (GUILayout.Button("Learn every technique")) { for (int i = 0; i < 58; i++) _state.Techs[i] = true; }
             if (GUILayout.Button("Raise every Digimon (Chart page)")) { for (int i = 0; i < _state.Raised.Length; i++) _state.Raised[i] = true; }
             // getCardAmount reads the count (0-9) of each of the 66 cards; the old button only set the "seen" list, so the Card page stayed empty
+            if (GUILayout.Button("Items: put 10 of every item in the Item Keeper bank")) FillKeeperBank();
             if (GUILayout.Button("Recycle shop: stock every item (5 each)")) { for (int i = 0; i < _state.Recycle.Length; i++) _state.Recycle[i] = 5; Say("The recycle shop has 5 of everything."); }
             if (GUILayout.Button("Every card (1 of each of the 66)")) { for (int i = 0; i < 66; i++) { if (_state.CardCount[i] == 0) _state.CardCount[i] = 1; _state.Cards[i] = true; } Say("1 of every card."); }
             // unlockMedal: trigger 0x16C + medal (the Medals page shows 15)

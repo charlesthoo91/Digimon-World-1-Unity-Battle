@@ -72,6 +72,36 @@ namespace DW1Remake.Game
             float slotAcc = 0f;
             _trainSpot = spot;
             if (_trn == null) _trn = _disc.ReadFile("/TRN_REL.BIN");
+            // TRN_setupBrainsTraining / TRN_tickBrainsTraining: the gym (0x70) and Cherrymon's Teachings of the Forest (MIST05, 0x77) first walk the
+            // boy to his own spot (TRN_D_8008F358) and the partner walks (animation 2) instead of running. At MIST05 the partner faces Cherrymon (map
+            // Digimon 0), who faces it and plays 0x1E again whenever it ends; sound 0x12 every 60 frames, no clapping from the boy
+            bool brains = kind == 5 && t2 == null && (_mapId == 0x70 || _mapId == 0x77);
+            bool forest = brains && _mapId == 0x77;
+            Npc cherry = null;
+            if (forest) foreach (var n in _npcs) if (n.Record == 0 && n.T != null) cherry = n;
+            Vector3 boySpot = !brains ? _player.position : _mapId == 0x70 ? new Vector3(-0x5AC * Unit, _player.position.y, 0x61B * Unit)
+                : new Vector3(-0x564 * Unit, _player.position.y, 0x3C4 * Unit);
+            // every training, state 0: createCameraMovement(spot, 10) (the brains training: the boy's spot); at the award it goes back to the boy.
+            // Ours left the script camera where it was, and the end of the script took its old offset: the picture jumped (user 2026-11-07)
+            FreezeCamera();
+            StartCamMove(brains ? boySpot : spot, 10);
+            if (brains)
+            {
+                if (_anim != null && _anim.HasSlot(WalkSlot)) _anim.SetSlot(WalkSlot);
+                Vector2Int bt = TileOf(boySpot);
+                for (float limit = 8f; limit > 0f && TileOf(_player.position) != bt; limit -= Time.deltaTime)
+                {
+                    Face(_player, boySpot);
+                    Vector3 d = boySpot - _player.position; d.y = 0f;
+                    float st = _anim != null ? _anim.TakeForward() : WalkSpeed * Time.deltaTime;
+                    _player.position += d.normalized * Mathf.Min(st, d.magnitude);
+                    if (slots) TickSlotFrames(ref slotAcc);
+                    yield return null;
+                }
+                if (_anim != null) _anim.SetSlot(IdleSlot);
+                Face(_player, _partner.position);
+                boyFacing = _player.rotation;
+            }
             TrainRun run = BeginPieces(kind);      // storeMapObjectPosition: where the pieces it moves stand now
             if (t2 != null && t2[2] != NoStop)
             {
@@ -79,22 +109,35 @@ namespace DW1Remake.Game
                 while (first.MoveNext()) { if (slots) TickSlotFrames(ref slotAcc); yield return first.Current; }
                 PiecesFirstStop(run);
             }
-            var walk = WalkTo(spot, RunSlot);
+            var walk = WalkTo(spot, brains ? WalkSlot : RunSlot);
             while (walk.MoveNext()) { if (slots) TickSlotFrames(ref slotAcc); yield return walk.Current; }
             if (slots) _slot.Auto = true;            // TRN_startSlotSpin: the reels start by themselves once the partner is at its spot
             // TRN2: the facing the tick sets on arrival (rotation vy, or entityLookAtLocation the boy); GOMI02's MP training plays animation 0xC, started again whenever it ends (a loop)
             int slot = _mapId == 0xA5 && kind == 4 ? 0xC : TrainAnim(kind);
             if (t2 != null && t2[6] >= 0) _partner.rotation = Quaternion.Euler(0, t2[6] * 360f / 4096f, 0) * Quaternion.Euler(0, FacingOffset, 0);
             else if (t2 != null) Face(_partner, _player.position);
+            if (brains && cherry == null) Face(_partner, _player.position);      // the gym: the boy and the partner face each other
+            if (cherry != null)
+            {
+                Face(_partner, cherry.T.position);
+                Face(cherry.T, _partner.position);
+                if (cherry.Anim != null && cherry.Anim.HasSlot(0x1E)) cherry.Anim.SetSlot(0x1E, true);
+            }
             if (_partnerAnim != null && _partnerAnim.HasSlot(slot)) _partnerAnim.SetSlot(slot);
-            if (kind == 5 && _anim != null && _anim.HasSlot(9)) _anim.SetSlot(9);
+            if (kind == 5 && !forest && _anim != null && _anim.HasSlot(9)) _anim.SetSlot(9);
             PiecesArrive(run);
             // 1200 frames or Triangle; with the bonus try, until the slot machine has paid out. The pieces' routine runs once a game frame
             // and, for the first gym's Defense, ends the training only when its round is over
-            float pieceAcc = 0f;
+            float pieceAcc = 0f, forestAcc = 0f; int forestFrames = 0;
             for (float t = 0f; ; t += Time.deltaTime)
             {
                 Face(_player, _partner.position);
+                if (cherry != null)
+                {
+                    forestAcc += Time.deltaTime * 20f;
+                    while (forestAcc >= 1f) { forestAcc -= 1f; if (++forestFrames % 0x3C == 0 && _audio != null) _audio.Play(8, 0x12); }
+                    if (cherry.Anim != null && !cherry.Anim.Busy && cherry.Anim.HasSlot(0x1E)) cherry.Anim.SetSlot(0x1E, true);
+                }
                 if (slots) TickSlotFrames(ref slotAcc);
                 if (run != null && run.Show != null && !run.ShowDone)
                 {
@@ -112,6 +155,8 @@ namespace DW1Remake.Game
             if (_audio != null) _audio.Play(8, 10);
             if (_partnerAnim != null) _partnerAnim.SetSlot(0x12, true);
             if (_anim != null) _anim.SetSlot(IdleSlot);
+            StartCamMove(_player.position, 10);                                     // createCameraMovement(tamer, 10)
+            if (cherry != null && cherry.Anim != null) cherry.Anim.SetSlot(IdleSlot);      // startAnimation(NPC 0, 0)
             _care.Train(kind, _trainGain, _state.Bag[0x21] > 0, bonus);
             int[] order = { 4, 5, 0, 1, 2, 3 };
             Debug.Log("[training] kind " + kind + " bonus " + bonus + " gains " + string.Join("/", System.Array.ConvertAll(_trainGain, g => g.ToString())) + " | stats before " + string.Join("/", System.Array.ConvertAll(order, o => _state.Stats[o].ToString())));

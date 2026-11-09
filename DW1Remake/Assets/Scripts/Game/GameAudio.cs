@@ -110,9 +110,19 @@ namespace DW1Remake.Game
             if (type >= 0 && type < 180) Effect(100 + type, DigimonBank(type), 0, val);
         }
 
-        void Effect(int key, VabBank bank, int prog, int note)
+        /// <summary>playSound2 that keeps the voice it took, for thunkStopSoundMask later (curling's sliding stone). -1 = nothing played.</summary>
+        public int PlayVoice(int bank, int val)
         {
-            if (bank == null) return;
+            if (bank == 0 || bank == 1 || bank == 8) return Effect(bank, _banks[bank], val / 16, (val % 16) + 0x3C);
+            return -1;
+        }
+
+        /// <summary>thunkStopSoundMask: the voice PlayVoice gave stops.</summary>
+        public void StopVoice(int voice) { if (voice >= 0 && voice < _fx.Length && _fx[voice] != null) _fx[voice].Stop(); }
+
+        int Effect(int key, VabBank bank, int prog, int note)
+        {
+            if (bank == null) return -1;
             long id = (long)key << 32 | (long)(prog << 8 | note);
             AudioClip clip;
             if (!_clips.TryGetValue(id, out clip))
@@ -122,9 +132,11 @@ namespace DW1Remake.Game
                 if (clip != null) clip.SetData(pcm, 0);
                 _clips[id] = clip;
             }
-            if (clip == null) return;
+            if (clip == null) return -1;
+            int used = _nextFx;
             _fx[_nextFx].PlayOneShot(clip);
             _nextFx = (_nextFx + 1) % _fx.Length;
+            return used;
         }
 
         // handleMusicOverride: variable 245 chooses; 0 = by the hour

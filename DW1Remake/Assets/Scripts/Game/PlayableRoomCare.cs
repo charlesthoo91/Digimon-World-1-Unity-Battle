@@ -461,6 +461,7 @@ namespace DW1Remake.Game
             switch (n)
             {
                 case 0: Run(ToiletVisit(), false); break;
+                case 1: Run(Curling(), true); break;                    // KAR_start, tamer state 12 (KAR_tick), partner state 11 (PlayableRoomCurling)
                 case 2: Run(EvolveScene(_state.Vars[5]), true); break;
                 case 10: Run(EvolveScene(_state.Vars[0xFE]), true); break;
                 // callDigimonRoutine: 3 is partner state 8 (it comes to the boy first); 7 and 9 set partner state 12, which does nothing, and only
@@ -470,7 +471,7 @@ namespace DW1Remake.Game
                 case 4: Run(Rebirth(), true); break;
                 case 6: Run(EndingScene(false), true); break;           // tamerTickEnding (ENDI)
                 case 8: Run(MachinedramonSpawn(), true); break;         // tamerTickMachinedramonSpawn (EAB)
-                default: _syncBit = true; break;     // curling, training and the ending
+                default: _syncBit = true; break;     // training and the ending
             }
         }
 
@@ -796,7 +797,7 @@ namespace DW1Remake.Game
         void DrawStatusBars()
         {
             var art = _battle != null ? _battle.Art : null;
-            if (art == null || _partner == null || _setup != null && _setup.Active || Event.current.type != EventType.Repaint) return;
+            if (art == null || _partner == null || _setup != null && _setup.Active || Event.current.type != EventType.Repaint || _arenaOn) return;
             _statusAcc += Time.deltaTime;
             while (_statusAcc >= 0.05f) { _statusAcc -= 0.05f; _statusX = Mathf.Clamp(_statusX + (GameTimeRuns ? -50 : 50), 75, 240); }
             int x = _statusX, happy = _state.Happiness, disc = _state.Discipline;
@@ -829,7 +830,7 @@ namespace DW1Remake.Game
         void DrawClock()
         {
             var art = _battle != null ? _battle.Art : null;
-            if (art == null || _care == null || _partner == null || _setup != null && _setup.Active) { if (_clockPlate != null) _clockPlate.Remove(); return; }
+            if (art == null || _care == null || _partner == null || _setup != null && _setup.Active || _arenaOn) { if (_clockPlate != null) _clockPlate.Remove(); return; }
             if (Event.current.type != EventType.Repaint) return;
             _clockAcc += Time.deltaTime;
             while (_clockAcc >= 0.05f) { _clockAcc -= 0.05f; _clockX = Mathf.Clamp(_clockX + (GameTimeRuns ? 50 : -50), -220, -135); }

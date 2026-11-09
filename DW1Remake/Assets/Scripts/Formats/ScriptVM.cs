@@ -96,6 +96,7 @@ namespace DW1Remake.Formats
         public float PlayMinutes;                    // time played
         // names and numbers the game's text boxes insert (text codes 4-12)
         public string PlayerName = "A", PartnerName = "B";
+        public System.Func<int, string> TournamentNameOf;      // TOURNAMENT_NAMES (text code 0x12), read from the exe by the room
         public System.Func<int, string> SpeciesNameOf, ItemNameOf, TechNameOf;   // Digimon / item / technique names, read from the disc by the room
         public string CodeText(int code, int arg, int speaker = 255)
         {
@@ -110,6 +111,7 @@ namespace DW1Remake.Formats
                 case 0x10: return ShopVariable.ToString();                                                   // intToStringSJIS(SHOP_VARIABLE, 5, 1)
                 case 0x04: return Vars[arg].ToString();                                                       // intToStringSJIS(readPStat(arg), 3, 1): the variable's value (0x25 STORE_DATE fills the date ones)
                 case 0x0B: return GameDigits ? Game.ItemMenuView.Digits(Stats[14], 4) : Stats[14].ToString();   // intToStringSJIS(MERIT, 4, 0)
+                case 0x12: return TournamentNameOf != null ? TournamentNameOf(Vars[arg]) : "";                  // TOURNAMENT_NAMES[readPStat(arg)] (exe 0x801300E0)
                 default: return "";   // codes not understood yet are left out
             }
         }
@@ -219,6 +221,7 @@ namespace DW1Remake.Formats
         public float Y;                      // game units (0x7D: the height of the point)
         public int Anim;                     // 0x4E / 0x51-0x53: 0 walk, 1 run (scriptSetEntityWalking)
         public int Map = -1, Exit, Arrive = 255;   // map change (Arrive = script section to run on arrival, 255 = none)
+        public bool Custom;                  // the text goes into the box 0x26 set up (MAIN_D_80135000 == 2: showTextbox(0, 0xFF), no name)
     }
 
     /// <summary>
@@ -277,6 +280,7 @@ namespace DW1Remake.Formats
         readonly Stack<int[]> stack = new Stack<int[]>();
         byte[] d; int curId, p, steps;
         int speaker = 255;
+        int boxMode;   // MAIN_D_80135000: 2 after 0x26 (SET_TEXTBOX_SIZE), 1 after 0x10 (SET_SELECTION), 0 after 0x1B (SET_DIALOG_OWNER)
         int[] menuOffsets; List<string> menuOptions; int[] awaiting; int cancelAt = -1;
         /// <summary>Digimon slots the script switched on (command 0x47: Digimon type, slot in the map's Digimon list, flag).</summary>
         public readonly List<int[]> Spawns = new List<int[]>();
@@ -323,6 +327,13 @@ namespace DW1Remake.Formats
             }
             end = j;
             return sb.ToString().Trim('\n', ' ');
+        }
+
+        /// <summary>The text that starts at byte j of a script (after its 1A 00), as showTextbox reads it (the cup data of the arena scripts).</summary>
+        public static string TextAt(byte[] d, int j, ScriptState st, int speaker, bool colours = false)
+        {
+            int end;
+            return d != null && j >= 0 && j < d.Length ? Decode(d, j, st, speaker, out end, colours) : null;
         }
 
         /// <summary>Whether script 'scriptId' has a section with that number.</summary>
@@ -374,6 +385,7 @@ namespace DW1Remake.Formats
                     case 0xFE: case 0xFF: p = -1; return null;
                     case 0x10:
                     {
+                        boxMode = 1;
                         int n = d[p + 1]; menuOffsets = new int[n];
                         for (int i = 0; i < n; i++) menuOffsets[i] = U16(d, p + 2 + i * 2);
                         menuOptions = null; p += 2 + 2 * n; continue;
@@ -457,7 +469,9 @@ namespace DW1Remake.Formats
                         p = jumpTo >= 0 ? jumpTo : q;
                         continue;
                     }
-                    case 0x1B: speaker = d[p + 1]; p += 2; continue;
+                    case 0x1B: speaker = d[p + 1]; boxMode = 0; p += 2; continue;
+                    // SET_TEXTBOX_SIZE (scriptSetTextboxSize): origin id, columns, rows; a box of its own size in the middle of the screen
+                    case 0x26: { boxMode = 2; var a = new ScriptAction { Cmd = 0x26, Actor = d[p + 1], Target = d[p + 2], Frames = d[p + 3] }; p += 4; return a; }
                     case 0x1A:
                     {
                         int j;
@@ -472,7 +486,8 @@ namespace DW1Remake.Formats
                             awaiting = menuOffsets; menuOffsets = null; menuOptions = null; cancelAt = j + 2;
                             return new ScriptAction { Options = opts, Speaker = speaker, Selection = true };
                         }
-                        if (text.Length > 0) return new ScriptAction { Text = text, Speaker = speaker };
+                        // SHOW_TEXTBOX: with MAIN_D_80135000 == 2 the text goes into 0x26's box with no speaker (showTextbox(0, 0xFF))
+                        if (text.Length > 0) return boxMode == 2 ? new ScriptAction { Text = text, Speaker = 0xFF, Custom = true } : new ScriptAction { Text = text, Speaker = speaker };
                         continue;
                     }
                     case 0x74: if (st.OnSpawnItem != null) st.OnSpawnItem(d[p + 1], S16(d, p + 2), S16(d, p + 4)); p += 6; continue;
@@ -588,6 +603,11 @@ namespace DW1Remake.Formats
                     case 0x67: { var a = new ScriptAction { Cmd = op, Frames = U16(d, p + 2) }; p += 4; return a; }
                     case 0x4B:
                     {
+                        // Ours (user's request 2026-11-09): OGRE10 after the OGRE11 fight (script 136 section 6). Whamon says "I'm going straight to the
+                        // city. I'll give you a ride if you want.", then "Whamon joins the city." and 4B 87 00 FF sends you to map 135, the Freezeland
+                        // shore. Here the script goes on at offset 3656 instead: the same script's own ride to the city (section 81, "Going back to the
+                        // city"), which picks the city's dock map from the flags
+                        if (curId == 136 && p == 3532 && d[p + 1] == 0x87) { p = 3656; continue; }
                         var a = new ScriptAction { Map = d[p + 1], Exit = d[p + 2], Arrive = d[p + 3] };
                         p = -1; return a;
                     }

@@ -73,7 +73,8 @@ namespace DW1Remake.Game
                     if (k == 'W' || k == 'R') { _penX = 0; _cursor++; _penY += 12; _rowsShown++; _rowsDrawn++; return; }
                     continue;
                 }
-                if (c == '0') return;
+                // the US code stops its pen on the character '0' (it meant the end of the text): "reduced by 10%" / "20%" stopped at the 1 / 2.
+                // Ours (fix of glitch Q, user's request 2026-11-09): a '0' is drawn like any other glyph; the end of the text stops the pen
                 _glyphs.Add(new KeyValuePair<Vector3Int, char>(new Vector3Int(_penX, _penY, _colour), c));
                 _penX += Font != null ? Font.Measure(c.ToString()) : 8;
                 _cursor++;
@@ -91,18 +92,36 @@ namespace DW1Remake.Game
             if (pressed) { if (_wait != 0) _wait = 0; else _typing = true; }
         }
 
-        /// <summary>BTL_isEndBoxTextFinished. Ours: when the pen cannot go on (a '0' or the end of the text, as in the "MP Consumption Bonus"
-        /// line, which counts 4 rows and has 1) the text also counts as done once its wait is over, so the game's freeze (glitch Q) cannot happen.</summary>
+        /// <summary>BTL_isEndBoxTextFinished. Ours: once the pen reaches the end of the text the text also counts as done when its wait is over,
+        /// so a wrong row count (the US "MP Consumption Bonus" line counted 4 rows and had 1) cannot freeze the game (glitch Q).</summary>
         public bool TextFinished
         {
             get
             {
                 if (_wait != 0) return false;
                 if (_lineCount == _rowsDrawn) return true;
-                bool stuck = _cursor >= _text.Length || _text[_cursor] == '0';
-                return stuck;
+                return _cursor >= _text.Length;
             }
         }
+
+        /// <summary>Ours (fix of glitch Q, user's request 2026-11-09): the US "MP Consumption Bonus" text has no row break, so it ran off the
+        /// 156-wide text area. This splits plain words into rows that fit (glyph widths as DrawStep advances the pen), joined by '#R'.</summary>
+        public string WrapRows(string[] words, out int rows)
+        {
+            const int Width = 156;
+            var sb = new System.Text.StringBuilder(); int x = 0; rows = 1;
+            foreach (var w in words)
+            {
+                if (string.IsNullOrEmpty(w)) continue;
+                int ww = Measure(w), space = x > 0 ? Measure(" ") : 0;
+                if (x > 0 && x + space + ww > Width) { sb.Append("#R"); rows++; x = 0; space = 0; }
+                if (space > 0) sb.Append(' ');
+                sb.Append(w); x += space + ww;
+            }
+            return sb.ToString();
+        }
+
+        int Measure(string s) { int n = 0; foreach (char c in s) n += Font != null ? Font.Measure(c.ToString()) : 8; return n; }
 
         public void Draw(Action stats, Action bits, Action final)
         {

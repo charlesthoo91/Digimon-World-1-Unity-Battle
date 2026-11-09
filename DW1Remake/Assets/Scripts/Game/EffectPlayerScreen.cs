@@ -535,12 +535,24 @@ namespace DW1Remake.Game
 
         static readonly int[] QuadTris = { 0, 1, 2, 2, 1, 3 };
 
+        readonly Material[] _backMats = new Material[8];
+        Material BackMaterial(int attr, Material front)
+        {
+            var m = _backMats[attr & 7];
+            if (m == null) { m = new Material(front); m.renderQueue = front.renderQueue - 1; _backMats[attr & 7] = m; }
+            return m;
+        }
+
         void DrawPrims(Run r, Camera cam)
         {
             foreach (var p in r.Prims)
             {
                 Material mat = SpriteMaterial(p.Attr);
                 if (mat == null) continue;
+                // ordering place 0xFFE (BTL_renderScreenFade) is behind every other effect primitive: the PS1 draws it first. Unity sorts see-through
+                // meshes by their distance, and the full-screen quad's middle is near the camera, so it came last and wiped out
+                // DG Dimension's grid (0xFFD). Such primitives now go in a queue drawn before the other effects
+                if (p.Screen && p.Ot >= 0xFFE) mat = BackMaterial(p.Attr, mat);
                 if (p.Line)
                 {
                     Vector3 a = p.Screen ? Ps1ToWorld(cam, p.P[0], p.Ot) : ToUnity((int)p.P[0].x, (int)p.P[0].y, (int)p.P[0].z);
