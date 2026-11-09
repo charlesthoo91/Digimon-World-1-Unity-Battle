@@ -11,7 +11,7 @@ namespace DW1Remake.Game
     /// </summary>
     public sealed partial class PlayableRoom
     {
-        sealed class StaticModel { public Mesh Solid, Blend; public Material[] SolidMats, BlendMats; }
+        sealed class StaticModel { public Mesh Solid, Blend; public Material[] SolidMats, BlendMats; public int[] Packet, Corner; }   // per vertex: its TMD packet, its TMD vertex
         sealed class Door { public int Model = -1, Direction; public int[] Pos = new int[3], Rot = new int[3]; public Transform T, Copy; }
         sealed class PieceMove { public int Piece, Steps, X, Y, Dx, Dy; public bool Started; }
 
@@ -66,6 +66,7 @@ namespace DW1Remake.Game
         {
             var keys = new List<long>(); var firsts = new List<MmdModel.Face>();
             var verts = new List<Vector3>(); var uvs = new List<Vector2>(); var tris = new List<List<int>>();
+            var packet = new List<int>(); var corner = new List<int>();
             foreach (var f in part.Faces)
             {
                 long key = ((long)f.Tpage << 17) | ((long)f.Clut << 1) | (f.Abr >= 0 ? 1L : 0L);
@@ -77,10 +78,14 @@ namespace DW1Remake.Game
                     int v = f.V[i] * 3;
                     verts.Add(new Vector3(part.Verts[v], -part.Verts[v + 1], part.Verts[v + 2]) * MmdModel.Scale);
                     uvs.Add(uv(f, i));
+                    packet.Add(f.Prim); corner.Add(f.V[i]);
                 }
-                tris[k].Add(b); tris[k].Add(b + 2); tris[k].Add(b + 1);
+                // the PS1's corner order is Unity's front (as ArenaStage); a one-sided packet is not drawn from behind (OMOC08's toy boxes have
+                // the "?" faces outside and plain white ones inside, the same quads turned the other way), a two-sided one gets both windings
+                tris[k].Add(b); tris[k].Add(b + 1); tris[k].Add(b + 2);
+                if (f.TwoSided) { tris[k].Add(b); tris[k].Add(b + 2); tris[k].Add(b + 1); }
             }
-            var m = new StaticModel { Solid = new Mesh { name = "TMD", subMeshCount = keys.Count }, SolidMats = new Material[keys.Count] };
+            var m = new StaticModel { Solid = new Mesh { name = "TMD", subMeshCount = keys.Count }, SolidMats = new Material[keys.Count], Packet = packet.ToArray(), Corner = corner.ToArray() };
             m.Solid.SetVertices(verts); m.Solid.SetUVs(0, uvs);
             for (int k = 0; k < keys.Count; k++) m.Solid.SetTriangles(tris[k], k);
             m.Solid.RecalculateNormals(); m.Solid.RecalculateBounds();
@@ -90,6 +95,7 @@ namespace DW1Remake.Game
             {
                 bool s = firsts[k].Abr >= 0;
                 m.SolidMats[k] = MmdModel.MakeMaterial(tex(firsts[k], s ? 1 : 0));
+                if (m.SolidMats[k] != null) m.SolidMats[k].SetFloat("_Cull", (float)UnityEngine.Rendering.CullMode.Back);
                 owner.Add(m.SolidMats[k]);
                 if (s) semi.Add(k);
             }
@@ -103,6 +109,7 @@ namespace DW1Remake.Game
                 {
                     m.Blend.SetTriangles(tris[semi[i]], i);
                     m.BlendMats[i] = MmdModel.MakeBlendMaterial(tex(firsts[semi[i]], 2), firsts[semi[i]].Abr);
+                    if (m.BlendMats[i] != null) m.BlendMats[i].SetFloat("_Cull", (float)UnityEngine.Rendering.CullMode.Back);
                     owner.Add(m.BlendMats[i]);
                 }
                 m.Blend.RecalculateNormals(); m.Blend.RecalculateBounds();
@@ -115,16 +122,77 @@ namespace DW1Remake.Game
         {
             var go = new GameObject(name);
             go.transform.SetParent(parent, false);
-            go.AddComponent<MeshFilter>().sharedMesh = m.Solid;
+            go.AddComponent<MeshFilter>().sharedMesh = OtFlatCopy(m.Solid, m, go.transform);
             go.AddComponent<MeshRenderer>().sharedMaterials = m.SolidMats;
             if (m.Blend != null)
             {
                 var b = new GameObject(name + " blend");
                 b.transform.SetParent(go.transform, false);
-                b.AddComponent<MeshFilter>().sharedMesh = m.Blend;
+                b.AddComponent<MeshFilter>().sharedMesh = OtFlatCopy(m.Blend, m, b.transform);
                 b.AddComponent<MeshRenderer>().sharedMaterials = m.BlendMats;
             }
             return go.transform;
+        }
+
+        // ---- GsSortObject4J (drawObject): each packet goes into the ordering table as a whole, at the average depth of its corners (AVSZ3 / AVSZ4),
+        // so a map piece (renderMapOverlays: one depth per piece) is wholly in front of a door face or wholly behind it. Our depth test is per
+        // pixel, which let the painted pillars of OMOC05 cut steps into its slanted door faces. Before the main camera draws, every corner of a
+        // packet slides along its line of sight to the packet's average view depth: the picture on the screen is the same, the depth is flat.
+        sealed class OtFlat { public Transform T; public Mesh Mesh; public Vector3[] Src, Work; public int[][] Groups, Corners; }
+        readonly List<OtFlat> _otFlat = new List<OtFlat>();
+        bool _otHooked;
+
+        Mesh OtFlatCopy(Mesh shared, StaticModel m, Transform t)
+        {
+            if (m.Packet == null) return shared;
+            var mesh = Object.Instantiate(shared);
+            mesh.bounds = new Bounds(Vector3.zero, Vector3.one * 100000f);
+            _objAssets.Add(mesh);
+            var groups = new Dictionary<int, List<int>>(); var corners = new Dictionary<int, List<int>>();
+            for (int i = 0; i < m.Packet.Length; i++)
+            {
+                List<int> g, c;
+                if (!groups.TryGetValue(m.Packet[i], out g)) { groups[m.Packet[i]] = g = new List<int>(); corners[m.Packet[i]] = new List<int>(); }
+                g.Add(i);
+                c = corners[m.Packet[i]];
+                bool seen = false;
+                foreach (int k in c) if (m.Corner[k] == m.Corner[i]) { seen = true; break; }
+                if (!seen) c.Add(i);
+            }
+            var e = new OtFlat { T = t, Mesh = mesh, Src = shared.vertices, Groups = new int[groups.Count][], Corners = new int[groups.Count][] };
+            e.Work = new Vector3[e.Src.Length];
+            int n = 0;
+            foreach (var kv in groups) { e.Groups[n] = kv.Value.ToArray(); e.Corners[n] = corners[kv.Key].ToArray(); n++; }
+            _otFlat.Add(e);
+            if (!_otHooked) { _otHooked = true; UnityEngine.Rendering.RenderPipelineManager.beginCameraRendering += OtFlatten; }
+            return mesh;
+        }
+
+        void OtFlatten(UnityEngine.Rendering.ScriptableRenderContext ctx, Camera cam)
+        {
+            if (cam == null || cam != _cam) return;
+            Matrix4x4 view = cam.worldToCameraMatrix;
+            for (int k = _otFlat.Count - 1; k >= 0; k--)
+            {
+                var e = _otFlat[k];
+                if (e.T == null || e.Mesh == null) { _otFlat.RemoveAt(k); continue; }
+                if (!e.T.gameObject.activeInHierarchy) continue;
+                Matrix4x4 toView = view * e.T.localToWorldMatrix, back = toView.inverse;
+                for (int g = 0; g < e.Groups.Length; g++)
+                {
+                    float avg = 0f;
+                    foreach (int i in e.Corners[g]) avg += toView.MultiplyPoint3x4(e.Src[i]).z;
+                    avg /= e.Corners[g].Length;
+                    foreach (int i in e.Groups[g])
+                    {
+                        Vector3 v = toView.MultiplyPoint3x4(e.Src[i]);
+                        // only in front of the camera (view z is negative there); a corner behind it keeps its place
+                        if (v.z < -0.001f && avg < -0.001f) v *= avg / v.z;
+                        e.Work[i] = back.MultiplyPoint3x4(v);
+                    }
+                }
+                e.Mesh.vertices = e.Work;
+            }
         }
 
         // projectPosition: RotMatrix (X, Y, Z) then the translation, in game units

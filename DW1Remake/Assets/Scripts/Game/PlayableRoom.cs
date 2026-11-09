@@ -134,6 +134,7 @@ namespace DW1Remake.Game
 
         void OnDestroy()
         {
+            if (_otHooked) UnityEngine.Rendering.RenderPipelineManager.beginCameraRendering -= OtFlatten;
             if (_fs != null) _fs.Dispose();
         }
 

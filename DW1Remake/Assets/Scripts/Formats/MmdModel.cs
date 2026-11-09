@@ -27,6 +27,7 @@ namespace DW1Remake.Formats
             public int[] PrimN;              // the primitive's first three normal indices (lit packets), else null
             public int[] PrimV;              // the primitive's corner vertices in TMD order (3 or 4)
             public int Clut, Tpage;          // the packet's raw CLUT and texture page words (where in video memory its picture is)
+            public bool TwoSided;            // FCE (packet flag bit 1): drawn from both sides; without it GsSortObject drops the face seen from behind
         }
 
         public sealed class Part
@@ -99,7 +100,7 @@ namespace DW1Remake.Formats
                     for (int ti = 0; ti < tris.Length; ti++)
                     {
                         var t = tris[ti];
-                        var f = new Face { Row = row, Abr = (mode & 2) != 0 ? (U16(d, b + 6) >> 5) & 3 : -1, Prim = n, Quad = quad, Second = ti == 1, PrimN = pn, PrimV = pv, Clut = U16(d, b + 2), Tpage = U16(d, b + 6) };
+                        var f = new Face { Row = row, Abr = (mode & 2) != 0 ? (U16(d, b + 6) >> 5) & 3 : -1, Prim = n, Quad = quad, Second = ti == 1, PrimN = pn, PrimV = pv, Clut = U16(d, b + 2), Tpage = U16(d, b + 6), TwoSided = (d[b - 2] & 2) != 0 };
                         for (int k = 0; k < 3; k++) { f.V[k] = vi[t[k]]; f.U[k] = u[t[k]]; f.T[k] = v[t[k]]; }
                         part.Faces.Add(f);
                     }
