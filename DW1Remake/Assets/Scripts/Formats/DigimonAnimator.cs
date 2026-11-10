@@ -33,6 +33,10 @@ namespace DW1Remake.Formats
         public void ReleaseLoop() { if (_sim != null) _sim.ReleaseLoop(); }
         public bool PlaysOnce { get { return _once; } }      // the animation was started to play once (SetSlot(slot, true))
         public bool Busy { get { return _once && !_held && _sim != null && !_sim.Endless; } }   // an endless loop (lying asleep) never blocks the next animation
+        /// <summary>animFlag bit 0: a play-once animation has not reached its end yet (an endless loop counts as still running).</summary>
+        public bool Running { get { return _sim != null && (!_once || !_held); } }
+        /// <summary>anim.loopCount = 1: the loop the animation is in ends after this pass.</summary>
+        public void LoopOnce() { if (_sim != null) _sim.LoopOnce(); }
 
         /// <summary>Scripted animation: starts now, or right after the current play-once animation ends.</summary>
         public void QueueSlot(int slot, bool once)

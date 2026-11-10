@@ -156,6 +156,7 @@ namespace DW1Remake.Game
             int age = h(35);
             para.TrainBoostFlag = h(36); para.TrainBoostValue = h(37); para.TrainBoostTimer = h(38);
             para.CareMistakes = h(39); para.Battles = h(40); para.EvoTimer = h(41);
+            para.FishCaught = h(45);
             // upgrade counters HP, MP, Off, (the bugged Brains one), Def, Speed, Brains
             para.Upgrades[0] = h(49); para.Upgrades[1] = h(50); para.Upgrades[2] = h(51); para.Upgrades[3] = h(53); para.Upgrades[4] = h(54); para.Upgrades[5] = h(55);
             para.SukaHp = h(57); para.SukaMp = h(58); para.SukaOff = h(59); para.SukaDef = h(60); para.SukaSpeed = h(61); para.SukaBrain = h(62);

@@ -466,7 +466,7 @@ namespace DW1Remake.Game
                 case 10: Run(EvolveScene(_state.Vars[0xFE]), true); break;
                 // callDigimonRoutine: 3 is partner state 8 (it comes to the boy first); 7 and 9 set partner state 12, which does nothing, and only
                 // stop a walk or run (animation 2-4 -> 0): a partner that fell in the fight stays down (user's PS1 clip 2026-11-05)
-                case 3: Run(LifeLost(true), true); break;
+                case 3: FishDeinit(); Run(LifeLost(true), true); break;     // partnerTickDying: deinitializeFishing first
                 case 7: case 9: Run(LifeLost(false), true); break;
                 case 4: Run(Rebirth(), true); break;
                 case 6: Run(EndingScene(false), true); break;           // tamerTickEnding (ENDI)

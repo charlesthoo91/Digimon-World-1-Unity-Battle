@@ -57,7 +57,17 @@ namespace DW1Remake.Game
 
         public bool Active { get { return _mode != Mode.None; } }
 
-        public void OpenMain() { _mode = Mode.Main; _back = Mode.None; _sel = 0; if (Tri != null) { Tri.CloseNow(Tri.Box); Tri.Selection = 1; } }
+        public System.Func<int> FishingAvail;           // getFishingAvailability: 0 none, 1 greyed, 2 usable (the eighth option)
+        public System.Action OnFish;                     // the Fishing option: initializeFishing, tamer state 11
+        int _fishing;
+
+        // addGameMenu: on a fishing map the cursor starts on Fishing (MENU_OPTIONS[0].unknown = 7), else on Item
+        public void OpenMain()
+        {
+            _mode = Mode.Main; _back = Mode.None; _sel = 0;
+            _fishing = FishingAvail != null ? FishingAvail() : 0;
+            if (Tri != null) { Tri.CloseNow(Tri.Box); Tri.Selection = _fishing != 0 ? 7 : 1; }
+        }
         public void OpenBag() { _mode = Mode.Bag; _back = Mode.None; _sel = 0; _msg = ""; _pick = null; }
 
         // script built-in 0 (openDiscardItem, item menu type 5): the bag opens to choose one item; Cross gives its number, back gives -1
@@ -158,7 +168,7 @@ namespace DW1Remake.Game
         void TickTri(int step, int side, bool action, bool cancel)
         {
             var o = BoyOrigin != null ? BoyOrigin() : new RectInt(-5, -5, 10, 10);
-            if (!Tri.Showing) Tri.Open(o, CanSleep == null || CanSleep(), Tri.Selection);
+            if (!Tri.Showing) Tri.Open(o, CanSleep == null || CanSleep(), Tri.Selection, _fishing);
             Tri.Year = Year; Tri.Day = DayOfYear;
             Tri.Move(step, side);
             if (!Tri.Ready) return;
@@ -177,6 +187,7 @@ namespace DW1Remake.Game
                     case 4: _mode = Mode.None; OnCommand(15); break;
                     case 5: _mode = Mode.None; OnCommand(4); break;
                     case 6: _mode = Mode.None; OnCommand(3); break;
+                    case 7: _mode = Mode.None; if (OnFish != null) OnFish(); break;      // setCameraFollowPlayer, initializeFishing, tamerSetState(0xB)
                 }
                 return;
             }

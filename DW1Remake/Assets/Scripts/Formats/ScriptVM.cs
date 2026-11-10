@@ -22,6 +22,7 @@ namespace DW1Remake.Formats
         public int Lifetime;                                      // hours left to live
         public int TrainBoostFlag, TrainBoostValue, TrainBoostTimer;
         public int CareMistakes, Battles, EvoTimer;               // EvoTimer = hours since the last evolution
+        public int FishCaught;                                    // PARTNER_PARA.fishCaught (FISH_tickRod: +1 per catch; medal 9 at 100)
         public int SukaHp, SukaMp, SukaOff, SukaDef, SukaSpeed, SukaBrain;   // the stats before turning into Sukamon
         public int ItemScoldFlag, EvolutionTarget = -1, ImmortalHour = -1, RaisedCount = 1, CurrentPoop;
         public bool NanimonTrigger, HasImmortalHour, IsNaturalDeath;

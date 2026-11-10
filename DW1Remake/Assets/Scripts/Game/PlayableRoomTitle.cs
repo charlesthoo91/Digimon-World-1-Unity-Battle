@@ -478,27 +478,31 @@ namespace DW1Remake.Game
             while (true)
             {
                 var s = new SysScreen();
-                // the game's letters are about 11 pixels wide: the names start at 0x1C and ON / OFF at 0xD8, in a box 0xF0 wide
-                s.Text("DIGITAL CLOCK", 0x1C, 0x37); s.Text(ModSettings.DigitalClock ? "ON" : "OFF", 0xD8, 0x37);
-                s.Text("ONLINE BATTLE", 0x1C, 0x37 + 12); s.Text(ModSettings.OnlineBattle ? "ON" : "OFF", 0xD8, 0x37 + 12);
-                s.Text("SMOOTH 60 FPS", 0x1C, 0x37 + 24); s.Text(ModSettings.Smooth60 ? "ON" : "OFF", 0xD8, 0x37 + 24);
-                s.Text("EVOLUTION GUIDE", 0x1C, 0x37 + 36); s.Text(ModSettings.EvolutionGuide ? "ON" : "OFF", 0xD8, 0x37 + 36);
-                s.Text("RECRUIT TAB", 0x1C, 0x37 + 48); s.Text(ModSettings.RecruitTab ? "ON" : "OFF", 0xD8, 0x37 + 48);
-                s.Text("CONTROLS", 0x1C, 0x37 + 60);
-                s.Text("EXPORT SAVE", 0x1C, 0x37 + 72);
-                s.Text("IMPORT SAVE", 0x1C, 0x37 + 84);
-                s.Text("BACK", 0x1C, 0x37 + 96);
-                s.Box(0x12, 0x32, 0xF0, 0x2E + 72);
-                s.Cursor(System.BitConverter.ToInt16(exe, h + 8) - (0x52 - 0x1C), System.BitConverter.ToInt16(exe, h + 10), 0xE6,
-                         System.BitConverter.ToInt16(exe, h + 14), System.BitConverter.ToInt16(exe, h + 6), 9);
+                // the game's letters are about 11 pixels wide: the names start at 0x1C and ON / OFF at 0xF4, in a box 0x110 wide (FISHING INDICATOR ran into 0xD8)
+                s.Text("DIGITAL CLOCK", 0x1C, 0x37); s.Text(ModSettings.DigitalClock ? "ON" : "OFF", 0xF4, 0x37);
+                s.Text("ONLINE BATTLE", 0x1C, 0x37 + 12); s.Text(ModSettings.OnlineBattle ? "ON" : "OFF", 0xF4, 0x37 + 12);
+                s.Text("SMOOTH 60 FPS", 0x1C, 0x37 + 24); s.Text(ModSettings.Smooth60 ? "ON" : "OFF", 0xF4, 0x37 + 24);
+                s.Text("EVOLUTION GUIDE", 0x1C, 0x37 + 36); s.Text(ModSettings.EvolutionGuide ? "ON" : "OFF", 0xF4, 0x37 + 36);
+                s.Text("RECRUIT TAB", 0x1C, 0x37 + 48); s.Text(ModSettings.RecruitTab ? "ON" : "OFF", 0xF4, 0x37 + 48);
+                s.Text("TENSION VALUE", 0x1C, 0x37 + 60); s.Text(ModSettings.TensionValue ? "ON" : "OFF", 0xF4, 0x37 + 60);
+                s.Text("FISHING INDICATOR", 0x1C, 0x37 + 72); s.Text(ModSettings.FishingIndicator ? "ON" : "OFF", 0xF4, 0x37 + 72);
+                s.Text("CONTROLS", 0x1C, 0x37 + 84);
+                s.Text("EXPORT SAVE", 0x1C, 0x37 + 96);
+                s.Text("IMPORT SAVE", 0x1C, 0x37 + 108);
+                s.Text("BACK", 0x1C, 0x37 + 120);
+                s.Box(0x12, 0x32, 0x110, 0x2E + 96);
+                s.Cursor(System.BitConverter.ToInt16(exe, h + 8) - (0x52 - 0x1C), System.BitConverter.ToInt16(exe, h + 10), 0x106,
+                         System.BitConverter.ToInt16(exe, h + 14), System.BitConverter.ToInt16(exe, h + 6), 11);
                 s.Pos = pos;
                 int answer = 0;
                 yield return Ask(s, a => answer = a);
                 pos = s.Pos;
-                if (answer != 1 || pos == 8) yield break;
-                if (pos == 5) yield return ControlsPage();
-                else if (pos == 6) yield return ExportSave();
-                else if (pos == 7) yield return ImportSave();
+                if (answer != 1 || pos == 10) yield break;
+                if (pos == 5) ModSettings.TensionValue = !ModSettings.TensionValue;
+                else if (pos == 6) ModSettings.FishingIndicator = !ModSettings.FishingIndicator;
+                else if (pos == 7) yield return ControlsPage();
+                else if (pos == 8) yield return ExportSave();
+                else if (pos == 9) yield return ImportSave();
                 else if (pos == 0) ModSettings.DigitalClock = !ModSettings.DigitalClock;
                 else if (pos == 1) ModSettings.OnlineBattle = !ModSettings.OnlineBattle;
                 else if (pos == 2) ModSettings.Smooth60 = !ModSettings.Smooth60;

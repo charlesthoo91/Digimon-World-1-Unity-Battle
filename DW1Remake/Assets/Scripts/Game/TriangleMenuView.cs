@@ -58,13 +58,15 @@ namespace DW1Remake.Game
         public bool Showing { get { return Box.State != 0; } }
 
         /// <summary>addGameMenu + createMenuBox(0, -0x42, -0x50, 0x84, 0x6E, 2): grows out of the boy's square.</summary>
-        public void Open(RectInt boy, bool sleepy, int selection = 1)
+        /// <param name="fishing">HAS_FISHING_ROD (getFishingAvailability): 0 seven options; 1 the eighth, Fishing, greyed; 2 Fishing usable. With it the box is 0x95 high</param>
+        public void Open(RectInt boy, bool sleepy, int selection = 1, int fishing = 0)
         {
-            Count = 7; Selection = selection < 1 || selection >= Count ? 1 : selection;
+            Count = fishing != 0 ? 8 : 7; Selection = selection < 1 || selection >= Count ? 1 : selection;
             for (int i = 0; i < 8; i++) Disabled[i] = false;
             Disabled[6] = !sleepy;
+            Disabled[7] = fishing == 1;
             CloseNow(Box);
-            Open(Box, new RectInt(-0x42, -0x50, 0x84, 0x6E), boy, 0x20);
+            Open(Box, new RectInt(-0x42, -0x50, 0x84, fishing != 0 ? 0x95 : 0x6E), boy, 0x20);
             Box.Color = 1;          // createAnimatedUIBox(id, 1, features, ...)
         }
 

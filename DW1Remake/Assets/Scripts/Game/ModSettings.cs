@@ -25,6 +25,12 @@ namespace DW1Remake.Game
         /// <summary>A fifth Player menu tab ("Rec.") lists who has joined File City, the points each brings and the prosperity (RecruitView).</summary>
         public static bool RecruitTab { get { return Get("RecruitTab"); } set { Set("RecruitTab", value); } }
 
+        /// <summary>A plate under fishing's tension gauge with its value, 0% (the hook comes out) to 100% (the line snaps); the original shows only the bars.</summary>
+        public static bool TensionValue { get { return Get("TensionValue"); } set { Set("TensionValue", value); } }
+
+        /// <summary>A "PRESS X" plate over the float while a bite can be struck (FISH_tryStrike would hook it); the original gives no sign but the float.</summary>
+        public static bool FishingIndicator { get { return Get("FishingIndicator"); } set { Set("FishingIndicator", value); } }
+
         // ---- controls (MODS > CONTROLS; Pad, TouchPadView). These change only how the pad is pressed, not the game, so they start usable:
         // a player with only a touch screen or only a controller must be able to reach this page.
 

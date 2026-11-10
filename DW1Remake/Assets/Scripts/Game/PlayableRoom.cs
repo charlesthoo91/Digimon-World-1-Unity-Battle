@@ -49,7 +49,7 @@ namespace DW1Remake.Game
         public int WalkSlot = 2;
         const int RunSlot = 4, PlayerRunSlot = 3;
         public float WindowHeightPx = 240f;    // how much of the painted map is visible vertically
-        public float FadeSeconds = 0.25f;      // screen fade when changing map
+        const float FadeSeconds = 1f;          // screen fade when changing map: fadeToBlack(20) / fadeFromBlack(20), 20 game frames (tamerTickChangeMap, scriptTickChangeMap)
 
         [Header("HD-2D look (tick off anything you don't like)")]
         public bool Hd2D = true;               // master switch for the look below
@@ -273,6 +273,8 @@ namespace DW1Remake.Game
             _menus.InBattle = () => _battle != null && _battle.Active;
             _menus.ThrowBusy = () => _battle != null && _battle.ThrowBusy;
             _menus.CanSleep = () => (_state.Para.Condition & PartnerCare.Sleepy) != 0;
+            _menus.FishingAvail = FishAvailability;      // addGameMenu: the eighth option on the fishing maps (PlayableRoomFishing)
+            _menus.OnFish = FishStart;
             _care.SetClock((int)StartHour, 0);
             _clock = _care.ClockHours;
             _care.InitPartner(PartnerType);
@@ -1056,6 +1058,7 @@ namespace DW1Remake.Game
         // moves the running script to its next text box, menu or map change
         void AdvanceScript()
         {
+            if (_scriptFadeOut) return;      // held on its 4B until the map changes
             while (_runner != null)
             {
                 var a = _runner.Next();
@@ -1072,7 +1075,8 @@ namespace DW1Remake.Game
                 if (a.Cmd >= 0) { if (ExecCmd(a)) return; continue; }
                 if (a.Text != null) { _line = a.Text; _lineCustom = a.Custom; _speaker = a.Speaker; SetDialogueOwner(a.Speaker); _choiceOpts = null; _scriptAny = true; return; }
                 if (a.Options != null) { if (a.Selection) { _speaker = a.Speaker; SetDialogueOwner(a.Speaker); _line = null; } _lineCustom = false; _choiceOpts = a.Options; _choiceSel = 0; _scriptAny = true; return; }
-                if (a.Map >= 0 && DoChangeMap(a)) { _scriptAny = true; _runner = null; _line = null; _choiceOpts = null; _talkingTo = null; return; }
+                // scriptTickChangeMap: the script stays on this command (its text box, glides and animations go on) until the fade has gone black
+                if (a.Map >= 0 && DoChangeMap(a)) { _scriptAny = true; return; }
             }
         }
 
@@ -1082,11 +1086,24 @@ namespace DW1Remake.Game
             string next = MapCatalog.PathFor(_mapNames, a.Map);
             if (!_disc.Exists(next) || !_disc.Exists(next.Substring(0, next.Length - 4) + ".TFS")) return false;
             Debug.Log("Script: " + _mapNames[_mapId] + " -> " + _mapNames[a.Map] + " exit " + a.Exit);
+            _prevExit = _curExit;                   // scriptTickChangeMap: PREVIOUS_EXIT = CURRENT_EXIT
+            _arrive = a.Arrive;
+            if (instant) { ScriptMapChangeEnd(); StartCoroutine(ChangeMap(next, a.Exit, true)); }
+            else { _scriptFadeOut = true; StartCoroutine(ChangeMap(next, a.Exit, false, true)); }
+            return true;
+        }
+
+        // scriptTickChangeMap 0 -> 1: fadeToBlack(20) while the script waits on 4B; nothing it set up ends until the picture is black (Seadramon's
+        // ride at MAYO06: the three glide on under the fade; ending the scene first put Seadramon back in its upright idle pose, user's clip 2026-11-10)
+        bool _scriptFadeOut;
+
+        // changeMap: the script is gone with the map (longjmp 3)
+        void ScriptMapChangeEnd()
+        {
+            _scriptFadeOut = false;
             EndCutscene();
             _state.Vars[0] = _state.Var0Reset;      // the map change (longjmp 3): writePStat(0, MAIN_D_80134FE7)
-            _prevExit = _curExit;                   // scriptTickChangeMap: PREVIOUS_EXIT = CURRENT_EXIT
-            _arrive = a.Arrive; StartCoroutine(ChangeMap(next, a.Exit, instant));
-            return true;
+            _runner = null; _line = null; _choiceOpts = null; _talkingTo = null;
         }
 
         // handleFleeing: the arrival point of CURRENT_EXIT plus (0, 0, -3000) turned by the exit's rotation + 0x800 (RotMatrix about y), as a Unity position
@@ -2116,6 +2133,7 @@ namespace DW1Remake.Game
             _calibrated = false; _camOffsetPx = Vector2.zero;
             _armed = false;     // exits only work after you have stepped off the arrival spot
             _featherShown = false;
+            FishCheckMap();     // checkFishingMap: fishing on maps 6 and 8 (PlayableRoomFishing)
         }
 
         // ------------------------------------------------------------------ foreground layers
@@ -2511,6 +2529,7 @@ namespace DW1Remake.Game
             {
                 if (!AutoClock || _care == null || _changing || _intro || _runner != null || _partner == null || _pFrozen) return false;
                 if (_setup != null && _setup.Active) return false;
+                if (FishIsFishing) return false;      // tickGameClock: no time passes while the boy fishes (isFishing)
                 return (_menus == null || !_menus.Active) && (_battle == null || !_battle.Active) && !(_onlineOn && !_onlineMatch);
             }
         }
@@ -2639,6 +2658,9 @@ namespace DW1Remake.Game
             }
             UpdateNpcs();
             TickActors();
+            // the fish swim on the fishing maps whatever the boy does (object 0x3001); while he fishes (tamer state 11) FISH_tickRod has him
+            FishUpdate();
+            if (_fishTamer) return;
             if (_runner != null && !_pBusy && !SetupWaitOnly() && _partnerAnim != null && _partner != null && !_movers.ContainsKey(_partner) && !_partnerAnim.Busy
                 && (_partnerAnim.Slot == WalkSlot || _partnerAnim.Slot == RunSlot)) _partnerAnim.SetSlot(IdleSlot);    // no running on the spot during a talk
             if (_pBusy && _runner == null) return;
@@ -2654,6 +2676,8 @@ namespace DW1Remake.Game
             if (_saveMachineOn || _sys != null || _routineOn) return;      // the save machine / sleep menu / a built-in routine reads the buttons itself
             if (_runner != null)
             {
+                if (_scriptFadeOut) return;      // scriptTickChangeMap: the picture fades, the buttons do nothing
+
                 if (_wait > 0f || _waitAll)
                 {
                     if (SetupWaitOnly())
@@ -2981,7 +3005,7 @@ namespace DW1Remake.Game
                 string next = MapCatalog.PathFor(_mapNames, h[0]);
                 if (!_disc.Exists(next) || !_disc.Exists(next.Substring(0, next.Length - 4) + ".TFS")) continue;
                 Debug.Log("Door " + trigger + " in " + _mapNames[_mapId] + " -> " + _mapNames[h[0]] + " exit " + h[1] + (hits.Count > 1 ? "  (script has " + hits.Count + " possible targets, using the first)" : ""));
-                StartCoroutine(ChangeMap(next, h[1]));
+                StartCoroutine(ChangeMap(next, h[1], false, false, true));
                 return;
             }
             Say("Trigger " + trigger + " in " + _mapNames[_mapId] + " is a script event (no door found). Not supported yet.");
@@ -3004,17 +3028,26 @@ namespace DW1Remake.Game
                 return;
             }
             _prevExit = exitIndex;      // checkMapInteraction: PREVIOUS_EXIT = trigger - 110
-            StartCoroutine(ChangeMap(next, w.TargetExit));
+            StartCoroutine(ChangeMap(next, w.TargetExit, false, false, true));
         }
 
-        IEnumerator ChangeMap(string path, int exit, bool instant = false)
+        /// <param name="script">a script's 4B (scriptTickChangeMap): the world and the script's scene go on under the fade; the scene ends once it is black</param>
+        /// <param name="walk">an exit walked into (tamerTickChangeMap): startAnimationTamer(2) for the fade</param>
+        IEnumerator ChangeMap(string path, int exit, bool instant = false, bool script = false, bool walk = false)
         {
+            if (script)
+            {
+                // the room keeps ticking (glides, animations, map Digimon) while the picture goes black
+                for (float t = _fade; t < 1f; t += Time.deltaTime / Mathf.Max(0.01f, FadeSeconds)) { _fade = t; yield return null; }
+                ScriptMapChangeEnd();
+            }
             _changing = true;
-            if (_anim != null) _anim.SetSlot(IdleSlot);
+            if (_anim != null && !script) _anim.SetSlot(walk ? WalkSlot : IdleSlot);
             // instant: under the life-lost scene's full-screen black (MURD_renderFullscreenFade 0xFF), which changes map with no fade of its own
             // a fade already under way (Run's fadeToBlack) goes on from where it is
             if (!instant) for (float t = _fade; t < 1f; t += Time.deltaTime / Mathf.Max(0.01f, FadeSeconds)) { _fade = t; yield return null; }
             _fade = instant ? 0f : 1f;
+            if (_anim != null && walk) _anim.SetSlot(IdleSlot);      // changeMap: initializeTamer puts him back in his idle
             int fromMap = _mapId;
             try { LoadMap(path, exit); NotePreviousMap(fromMap, _mapId, exit); }
             catch (Exception e) { _error = e.Message; Debug.LogException(e); }
@@ -3187,6 +3220,9 @@ namespace DW1Remake.Game
                 _camBack = Mathf.Min(1f, _camBack + Time.deltaTime);
                 focus = Vector3.Lerp(_battleFocus, focus, _camBack); extra = Vector2.zero;
             }
+            // fishing moves the picture itself (FISH_scrollCameraTo)
+            Vector2 fishPx;
+            if (!(_battle != null && _battle.Active) && FishCameraPixel(out fishPx)) { focus = _player.position + Vector3.up * 1f; extra = fishPx - MapPixel(focus); }
 
             if (!_calibrated)
             {
@@ -3207,7 +3243,7 @@ namespace DW1Remake.Game
             Vector2 e2;
             ApplyScroll(_shiftSign, out e2, focus, extra);
             // updateDrawingOffsets: at a map edge the picture stops while the boy walks on, so an offset the camera was left with shrinks there (never grows)
-            if (!_camOn && extra != Vector2.zero && !(_battle != null && _battle.Active))
+            if (!_camOn && !_fishCamOn && extra != Vector2.zero && !(_battle != null && _battle.Active))
             {
                 Vector2 me = MapPixel(_player.position + Vector3.up), vis = _scrollPx - me;
                 if (Mathf.Sign(vis.x) == Mathf.Sign(_camOffsetPx.x) && Mathf.Abs(vis.x) < Mathf.Abs(_camOffsetPx.x)) _camOffsetPx.x = vis.x;
@@ -3220,6 +3256,7 @@ namespace DW1Remake.Game
             DrawGroundItems();
             if (_healFx != null) _healFx.Update(Time.deltaTime, _battle != null ? _battle.Effects : null, _cam);
             EvoCameraLate();
+            FishDrawWorld();
         }
 
         DialogueBox _dlg; string _dlgKey;
@@ -3352,6 +3389,7 @@ namespace DW1Remake.Game
             DrawWorldItems();
             DrawTraining();
             DrawCurling();
+            DrawFishing();
             DrawTournament();
             DrawDebugMenu();        // last, so nothing covers it
         }
