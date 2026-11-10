@@ -694,6 +694,103 @@ namespace DW1Remake.Game
             AdvanceScript();
         }
 
+        // ------------------------------------------------------------------ 0x09 Giromon's jukebox
+
+        // BGM_TRACK_NAMES (exe 0x8012FEC8, 63 pointers) and the (font, track) of each song (exe 0x801303B8, 63 x 2 bytes)
+        const uint BgmTrackNames = 0x8012FEC8, BgmTrackMusic = 0x801303B8;
+
+        string BgmTrackName(int n)
+        {
+            if (n < 0 || n >= 63) return "";
+            return Exe(System.BitConverter.ToUInt32(ExeBytes, ExeAt(BgmTrackNames) + 4 * n));
+        }
+
+        // ours: breaks each line at spaces so that it fits 'width' PS1 pixels of the game's font
+        static string WrapLine(string text, int width)
+        {
+            var font = Battle.StatFont;
+            if (font == null || text == null) return text;
+            var outLines = new List<string>();
+            foreach (var line in text.Split('\n'))
+            {
+                string cur = "";
+                foreach (var word in line.Split(' '))
+                {
+                    string next = cur.Length == 0 ? word : cur + " " + word;
+                    if (cur.Length > 0 && font.Measure(next) > width) { outLines.Add(cur); cur = word; }
+                    else cur = next;
+                }
+                outLines.Add(cur);
+            }
+            return string.Join("\n", outLines.ToArray());
+        }
+
+        // openJukebox (states 0-4) with jukeboxFillTitleList, createJukeboxMenu and tickJukeboxMenu (shop/script_menu.c). Variable 249 = the song
+        // chosen, 254 = Giromon. Texts DG.SCN 0 section 0x4D6, entries 0-3.
+        IEnumerator Jukebox()
+        {
+            _routineOn = true;
+            byte[] exe = ExeBytes;
+            int owner = _state.Vars[0xFE], music = ExeAt(BgmTrackMusic);
+            // jukeboxFillTitleList: every song, the last one (0x3E, Last Battle Theme) only with trigger 50 on; variable 249 = the row of the
+            // music playing now, or 0xFF and the music stops
+            var tracks = new List<int>();
+            bool all = _state.GetFlag(50);
+            for (int i = 0; i < 0x3F; i++) if (all || i != 0x3E) tracks.Add(i);
+            int playing = 0xFF;
+            for (int i = 0; i < tracks.Count; i++)
+                if (_audio != null && exe[music + tracks[i] * 2] == _audio.ActiveFont && exe[music + tracks[i] * 2 + 1] == _audio.ActiveTrack) { playing = i; break; }
+            _state.Vars[0xF9] = (byte)playing;
+            if (playing == 0xFF && _audio != null) _audio.StopMusic();
+            yield return HeadSay(0x4D6, 3, owner);                 // state 0: "Why don't you request a number that will make me hot."
+            var v = ScriptList();
+            if (v == null) { _routineOn = false; if (_audio != null) _audio.RestoreBgm(); AdvanceScript(); yield break; }
+            System.Action fill = () =>
+            {
+                v.Rows.Clear(); v.Ok.Clear();
+                foreach (int t in tracks) { v.Rows.Add(ScriptListView.JukeboxRow(t, BgmTrackName(t), t == _state.Vars[0xF9])); v.Ok.Add(true); }
+            };
+            fill();
+            // state 3: createJukeboxMenu out of Giromon, the cursor on the song variable 249 names (row 0 if none)
+            v.Open(ScriptListView.Kind.Jukebox, DialogueOrigin(owner) ?? new RectInt(0, 0, 10, 10));
+            int start = tracks.IndexOf(_state.Vars[0xF9]);
+            v.Place(start < 0 ? 0 : start);
+            _line = HeadText(0x4D6, 0, true); _speaker = owner; _choiceOpts = null;     // "Which one do you want." stays while the list is up
+            int heard = playing;                                    // MAIN_D_80134F8F
+            while (true)
+            {
+                yield return null;
+                if (v.Box.State != 1) continue;
+                // tickJukeboxMenu: a new song in variable 249 starts at once (stopBGM, playMusic)
+                int cur = _state.Vars[0xF9];
+                if (cur != heard)
+                {
+                    heard = cur;
+                    if (_audio != null && cur < 0x3F) { _audio.StopMusic(); _audio.PlayMusic(exe[music + cur * 2], exe[music + cur * 2 + 1]); }
+                }
+                if (ShopCross() && v.Rows.Count > 0)
+                {
+                    _state.Vars[0xF9] = (byte)tracks[v.Row];
+                    // "<song>, right." (text code 0x11); ours (user's choice 2026-11-10): a name too long for the box goes on over the next lines
+                    _line = WrapLine(HeadText(0x4D6, 2, true), 0x106 - 0x14); _speaker = owner; _choiceOpts = null;
+                    fill();
+                    Snd(3);
+                    continue;
+                }
+                if (GameMenus.TriangleOnly()) { Snd(4); break; }
+                int step = GameMenus.RepeatStep();
+                if (step < 0) { if (GameMenus.WalkHeld()) v.ToTop(); else v.Up(); }
+                else if (step > 0) { if (GameMenus.WalkHeld()) v.ToBottom(); else v.Down(); }
+            }
+            // state 4: the list shuts, "Help me on my next request."; state 2: the map's music again (playBGM(ACTIVE_BGM_FONT))
+            v.Close(v.Box);
+            _line = null;
+            yield return HeadSay(0x4D6, 1, owner);
+            if (_audio != null) _audio.RestoreBgm();
+            _routineOn = false;
+            AdvanceScript();
+        }
+
         // ------------------------------------------------------------------ 0x02 Mojyamon trade
 
         // MOJYAMON_ITEMS_GIVE / MOJYAMON_ITEMS_GET (exe 0x80130438 / 0x80130444): three trades per Mojyamon (variable 249 = which one)

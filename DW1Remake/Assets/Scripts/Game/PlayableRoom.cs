@@ -301,7 +301,8 @@ namespace DW1Remake.Game
             };
             var itemList = ItemCatalog.Load(_disc);
             _state.ItemNameOf = id => id >= 0 && id < itemList.Count ? itemList[id].Name : "";
-            _state.TournamentNameOf = TournamentName;      // TOURNAMENT_NAMES (text code 0x12, PlayableRoomTournament)
+            _state.TournamentNameOf = TournamentName;
+            _state.BgmNameOf = BgmTrackName;                // BGM_TRACK_NAMES (text code 0x11, the jukebox)      // TOURNAMENT_NAMES (text code 0x12, PlayableRoomTournament)
             _state.TechNameOf = n => { DigimonStatsCatalog.Get(_disc, PartnerType); return DigimonStatsCatalog.NameOf(n); };     // MOVE_NAMES (exe 0x80126054)
             // what the script commands read: YEAR and DAY (30 days a year) from the days played, the map, the partner, DIGIMON_DATA's type byte
             _state.MapIdNow = () => _mapId;
@@ -527,6 +528,7 @@ namespace DW1Remake.Game
                     else if (a.Frames == 0x12) { _line = null; _choiceOpts = null; StartCoroutine(TournamentSchedule()); return true; }               // initTournamentSchedule (PlayableRoomTournament)
                     else if (a.Frames == 0x06) { StartCoroutine(Tournament()); return true; }                                                         // scriptStartTournament
                     else if (a.Frames == 0x0A) { _line = null; _choiceOpts = null; StartCoroutine(BirdraTransport()); return true; }   // tickBirdraTransport
+                    else if (a.Frames == 0x09) { _line = null; _choiceOpts = null; StartCoroutine(Jukebox()); return true; }           // openJukebox (Giromon)
                     else if (a.Frames == 0x02) { _line = null; _choiceOpts = null; StartCoroutine(MojyamonTrade()); return true; }     // openMojyamonShop
                     else if (a.Frames == 0x0B) { _line = null; _choiceOpts = null; StartCoroutine(ItemKeeper()); return true; }        // tickItemKeeper
                     else if (a.Frames == 0x01) { _line = null; _choiceOpts = null; StartCoroutine(MeritShop()); return true; }         // openMeritShop (ShogunGekomon, GKYO02)

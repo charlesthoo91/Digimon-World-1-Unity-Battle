@@ -96,7 +96,7 @@ namespace DW1Remake.Formats
         public float PlayMinutes;                    // time played
         // names and numbers the game's text boxes insert (text codes 4-12)
         public string PlayerName = "A", PartnerName = "B";
-        public System.Func<int, string> TournamentNameOf;      // TOURNAMENT_NAMES (text code 0x12), read from the exe by the room
+        public System.Func<int, string> TournamentNameOf, BgmNameOf;      // TOURNAMENT_NAMES (text code 0x12), read from the exe by the room
         public System.Func<int, string> SpeciesNameOf, ItemNameOf, TechNameOf;   // Digimon / item / technique names, read from the disc by the room
         public string CodeText(int code, int arg, int speaker = 255)
         {
@@ -111,6 +111,7 @@ namespace DW1Remake.Formats
                 case 0x10: return ShopVariable.ToString();                                                   // intToStringSJIS(SHOP_VARIABLE, 5, 1)
                 case 0x04: return Vars[arg].ToString();                                                       // intToStringSJIS(readPStat(arg), 3, 1): the variable's value (0x25 STORE_DATE fills the date ones)
                 case 0x0B: return GameDigits ? Game.ItemMenuView.Digits(Stats[14], 4) : Stats[14].ToString();   // intToStringSJIS(MERIT, 4, 0)
+                case 0x11: return BgmNameOf != null ? BgmNameOf(Vars[arg]) : "";                              // BGM_TRACK_NAMES[readPStat(arg)] (exe 0x8012FEC8)
                 case 0x12: return TournamentNameOf != null ? TournamentNameOf(Vars[arg]) : "";                  // TOURNAMENT_NAMES[readPStat(arg)] (exe 0x801300E0)
                 default: return "";   // codes not understood yet are left out
             }
