@@ -280,6 +280,14 @@ namespace DW1Remake.Game
             }
             if (!v.Showing) { _playerOpened = false; _mode = Tri != null ? Mode.Main : Mode.None; return; }
             if (!v.Ready) return;
+            // ours, the OPTIONS evolution guide: Square on a Chart Digimon opens it; while open it takes the keys
+            if (_guide.Showing)
+            {
+                if (cancel || Pad.Pressed(PadButton.Square)) { _guide.Close(); if (Sfx != null) Sfx(4); }
+                else if (side != 0) { _guide.Turn(side); if (Sfx != null) Sfx(2); }
+                return;
+            }
+            if (ModSettings.EvolutionGuide && Care != null && v.ChartDigimon > 0 && Pad.Pressed(PadButton.Square)) { _guide.Open(v.ChartDigimon); if (Sfx != null) Sfx(3); return; }
             if (v.Tick(_s, step, side, action, cancel)) v.Shut(o);
         }
 
@@ -747,7 +755,13 @@ namespace DW1Remake.Game
             var v = PlayerMenu;
             if (v == null) return;
             v.Draw(_s, DrawPlayerInfo);
+            if (_guide.Showing && (!v.Showing || v.Closing)) _guide.Close();
+            if (_guide.Showing) _guide.Draw(Disc, _s, Care, ItemName);
         }
+
+        readonly EvolutionGuideView _guide = new EvolutionGuideView();
+        string ItemName(int id) { foreach (var e in _items) if (e.Id == id) return e.Name; return "item " + id; }
+        public PartnerCare Care;                         // the evolution guide asks it what the evolution check would choose
 
         PlayerInfoView _playerInfo; bool _playerInfoTried;
         readonly DigiviceModel _boyDigivice = new DigiviceModel();
@@ -794,33 +808,34 @@ namespace DW1Remake.Game
             UiKit.Value(new Rect(900, 885, 120, 68), "0", 44, TextAnchor.MiddleCenter);
         }
 
-        // ================================================================ keys
+        // ================================================================ keys (through Pad: mapped keyboard keys, controller, touch buttons)
+        static bool EscDown()
+        {
+#if ENABLE_INPUT_SYSTEM
+            var k = Keyboard.current; return k != null && k.escapeKey.wasPressedThisFrame;
+#else
+            return false;
+#endif
+        }
+        static bool FixedKeyDown(int which)      // the test / fixed keys: 0 I (bag), 5 F5, 6 F6
+        {
+#if ENABLE_INPUT_SYSTEM
+            var k = Keyboard.current; if (k == null) return false;
+            return which == 0 ? k.iKey.wasPressedThisFrame : which == 5 ? k.f5Key.wasPressedThisFrame : which == 6 && k.f6Key.wasPressedThisFrame;
+#else
+            return false;
+#endif
+        }
+
         /// <summary>Triangle (opens the menu / goes back).</summary>
         public static bool TriangleKey()
         {
-#if ENABLE_INPUT_SYSTEM
-            var k = Keyboard.current; bool r = k != null && (k.tabKey.wasPressedThisFrame || k.cKey.wasPressedThisFrame);
+            bool r = Pad.Pressed(PadButton.Triangle);
             if (r) _triFresh = false;
             return r;
-#elif ENABLE_LEGACY_INPUT_MANAGER
-            bool r = Input.GetKeyDown(KeyCode.Tab) || Input.GetKeyDown(KeyCode.C);
-            if (r) _triFresh = false;
-            return r;
-#else
-            return false;
-#endif
         }
-        /// <summary>R1 held (E): the boy walks instead of running.</summary>
-        public static bool WalkHeld()
-        {
-#if ENABLE_INPUT_SYSTEM
-            var k = Keyboard.current; return k != null && k.eKey.isPressed;
-#elif ENABLE_LEGACY_INPUT_MANAGER
-            return Input.GetKey(KeyCode.E);
-#else
-            return false;
-#endif
-        }
+        /// <summary>R1 held: the boy walks instead of running.</summary>
+        public static bool WalkHeld() { return Pad.Held(PadButton.R1); }
 
         // processInput with setInputRepeatMask: a held button in the mask fires when pressed, again on the 7th game frame it is held,
         // then every 2nd (INPUT_REPEAT_COUNTER 6 -> 7 -> 8 -> 6). Ticked once a frame by the room (TickRepeat), read by the menus that set the mask.
@@ -866,16 +881,7 @@ namespace DW1Remake.Game
         // fresh again only once released. So Triangle held through a partner scene opens the menu the moment the boy can walk (tamerTickWalkingState),
         // but a Triangle press that closed something else does not open the menu again while it stays held
         static bool _triFresh = true;
-        public static bool TriangleHeld()
-        {
-#if ENABLE_INPUT_SYSTEM
-            var k = Keyboard.current; return k != null && (k.tabKey.isPressed || k.cKey.isPressed);
-#elif ENABLE_LEGACY_INPUT_MANAGER
-            return Input.GetKey(KeyCode.Tab) || Input.GetKey(KeyCode.C);
-#else
-            return false;
-#endif
-        }
+        public static bool TriangleHeld() { return Pad.Held(PadButton.Triangle); }
         /// <summary>isKeyDown(Triangle) for opening the menu: held and fresh; uses the freshness up.</summary>
         public static bool TriangleMenuKey()
         {
@@ -889,185 +895,64 @@ namespace DW1Remake.Game
         public static bool CrossRepeat { get { return _repCross.Fired; } }
         public static bool CircleRepeat { get { return _repCircle.Fired; } }
 
-        // 0 up (Up / W), 1 down (Down / S), 2 Cross (Space), 3 left (Left / A), 4 right (Right / D)
+        // 0 up, 1 down, 2 Cross, 3 left, 4 right
         static bool KeyHeld(int which)
         {
-#if ENABLE_INPUT_SYSTEM
-            var k = Keyboard.current;
-            if (k == null) return false;
-            if (which == 0) return k.upArrowKey.isPressed || k.wKey.isPressed;
-            if (which == 1) return k.downArrowKey.isPressed || k.sKey.isPressed;
-            if (which == 3) return k.leftArrowKey.isPressed || k.aKey.isPressed;
-            if (which == 4) return k.rightArrowKey.isPressed || k.dKey.isPressed;
-            return k.spaceKey.isPressed;
-#elif ENABLE_LEGACY_INPUT_MANAGER
-            if (which == 0) return Input.GetKey(KeyCode.UpArrow) || Input.GetKey(KeyCode.W);
-            if (which == 1) return Input.GetKey(KeyCode.DownArrow) || Input.GetKey(KeyCode.S);
-            if (which == 3) return Input.GetKey(KeyCode.LeftArrow) || Input.GetKey(KeyCode.A);
-            if (which == 4) return Input.GetKey(KeyCode.RightArrow) || Input.GetKey(KeyCode.D);
-            return Input.GetKey(KeyCode.Space);
-#else
-            return false;
-#endif
+            return Pad.Held(which == 0 ? PadButton.Up : which == 1 ? PadButton.Down : which == 3 ? PadButton.Left : which == 4 ? PadButton.Right : PadButton.Cross);
         }
 
-        /// <summary>Circle held (Z): ten at a time in the shop's amount box (ALT_BUTTON).</summary>
-        public static bool CircleHeld()
-        {
-#if ENABLE_INPUT_SYSTEM
-            var k = Keyboard.current; return k != null && k.zKey.isPressed;
-#elif ENABLE_LEGACY_INPUT_MANAGER
-            return Input.GetKey(KeyCode.Z);
-#else
-            return false;
-#endif
-        }
+        /// <summary>Circle held: ten at a time in the shop's amount box (ALT_BUTTON).</summary>
+        public static bool CircleHeld() { return Pad.Held(PadButton.Circle); }
 
-        /// <summary>Cross alone (Space), this frame.</summary>
-        public static bool CrossPressed()
-        {
-#if ENABLE_INPUT_SYSTEM
-            var k = Keyboard.current; return k != null && k.spaceKey.wasPressedThisFrame;
-#elif ENABLE_LEGACY_INPUT_MANAGER
-            return Input.GetKeyDown(KeyCode.Space);
-#else
-            return false;
-#endif
-        }
+        /// <summary>Cross alone, this frame.</summary>
+        public static bool CrossPressed() { return Pad.Pressed(PadButton.Cross); }
 
-        /// <summary>Select (Backspace).</summary>
-        public static bool SelectKey()
-        {
-#if ENABLE_INPUT_SYSTEM
-            var k = Keyboard.current; return k != null && k.backspaceKey.wasPressedThisFrame;
-#elif ENABLE_LEGACY_INPUT_MANAGER
-            return Input.GetKeyDown(KeyCode.Backspace);
-#else
-            return false;
-#endif
-        }
+        /// <summary>Select.</summary>
+        public static bool SelectKey() { return Pad.Pressed(PadButton.Select); }
 
-        public static bool BagKey()
-        {
-#if ENABLE_INPUT_SYSTEM
-            var k = Keyboard.current; return k != null && k.iKey.wasPressedThisFrame;
-#elif ENABLE_LEGACY_INPUT_MANAGER
-            return Input.GetKeyDown(KeyCode.I);
-#else
-            return false;
-#endif
-        }
+        public static bool BagKey() { return FixedKeyDown(0); }
         public static bool ShopKey()
         {
 #if !UNITY_EDITOR && !DEVELOPMENT_BUILD
             return false;   // test key: development only
-#elif ENABLE_INPUT_SYSTEM
-            var k = Keyboard.current; return k != null && k.f5Key.wasPressedThisFrame;
-#elif ENABLE_LEGACY_INPUT_MANAGER
-            return Input.GetKeyDown(KeyCode.F5);
 #else
-            return false;
+            return FixedKeyDown(5);
 #endif
         }
         public static bool GiveKey()
         {
 #if !UNITY_EDITOR && !DEVELOPMENT_BUILD
             return false;   // test key: development only
-#elif ENABLE_INPUT_SYSTEM
-            var k = Keyboard.current; return k != null && k.f6Key.wasPressedThisFrame;
-#elif ENABLE_LEGACY_INPUT_MANAGER
-            return Input.GetKeyDown(KeyCode.F6);
 #else
-            return false;
+            return FixedKeyDown(6);
 #endif
         }
+        /// <summary>Back: Triangle, Square, Escape (or the test bag key I).</summary>
         public static bool CancelKey()
         {
-#if ENABLE_INPUT_SYSTEM
-            var k = Keyboard.current; bool r = k != null && (k.tabKey.wasPressedThisFrame || k.cKey.wasPressedThisFrame || k.escapeKey.wasPressedThisFrame || k.xKey.wasPressedThisFrame || k.iKey.wasPressedThisFrame);
-            if (r && (k.tabKey.wasPressedThisFrame || k.cKey.wasPressedThisFrame)) _triFresh = false;     // isKeyDown: the press is used up
+            bool tri = Pad.Pressed(PadButton.Triangle);
+            bool r = tri || Pad.Pressed(PadButton.Square) || EscDown() || FixedKeyDown(0);
+            if (tri) _triFresh = false;     // isKeyDown: the press is used up
             return r;
-#elif ENABLE_LEGACY_INPUT_MANAGER
-            bool r = Input.GetKeyDown(KeyCode.Tab) || Input.GetKeyDown(KeyCode.C) || Input.GetKeyDown(KeyCode.Escape) || Input.GetKeyDown(KeyCode.X) || Input.GetKeyDown(KeyCode.I);
-            if (Input.GetKeyDown(KeyCode.Tab) || Input.GetKeyDown(KeyCode.C)) _triFresh = false;
-            return r;
-#else
-            return false;
-#endif
         }
         /// <summary>Escape on its own (ours: while the boy walks freely it offers the way back to the title screen; in menus it is still Triangle).</summary>
-        public static bool EscapeKey()
-        {
-#if ENABLE_INPUT_SYSTEM
-            var k = Keyboard.current; return k != null && k.escapeKey.wasPressedThisFrame;
-#elif ENABLE_LEGACY_INPUT_MANAGER
-            return Input.GetKeyDown(KeyCode.Escape);
-#else
-            return false;
-#endif
-        }
+        public static bool EscapeKey() { return EscDown(); }
 
-        // Triangle alone (Tab, C, Esc), for screens where Square has its own job (the Item Keeper)
+        // Triangle alone (or Escape), for screens where Square has its own job (the Item Keeper)
         public static bool TriangleOnly()
         {
-#if ENABLE_INPUT_SYSTEM
-            var k = Keyboard.current; bool r = k != null && (k.tabKey.wasPressedThisFrame || k.cKey.wasPressedThisFrame || k.escapeKey.wasPressedThisFrame);
+            bool r = Pad.Pressed(PadButton.Triangle) || EscDown();
             if (r) _triFresh = false;
             return r;
-#elif ENABLE_LEGACY_INPUT_MANAGER
-            bool r = Input.GetKeyDown(KeyCode.Tab) || Input.GetKeyDown(KeyCode.C) || Input.GetKeyDown(KeyCode.Escape);
-            if (r) _triFresh = false;
-            return r;
-#else
-            return false;
-#endif
         }
-        // Start = Enter
-        public static bool StartKey()
-        {
-#if ENABLE_INPUT_SYSTEM
-            var k = Keyboard.current; return k != null && (k.enterKey.wasPressedThisFrame || k.numpadEnterKey.wasPressedThisFrame);
-#elif ENABLE_LEGACY_INPUT_MANAGER
-            return Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter);
-#else
-            return false;
-#endif
-        }
-        // Square = X, Circle = Z
-        public static bool SquareKey()
-        {
-#if ENABLE_INPUT_SYSTEM
-            var k = Keyboard.current; return k != null && k.xKey.wasPressedThisFrame;
-#elif ENABLE_LEGACY_INPUT_MANAGER
-            return Input.GetKeyDown(KeyCode.X);
-#else
-            return false;
-#endif
-        }
-        public static bool CircleKey()
-        {
-#if ENABLE_INPUT_SYSTEM
-            var k = Keyboard.current; return k != null && k.zKey.wasPressedThisFrame;
-#elif ENABLE_LEGACY_INPUT_MANAGER
-            return Input.GetKeyDown(KeyCode.Z);
-#else
-            return false;
-#endif
-        }
+        public static bool StartKey() { return Pad.Pressed(PadButton.Start); }
+        public static bool SquareKey() { return Pad.Pressed(PadButton.Square); }
+        public static bool CircleKey() { return Pad.Pressed(PadButton.Circle); }
         public static int SideStep()
         {
-#if ENABLE_INPUT_SYSTEM
-            var k = Keyboard.current; if (k == null) return 0;
-            if (k.leftArrowKey.wasPressedThisFrame || k.aKey.wasPressedThisFrame) return -1;
-            if (k.rightArrowKey.wasPressedThisFrame || k.dKey.wasPressedThisFrame) return 1;
+            if (Pad.Pressed(PadButton.Left)) return -1;
+            if (Pad.Pressed(PadButton.Right)) return 1;
             return 0;
-#elif ENABLE_LEGACY_INPUT_MANAGER
-            if (Input.GetKeyDown(KeyCode.LeftArrow) || Input.GetKeyDown(KeyCode.A)) return -1;
-            if (Input.GetKeyDown(KeyCode.RightArrow) || Input.GetKeyDown(KeyCode.D)) return 1;
-            return 0;
-#else
-            return 0;
-#endif
         }
     }
 }

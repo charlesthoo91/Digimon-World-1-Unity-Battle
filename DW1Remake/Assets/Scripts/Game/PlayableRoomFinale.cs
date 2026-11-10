@@ -424,6 +424,7 @@ namespace DW1Remake.Game
             _mainState = 2; d.MainState = 2;      // gameClearSave: MAIN_STATE = 2, saved with the game
             if (_noCard) return;     // gameClearSave: no memory card (MEMORY_CARD_ID == -1) = no save
             System.IO.File.WriteAllText(SavePath, JsonUtility.ToJson(d));
+            WebFiles.Sync();
         }
     }
 }

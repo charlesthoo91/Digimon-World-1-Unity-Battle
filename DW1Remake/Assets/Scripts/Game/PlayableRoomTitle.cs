@@ -215,7 +215,7 @@ namespace DW1Remake.Game
                     if (action == 2)
                     {
                         // menu 0x23: the file is deleted, then the card is read again (back to the list)
-                        try { File.Delete(SlotPath(card, slot)); } catch (System.Exception e) { Debug.LogWarning("[title] " + e.Message); }
+                        try { File.Delete(SlotPath(card, slot)); WebFiles.Sync(); } catch (System.Exception e) { Debug.LogWarning("[title] " + e.Message); }
                         continue;
                     }
                     _card = card; _cardSlot = slot; _noCard = false;
@@ -227,7 +227,7 @@ namespace DW1Remake.Game
         // menus 0xE / 0x17 / 0x21, view 7 (renderSelectSlot / renderSaveSlotBox, tickSelectSlotInput): the title, then six boxes 0x24 apart of
         // the card's 15 slots; five cursor rows, the list scrolls to slot 10. A new game takes only an empty slot, continue and delete only a used
         // one; the others are dimmed (colour 1). A used slot shows the player name and the partner species (US save titles have no place)
-        IEnumerator SlotList(int action, int card, System.Action<int> result)
+        IEnumerator SlotList(int action, int card, System.Action<int> result, string title = null, bool any = false)
         {
             var info = new SaveGameData[SlotsPerCard];
             for (int i = 0; i < SlotsPerCard; i++) info[i] = ReadSlot(card, i);
@@ -236,13 +236,13 @@ namespace DW1Remake.Game
             s.Refresh = v =>
             {
                 v.Texts.Clear(); v.Boxes.Clear(); v.Dim.Clear();
-                v.Text(CardTitle(action, card), 0x3A, 0x18); v.Box(0x30, 0x13, 0xE0, 0x16);
+                v.Text(title ?? CardTitle(action, card), 0x3A, 0x18); v.Box(0x30, 0x13, 0xE0, 0x16);
                 for (int i = 0; i < 6; i++)
                 {
                     int slot = v.Scroll + i, y = 0x29 + 0x24 * i;
                     if (slot >= SlotsPerCard) break;
                     var d = info[slot];
-                    bool dim = (d != null) == (action == 0);
+                    bool dim = !any && (d != null) == (action == 0);
                     if (d != null)
                     {
                         var sp = DigimonStatsCatalog.Get(_disc, d.PartnerType);
@@ -260,7 +260,7 @@ namespace DW1Remake.Game
                 yield return Ask(s, a => answer = a);
                 if (answer != 1) { result(-1); yield break; }
                 int slot = s.Scroll + s.Pos;
-                if ((info[slot] != null) != (action == 0)) { result(slot); yield break; }
+                if (any || (info[slot] != null) != (action == 0)) { result(slot); yield break; }
                 // the wrong kind of slot: nothing happens (the cursor stays)
             }
         }
@@ -313,8 +313,160 @@ namespace DW1Remake.Game
             _routineOn = false;
         }
 
+        // ------------------------------------------------------------------ ours: save files out and in (MODS page; not in the original game)
+        // A slot's save as a file the player keeps (Downloads folder), and such a file back into an empty slot: to back up, or to move a
+        // game between the browser and the PC version. The slot lists are the memory card screens' own (SlotList)
+
+        IEnumerator PickCard(string verb, System.Action<int> result)
+        {
+            var s = new SysScreen();
+            s.Text(verb, 0x46, 0x22); s.Box(0x3C, 0x1D, 0xB7, 0x16);
+            s.Text("MEMORY CARD 1", 0x46, 0x37); s.Text("MEMORY CARD 2", 0x46, 0x43);
+            s.Box(0x3C, 0x32, 0xB7, 0x22);
+            HighlightCursor(s, 2);
+            int answer = 0;
+            yield return Ask(s, a => answer = a);
+            result(answer == 1 ? s.Pos : -1);
+        }
+
+        IEnumerator Notice(string text)
+        {
+            var s = new SysScreen();
+            var lines = Wrap(text, 0x110 - 0x14);
+            for (int i = 0; i < lines.Count; i++) s.Text(lines[i], 0x22, 0x37 + 12 * i);
+            s.Box(0x18, 0x32, 0x110, 12 * lines.Count + 10);
+            yield return Ask(s, a => { });
+        }
+
+        IEnumerator Confirm(string text, System.Action<bool> result)
+        {
+            var s = new SysScreen();
+            var lines = Wrap(text, 0x110 - 0x14);
+            for (int i = 0; i < lines.Count; i++) s.Text(lines[i], 0x22, 0x37 + 12 * i);
+            s.Box(0x18, 0x32, 0x110, 12 * lines.Count + 10);
+            int y = 0x37 + 12 * lines.Count + 0x12;
+            s.Text(Exe(0x801346AC), 0x22, y); s.Text(Exe(0x801346B0), 0x22, y + 12);     // Yes / No
+            s.Box(0x18, y - 5, 0x38, 0x22);
+            s.Cursor(0x22 - 3, y, 33, 12, 12, 2);
+            s.Pos = 1;
+            int answer = 0;
+            yield return Ask(s, a => answer = a);
+            result(answer == 1 && s.Pos == 0);
+        }
+
+        IEnumerator ExportSave()
+        {
+            int card = -1;
+            yield return PickCard("EXPORT SAVE", r => card = r);
+            if (card < 0) yield break;
+            int slot = -1;
+            yield return SlotList(1, card, r => slot = r, "EXPORT  CARD " + (card + 1));       // used slots only
+            if (slot < 0) yield break;
+            string name = "DW1Remake_card" + (card + 1) + "_slot" + (slot + 1).ToString("00") + ".json", text = null, err = null;
+            bool go = false;
+#if UNITY_WEBGL && !UNITY_EDITOR
+            yield return Confirm("The save goes to your downloads as " + name + ". If a file of that name is already there, the browser keeps both or asks you.", r => go = r);
+#else
+            string target = Path.Combine(Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile), "Downloads"), name);
+            yield return Confirm(File.Exists(target)
+                ? "Your Downloads folder already has " + name + ". It will be replaced by this save. Go on?"
+                : "The save goes to your Downloads folder as " + name + ". A file there with the same name would be replaced. Go on?", r => go = r);
+#endif
+            if (!go) yield break;
+            try { text = File.ReadAllText(SlotPath(card, slot)); }
+            catch (System.Exception e) { err = "The save could not be read. " + e.Message; }
+#if UNITY_WEBGL && !UNITY_EDITOR
+            if (err == null) WebFiles.DownloadText(name, text);
+#else
+            if (err == null)
+            {
+                try
+                {
+                    string dir = Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile), "Downloads");
+                    Directory.CreateDirectory(dir);
+                    File.WriteAllText(Path.Combine(dir, name), text);
+                }
+                catch (System.Exception e) { err = "The save could not be written. " + e.Message; }
+            }
+#endif
+            yield return Notice(err ?? "The save is in your Downloads folder: " + name);
+        }
+
+        string _importText; bool _importWaiting;
+
+        /// <summary>The web build's save file text (DW1Web.jslib DW1_PickText); "" = cancelled; a file that is not .json comes as
+        /// "\u0001" + its bytes in base64 (a memory card file).</summary>
+        public void OnWebSaveText(string text) { _importText = text; _importWaiting = false; }
+
+        IEnumerator ImportSave()
+        {
+            _importText = null;
+            byte[] bytes = null;
+#if UNITY_WEBGL && !UNITY_EDITOR
+            _importWaiting = true;
+            WebFiles.PickText(gameObject.name, "OnWebSaveText");
+            while (_importWaiting) yield return null;
+            if (!string.IsNullOrEmpty(_importText) && _importText[0] == '\u0001')
+            {
+                try { bytes = System.Convert.FromBase64String(_importText.Substring(1)); } catch { bytes = null; }
+                _importText = null;
+            }
+#else
+            string path = BrowseForSave();
+            if (!string.IsNullOrEmpty(path))
+            {
+                try { bytes = File.ReadAllBytes(path); }
+                catch (System.Exception e) { bytes = null; Debug.LogWarning("[title] " + e.Message); }
+            }
+#endif
+            // a .json of this game, or a PS1 memory card file (PlayableRoomCardImport)
+            if (bytes != null && bytes.Length > 0)
+            {
+                int first = 0;
+                while (first < bytes.Length && first < 4 && (bytes[first] == 0xEF || bytes[first] == 0xBB || bytes[first] == 0xBF || bytes[first] <= 0x20)) first++;
+                if (first < bytes.Length && bytes[first] == '{') { _importText = System.Text.Encoding.UTF8.GetString(bytes); bytes = null; }
+            }
+            if (string.IsNullOrEmpty(_importText) && (bytes == null || bytes.Length == 0)) yield break;
+            SaveGameData d = null;
+            if (bytes != null)
+            {
+                var saves = ReadCardFile(bytes);
+                if (saves == null) { yield return Notice("That file is not a save of this game or a memory card file."); yield break; }
+                if (saves.Count == 0) { yield return Notice("No Digimon World (USA) save on that memory card."); yield break; }
+                int k = 0;
+                if (saves.Count > 1) yield return PickCardSave(saves, r => k = r);
+                if (k < 0) yield break;
+                d = saves[k].Save;
+                _importText = JsonUtility.ToJson(d);
+            }
+            else
+            {
+                try { d = JsonUtility.FromJson<SaveGameData>(_importText); } catch { d = null; }
+            }
+            if (d == null || string.IsNullOrEmpty(d.Map)) { yield return Notice("That file is not a save of this game."); yield break; }
+            int card = -1;
+            yield return PickCard("IMPORT SAVE", r => card = r);
+            if (card < 0) yield break;
+            int slot = -1;
+            yield return SlotList(0, card, r => slot = r, "IMPORT  CARD " + (card + 1), true);       // any slot; a used one asks first
+            if (slot < 0) yield break;
+            var old = ReadSlot(card, slot);
+            if (old != null)
+            {
+                var sp = DigimonStatsCatalog.Get(_disc, old.PartnerType);
+                bool go = false;
+                yield return Confirm("Slot " + (slot + 1) + " of memory card " + (card + 1) + " holds " + (old.PlayerName ?? "") + " and " + (sp != null ? sp.Name : "a Digimon") +
+                                     ". That save will be replaced by the imported one and cannot be brought back. Go on?", r => go = r);
+                if (!go) yield break;
+            }
+            bool ok = true;
+            try { File.WriteAllText(SlotPath(card, slot), _importText); WebFiles.Sync(); }
+            catch (System.Exception e) { ok = false; Debug.LogWarning("[title] " + e.Message); }
+            yield return Notice(ok ? "The save is in memory card " + (card + 1) + ", slot " + (slot + 1) + "." : "The save could not be written.");
+        }
+
         // ------------------------------------------------------------------ ours: the MODS page (not in the original game)
-        const string ModsLabel = "MODS";
+        const string ModsLabel = "OPTIONS";
 
         // one row per mod (Cross switches it), then BACK; Triangle / Circle also go back. Same box and cursor as the title menu
         IEnumerator ModsPage()
@@ -330,18 +482,115 @@ namespace DW1Remake.Game
                 s.Text("DIGITAL CLOCK", 0x1C, 0x37); s.Text(ModSettings.DigitalClock ? "ON" : "OFF", 0xD8, 0x37);
                 s.Text("ONLINE BATTLE", 0x1C, 0x37 + 12); s.Text(ModSettings.OnlineBattle ? "ON" : "OFF", 0xD8, 0x37 + 12);
                 s.Text("SMOOTH 60 FPS", 0x1C, 0x37 + 24); s.Text(ModSettings.Smooth60 ? "ON" : "OFF", 0xD8, 0x37 + 24);
-                s.Text("BACK", 0x1C, 0x37 + 36);
-                s.Box(0x12, 0x32, 0xF0, 0x2E + 12);
+                s.Text("EVOLUTION GUIDE", 0x1C, 0x37 + 36); s.Text(ModSettings.EvolutionGuide ? "ON" : "OFF", 0xD8, 0x37 + 36);
+                s.Text("CONTROLS", 0x1C, 0x37 + 48);
+                s.Text("EXPORT SAVE", 0x1C, 0x37 + 60);
+                s.Text("IMPORT SAVE", 0x1C, 0x37 + 72);
+                s.Text("BACK", 0x1C, 0x37 + 84);
+                s.Box(0x12, 0x32, 0xF0, 0x2E + 60);
                 s.Cursor(System.BitConverter.ToInt16(exe, h + 8) - (0x52 - 0x1C), System.BitConverter.ToInt16(exe, h + 10), 0xE6,
-                         System.BitConverter.ToInt16(exe, h + 14), System.BitConverter.ToInt16(exe, h + 6), 4);
+                         System.BitConverter.ToInt16(exe, h + 14), System.BitConverter.ToInt16(exe, h + 6), 8);
                 s.Pos = pos;
                 int answer = 0;
                 yield return Ask(s, a => answer = a);
                 pos = s.Pos;
-                if (answer != 1 || pos == 3) yield break;
-                if (pos == 0) ModSettings.DigitalClock = !ModSettings.DigitalClock;
+                if (answer != 1 || pos == 7) yield break;
+                if (pos == 4) yield return ControlsPage();
+                else if (pos == 5) yield return ExportSave();
+                else if (pos == 6) yield return ImportSave();
+                else if (pos == 0) ModSettings.DigitalClock = !ModSettings.DigitalClock;
                 else if (pos == 1) ModSettings.OnlineBattle = !ModSettings.OnlineBattle;
-                else ModSettings.Smooth60 = !ModSettings.Smooth60;
+                else if (pos == 2) ModSettings.Smooth60 = !ModSettings.Smooth60;
+                else ModSettings.EvolutionGuide = !ModSettings.EvolutionGuide;
+            }
+        }
+
+        // ours: MODS > CONTROLS (Pad, TouchPadView): the touch buttons, the controller and the keyboard keys
+        IEnumerator ControlsPage()
+        {
+            byte[] exe = ExeBytes;
+            int h = (int)(0x801316B8 - System.BitConverter.ToUInt32(exe, 0x18) + 0x800);
+            int pos = 0;
+            while (true)
+            {
+                var s = new SysScreen();
+                int touch = ModSettings.TouchButtons;
+                s.Text("TOUCH BUTTONS", 0x1C, 0x37); s.Text(touch == 0 ? "OFF" : touch == 1 ? "AUTO" : "ON", 0xD0, 0x37);
+                s.Text("CONTROLLER", 0x1C, 0x37 + 12); s.Text(ModSettings.Controller ? "ON" : "OFF", 0xD0, 0x37 + 12);
+                s.Text("KEYBOARD KEYS", 0x1C, 0x37 + 24);
+                s.Text("CONTROLLER KEYS", 0x1C, 0x37 + 36);
+                s.Text("BACK", 0x1C, 0x37 + 48);
+                s.Box(0x12, 0x32, 0xF0, 0x2E + 24);
+                s.Cursor(System.BitConverter.ToInt16(exe, h + 8) - (0x52 - 0x1C), System.BitConverter.ToInt16(exe, h + 10), 0xE6,
+                         System.BitConverter.ToInt16(exe, h + 14), System.BitConverter.ToInt16(exe, h + 6), 5);
+                s.Pos = pos;
+                int answer = 0;
+                yield return Ask(s, a => answer = a);
+                pos = s.Pos;
+                if (answer != 1 || pos == 4) yield break;
+                if (pos == 0) ModSettings.TouchButtons = (touch + 1) % 3;          // AUTO -> ON -> OFF -> AUTO
+                else if (pos == 1) ModSettings.Controller = !ModSettings.Controller;
+                else yield return KeyMapPage(pos == 3);
+            }
+        }
+
+        static readonly string[] PadNames = { "UP", "DOWN", "LEFT", "RIGHT", "CROSS", "CIRCLE", "TRIANGLE", "SQUARE", "L1", "R1", "START", "SELECT" };
+
+        // ours: one row per PS1 button with its keyboard key (or controller button); Cross on a row, then the new key / button (Escape, or 10 seconds
+        // without one, keeps the old one); RESET = the game's own keys / the PS layout
+        IEnumerator KeyMapPage(bool controller)
+        {
+            byte[] exe = ExeBytes;
+            int h = (int)(0x801316B8 - System.BitConverter.ToUInt32(exe, 0x18) + 0x800);
+            const int Top = 0x14;
+            int n = PadNames.Length, pos = 0;
+            System.Func<int, SysScreen> page = waiting =>
+            {
+                var s = new SysScreen();
+                for (int i = 0; i < n; i++)
+                {
+                    s.Text(PadNames[i], 0x1C, Top + 12 * i);
+                    s.Text(i == waiting ? (controller ? "PRESS A BUTTON" : "PRESS A KEY") : controller ? Pad.PadButtonNames((PadButton)i) : Pad.KeyNames((PadButton)i), 0x80, Top + 12 * i);
+                }
+                s.Text("RESET", 0x1C, Top + 12 * n);
+                s.Text("BACK", 0x1C, Top + 12 * (n + 1));
+                s.Box(0x12, Top - 5, 0xF0, 12 * (n + 2) + 10);
+                return s;
+            };
+            while (true)
+            {
+                var s = page(-1);
+                s.Cursor(System.BitConverter.ToInt16(exe, h + 8) - (0x52 - 0x1C), System.BitConverter.ToInt16(exe, h + 10) + (Top - 0x37), 0xE6,
+                         System.BitConverter.ToInt16(exe, h + 14), System.BitConverter.ToInt16(exe, h + 6), n + 2);
+                s.Pos = pos;
+                int answer = 0;
+                yield return Ask(s, a => answer = a);
+                pos = s.Pos;
+                if (answer != 1 || pos == n + 1) yield break;
+                if (pos == n) { if (controller) Pad.ResetPadButtons(); else Pad.ResetKeys(); continue; }
+#if ENABLE_INPUT_SYSTEM
+                _sys = page(pos);
+                yield return null;      // the Cross that chose the row is not the new key
+                float waited = 0f;
+                while (waited < 10f)
+                {
+                    if (GameMenus.EscapeKey()) { Snd(4); break; }
+                    if (controller)
+                    {
+                        string b = Pad.AnyPadButtonPressed();
+                        if (b != null) { Pad.SetPadButton((PadButton)pos, b); Snd(3); break; }
+                    }
+                    else
+                    {
+                        var key = Pad.AnyKeyPressed();
+                        if (key != UnityEngine.InputSystem.Key.None) { Pad.SetKey((PadButton)pos, key); Snd(3); break; }
+                    }
+                    waited += Time.unscaledDeltaTime;
+                    yield return null;
+                }
+                _sys = null;
+                yield return null;      // the new key's press is not also a Cross on the page
+#endif
             }
         }
 

@@ -72,12 +72,12 @@ namespace DW1Remake.EditorTools
         }
 
         // one material per shader our code asks for by name, with the switches (keywords) our code turns on, so their variants are built
-        static bool WriteKeepMaterials()
+        internal static bool WriteKeepMaterials()
         {
             if (!AssetDatabase.IsValidFolder("Assets/Resources")) AssetDatabase.CreateFolder("Assets", "Resources");
             if (!AssetDatabase.IsValidFolder(KeepFolder)) AssetDatabase.CreateFolder("Assets/Resources", "BuildKeep");
 
-            string[] ours = { "DW1Remake/Backdrop", "DW1Remake/BlobShadow", "DW1Remake/Effect", "DW1Remake/GuiBlend", "DW1Remake/Half", "DW1Remake/Overlay", "DW1Remake/Psx" };
+            string[] ours = { "DW1Remake/Backdrop", "DW1Remake/BlobShadow", "DW1Remake/Effect", "DW1Remake/GuiBlend", "DW1Remake/Half", "DW1Remake/Overlay", "DW1Remake/Psx", "DW1Remake/Unlit" };
             foreach (var name in ours) if (!Keep(name, name.Substring(name.IndexOf('/') + 1))) return false;
             // MmdModel.MakeMaterial (lit and unlit), the Finale's see-through boy, and the plain unlit / sprite materials
             if (!Keep("Universal Render Pipeline/Lit", "UrpLitCutout", "_ALPHATEST_ON", "_SPECULARHIGHLIGHTS_OFF", "_ENVIRONMENTREFLECTIONS_OFF")) return false;

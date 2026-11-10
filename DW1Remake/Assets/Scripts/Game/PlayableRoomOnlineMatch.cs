@@ -15,12 +15,13 @@ namespace DW1Remake.Game
     /// gauge, plus the counter; it also sends every technique started (its picture), every number over a head, the knock-out and the result.
     /// The friend's PC runs Battle as a copy (Battle.Puppet) and shows all of that. Its world is the host's turned half round the arena's middle,
     /// so each player sees their own Digimon on their own side.
-    /// Messages (after MsgProfile = 1): 2 ready, 3 start, 4 state (sent once, may be lost), 5 technique, 6 number, 7 knock-out, 8 end (sure).
+    /// Messages (after MsgProfile = 1): 2 ready, 3 start, 4 state (sent once, may be lost), 5 technique, 6 number, 7 knock-out, 8 end (sure),
+    /// 9 order, 10 introductions done, 11 finishing-move aura, 12 draw letters, 13 a technique's effect stopped.
     /// Sides in messages are the host's: 0 the host's partner, 1 the friend's partner.
     /// </summary>
     public sealed partial class PlayableRoom
     {
-        const byte MsgReady = 2, MsgStart = 3, MsgState = 4, MsgSwing = 5, MsgPop = 6, MsgKo = 7, MsgEnd = 8, MsgOrder = 9, MsgIntroDone = 10;
+        const byte MsgReady = 2, MsgStart = 3, MsgState = 4, MsgSwing = 5, MsgPop = 6, MsgKo = 7, MsgEnd = 8, MsgOrder = 9, MsgIntroDone = 10, MsgAura = 11, MsgVersus = 12, MsgStopFx = 13;
         bool _onlineOrders, _friendIntroDone;      // orders on (the host chooses; MsgStart carries it); the friend has finished the introductions
         bool _meReady, _friendReady, _onlineMatch, _onlineHost, _endSent, _netBattleSeen;
         float _stateAcc;
@@ -64,7 +65,7 @@ namespace DW1Remake.Game
             _arenaScr.InitBracket();
             _camState = 10; _camTimer = 0;
             Npc foe = SpawnFriend(_friend);
-            int result = 0;
+            int result = 0; bool linkLost = false;
             if (foe != null)
             {
                 _battle.Puppet = !host;
@@ -74,15 +75,20 @@ namespace DW1Remake.Game
                 {
                     _battle.NetSwing = (f, tech, to) => { if (_net != null) _net.SendSure(new[] { MsgSwing, (byte)SideOf(f), (byte)tech }); };
                     _battle.NetKnockOut = f => { if (_net != null) _net.SendSure(new[] { MsgKo, (byte)SideOf(f) }); };
+                    _battle.NetAura = f => { if (_net != null) _net.SendSure(new[] { MsgAura, (byte)SideOf(f) }); };
+                    _battle.NetVersus = () => { if (_net != null) _net.SendSure(new[] { MsgVersus }); };
+                    _battle.NetStopFx = f => { if (_net != null) _net.SendSure(new[] { MsgStopFx, (byte)SideOf(f) }); };
                 }
                 yield return TourFade(0f, 5);
                 yield return OnlineRunMatch(foe, arena, music, r => result = r);
+                if (_battle.WinnerSide == 2) result = 0;      // a draw (Result counts it as lost, as the tournament does)
+                linkLost = _net == null || _net.Now != NetLink.State.Linked;
                 _arena.ShowScene(0);
                 if (foe.T != null) Destroy(foe.T.gameObject);
             }
             else Debug.LogWarning("[online] the friend's Digimon could not be made (type " + (_friend != null ? _friend.Type : -1) + ")");
             _tourFoe = null; _p2 = null;
-            _battle.Puppet = false; _battle.NetSwing = null; _battle.NetKnockOut = null; _battle.NetOrder = null; _battle.EnemyCommanded = false;
+            _battle.Puppet = false; _battle.NetSwing = null; _battle.NetKnockOut = null; _battle.NetAura = null; _battle.NetVersus = null; _battle.NetStopFx = null; _battle.NetOrder = null; _battle.EnemyCommanded = false;
             // as STD_deinitializeTournament: back to the room
             if (_audio != null) { _audio.StopMusic(); _audio.StopSound(); }
             yield return TourFade(1f, 1);
@@ -104,7 +110,7 @@ namespace DW1Remake.Game
             System.Array.Copy(statsBack, _state.Stats, statsBack.Length); System.Array.Copy(techsBack, _state.Techs, techsBack.Length);
             _state.Money = moneyBack; _state.Happiness = happyBack; _state.Discipline = discBack;
             _state.Para.Condition = condBack; _state.Para.Tiredness = tiredBack;
-            _onlineResult = result == 1 ? "You won!" : result == -1 ? "You lost." : "A draw (or the link was lost).";
+            _onlineResult = result == 1 ? "You won!" : result == -1 ? "You lost." : linkLost ? "The link was lost." : "A draw.";
             yield return TourFade(0f, 5);
             _onlineMatch = false; _tourOn = false; _meReady = _friendReady = false;
         }
@@ -231,6 +237,9 @@ namespace DW1Remake.Game
                         _battle.PuppetSwing(NetSide(m[1]), m[2], NetSide(m[1] == 0 ? 1 : 0));
                     break;
                 case MsgPop: if (!_onlineHost && _onlineMatch && _battle != null && _battle.Active) ReadPop(m); break;
+                case MsgAura: if (!_onlineHost && _onlineMatch && m.Length >= 2 && _battle != null && _battle.Active) _battle.PuppetAura(NetSide(m[1])); break;
+                case MsgStopFx: if (!_onlineHost && _onlineMatch && m.Length >= 2 && _battle != null && _battle.Active) _battle.PuppetStopFx(NetSide(m[1])); break;
+                case MsgVersus: if (!_onlineHost && _onlineMatch && _battle != null && _battle.Active) _battle.PuppetVersus(); break;
                 case MsgKo: if (!_onlineHost && _onlineMatch && m.Length >= 2 && _battle != null) _battle.PuppetKnockOut(NetSide(m[1])); break;
                 case MsgEnd:
                     if (!_onlineHost && _onlineMatch && m.Length >= 3 && _battle != null && _battle.Active)

@@ -130,9 +130,32 @@ namespace DW1Remake.Game
             // a player build always starts at the title screen (the scene's test ticks are for the editor), with no names over the Digimon
             TitleScreen = true; QuickStart = false; NewGame = false; LoadSaveOnStart = false; ShowNames = false;
 #endif
+#if UNITY_WEBGL && !UNITY_EDITOR
+            // the browser version: the HD-2D look is off (it is too heavy for many browsers), the PS1 look as the original
+            Hd2D = false;
+            // the web uses the "Mobile" quality level, whose 0.8 render scale needs an upscaling pass, and the URP post-processing shaders
+            // are not in the web build: the camera's picture came out black (user 2026-11-10). Full scale and no post-processing, as with
+            // HD-2D off on the PC
+            var rp = UnityEngine.Rendering.GraphicsSettings.currentRenderPipeline as UniversalRenderPipelineAsset;
+            if (rp != null) rp.renderScale = 1f;
+            foreach (var c in Camera.allCameras)
+            {
+                var ad = c.GetUniversalAdditionalCameraData();
+                if (ad != null) ad.renderPostProcessing = false;
+            }
+#endif
             string why, path = StartDiscPath(out why);
             string err = path != null ? OpenDisc(path) : null;
-            if (_disc == null) { _picker = new DiscPicker { Path = path ?? "", Error = err ?? why }; return; }     // no usable disc yet: the disc screen (PlayableRoomDisc)
+            if (_disc == null)
+            {
+                // no usable disc yet: the disc screen (PlayableRoomDisc); the browser version first looks for the disc kept from a last visit
+                _picker = new DiscPicker { Path = path ?? "", Error = err ?? why };
+#if UNITY_WEBGL && !UNITY_EDITOR
+                _webReading = true; _webNote = "Looking for the disc you chose before ...";
+                WebFiles.LoadKeptDisc(gameObject.name, "OnWebDisc");
+#endif
+                return;
+            }
             try { Load(); }
             catch (Exception e) { _error = e.Message; Debug.LogException(e); }
         }
@@ -259,6 +282,7 @@ namespace DW1Remake.Game
             _menus.BoyOrigin = () => BoySquare();
             _menus.Inv = InventoryView.Load(_disc, Battle.StatFont, _state, _itemCatalog, _menus.Icons);
             if (_menus.Inv != null) { _menus.Inv.Sound = n => { if (_audio != null) _audio.Play(0, n); }; _menus.Inv.Art = _battle != null ? _battle.Art : null; }
+            _menus.Care = _care;
             _menus.ItemFunction = id => _care.ItemFunction(id);       // a thrown item in a fight: ITEM_FUNCTIONS[item] (tickThrownItem)
             {
                 byte[] exe = _disc.ReadFile("/SLUS_010.32"); uint load = System.BitConverter.ToUInt32(exe, 0x18);
@@ -2329,7 +2353,7 @@ namespace DW1Remake.Game
             }
             else
             {
-                mat = new Material(Shader.Find("Universal Render Pipeline/Unlit"));
+                mat = new Material(MmdModel.UnlitShader);
                 mat.SetTexture("_BaseMap", tex);
             }
             quad.GetComponent<MeshRenderer>().sharedMaterial = mat;
@@ -2455,18 +2479,12 @@ namespace DW1Remake.Game
 
         static Vector2 ReadMove()
         {
+            // the pad's directions (Pad: mapped keys, controller, touch buttons)
             float x = 0, y = 0;
-#if ENABLE_INPUT_SYSTEM
-            var k = Keyboard.current;
-            if (k == null) return Vector2.zero;
-            if (k.rightArrowKey.isPressed || k.dKey.isPressed) x += 1;
-            if (k.leftArrowKey.isPressed || k.aKey.isPressed) x -= 1;
-            if (k.upArrowKey.isPressed || k.wKey.isPressed) y += 1;
-            if (k.downArrowKey.isPressed || k.sKey.isPressed) y -= 1;
-#elif ENABLE_LEGACY_INPUT_MANAGER
-            x = Input.GetAxisRaw("Horizontal");
-            y = Input.GetAxisRaw("Vertical");
-#endif
+            if (Pad.Held(PadButton.Right)) x += 1;
+            if (Pad.Held(PadButton.Left)) x -= 1;
+            if (Pad.Held(PadButton.Up)) y += 1;
+            if (Pad.Held(PadButton.Down)) y -= 1;
             return new Vector2(x, y);
         }
 
@@ -2920,31 +2938,14 @@ namespace DW1Remake.Game
 
         static int MenuStep()
         {
-#if ENABLE_INPUT_SYSTEM
-            var k = Keyboard.current;
-            if (k == null) return 0;
-            if (k.upArrowKey.wasPressedThisFrame || k.wKey.wasPressedThisFrame) return -1;
-            if (k.downArrowKey.wasPressedThisFrame || k.sKey.wasPressedThisFrame) return 1;
+            if (Pad.Pressed(PadButton.Up)) return -1;
+            if (Pad.Pressed(PadButton.Down)) return 1;
             return 0;
-#elif ENABLE_LEGACY_INPUT_MANAGER
-            if (Input.GetKeyDown(KeyCode.UpArrow) || Input.GetKeyDown(KeyCode.W)) return -1;
-            if (Input.GetKeyDown(KeyCode.DownArrow) || Input.GetKeyDown(KeyCode.S)) return 1;
-            return 0;
-#else
-            return 0;
-#endif
         }
 
         static bool ActionPressed()
         {
-#if ENABLE_INPUT_SYSTEM
-            var k = Keyboard.current;
-            return k != null && (k.spaceKey.wasPressedThisFrame || k.enterKey.wasPressedThisFrame || k.zKey.wasPressedThisFrame);
-#elif ENABLE_LEGACY_INPUT_MANAGER
-            return Input.GetKeyDown(KeyCode.Space) || Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.Z);
-#else
-            return false;
-#endif
+            return Pad.Pressed(PadButton.Cross) || Pad.Pressed(PadButton.Start) || Pad.Pressed(PadButton.Circle);
         }
 
         // does the map 'id' have an exit that leads back to the current map?

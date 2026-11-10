@@ -39,6 +39,7 @@ namespace DW1Remake.Game
             // hit reaction to end), flatAttackTimer, entity.flatSprite (-1 = the model is drawn), statusFxId (the one condition effect over it)
             public int StunFrames, FlatTimer, FlatAttack, FlatSprite = -1, FlatFlip, FxKind; public bool Confused, Stunned, Flattened, Protected;
             public float HitUntil;              // stats.current.isHit: until its hit reaction is over nothing hits it again (the effects' hit subs skip it)
+            public object FxRun; public int FxSection = -1;      // FighterData.activeEffectSlot / stats.current.efeSubEffect: its last technique's effect program
             public float ShownHp;               // the HP shown on screen: it drains smoothly after a hit (393, 379, 365 ...)
             public byte BarFrames = 0xFF;       // the enemy life bar's frame count (player.unk1[i].unk25): 0 on a hit, shown while below 21; a byte, so it wraps (BTL_setupBattle sets 0xFF)
             public Vector3 Slot;
@@ -147,7 +148,11 @@ namespace DW1Remake.Game
         // The friend's PC runs this class as a copy (Puppet): no thinking, moving or damage; positions, animations, HP and the rest come from the host
         public bool Puppet;
         public System.Action<Fighter, int, Fighter> NetSwing;      // a technique starts (who, technique, at whom)
+        public System.Action<Fighter> NetStopFx;                   // a fighter's technique effect is stopped (RemoveMoveEffect)
         public System.Action<Fighter> NetKnockOut;                 // the arena's knock-out (OnKnockOut)
+        public System.Action<Fighter> NetAura;                     // a finishing move's aura starts (ShowRing)
+        public System.Action NetVersus;                            // a draw's letters start (OnVersus)
+        bool _puppetEnd; int _puppetResult, _puppetWinner;         // the host's end, kept until the copy's draw letters are over
         public System.Action<string> NetOrder;                     // the copy: an order the friend gave (to the host)
         public bool EnemyCommanded;                                // the host with orders on: the friend's Digimon (Enemy) follows the friend's orders
         public const string FinishOrderName = "#finish";
@@ -341,6 +346,7 @@ namespace DW1Remake.Game
         void StartTournament()
         {
             NoFlee = true; _boyDone = true;
+            _puppetEnd = false;
             Timer = 99; _tFrames = 1; _tTimerAcc = 0f; Result = 0; WinnerSide = -1; TimeUpWord = TimeUpBox = false; TourDamage[0] = TourDamage[1] = 0;
             _tCount = 0; _tLoser = -1; _tCheer = 0; _tAcc = 0f; _tPress = false;
             _tStartHp0 = Partner.Hp; _tStartHp1 = Enemy.Hp;
@@ -583,8 +589,11 @@ namespace DW1Remake.Game
             }
             if (_shoutFrame >= 0) { _shoutAcc += dt; while (_shoutAcc >= Frame && _shoutFrame >= 0) { _shoutAcc -= Frame; if (++_shoutFrame > 20) _shoutFrame = -1; } }
             if (Effects != null) Effects.Tick(dt, Camera.main);
+            TickAura(dt);
             for (int i = _pops.Count - 1; i >= 0; i--) { if (_pops[i].Wait > 0f) { _pops[i].Wait -= dt; continue; } _pops[i].T += dt; if (_pops[i].T >= 31f / 20f) _pops.RemoveAt(i); }
             foreach (var f in new[] { Partner, Enemy }) if (f != null && f.A != null) f.A.TakeBodyMove();
+            if (_tVersus && (VersusBusy == null || !VersusBusy())) _tVersus = false;
+            if (_puppetEnd && !_tVersus) { _puppetEnd = false; Result = _puppetResult; WinnerSide = _puppetWinner; Active = false; return; }
             _hudAcc += dt;
             while (_hudAcc >= Frame) { _hudAcc -= Frame; DrainHp(Partner); DrainHp(Enemy); }
             TickFx(dt);
@@ -606,9 +615,17 @@ namespace DW1Remake.Game
             var t = MakeTech(tech, IsFinisherId(tech));
             if (Tournament && OnTechStart != null) OnTechStart(from, tech);      // the arena's camera choice, as on the host
             if (t.Self) return;
-            try { Effects.Start(tech, ActorFor(from), ActorFor(to), new List<EffectActor> { ActorFor(to) }, a => false, (at, v) => { }, a => true); }
+            from.FxRun = null; from.FxSection = -1;
+            try
+            {
+                if (Effects.Start(tech, ActorFor(from), ActorFor(to), new List<EffectActor> { ActorFor(to) }, a => false, (at, v) => { }, a => true))
+                { from.FxRun = Effects.LastRun; from.FxSection = Effects.LastSection; }
+            }
             catch (Exception e) { Debug.LogWarning("[online] effect " + tech + ": " + e.Message); }
         }
+
+        /// <summary>The host stopped this fighter's technique effect (it was hit, or started its next technique).</summary>
+        public void PuppetStopFx(Fighter f) { RemoveMoveEffect(f); }
 
         /// <summary>A number over a head on the host's screen (damage, healing, power-ups).</summary>
         public void PuppetPop(string text, Vector3 pos, Color col, int icon) { _pops.Add(new Pop { Text = text, Pos = pos, Col = col, Icon = icon, Sent = true }); }
@@ -622,7 +639,17 @@ namespace DW1Remake.Game
         }
 
         /// <summary>The host's fight is over: result 1 the copy's own partner won, -1 lost; winner side as WinnerSide (0 partner, 1 enemy, 2 a draw).</summary>
-        public void PuppetEnd(int result, int winnerSide) { Result = result; WinnerSide = winnerSide; Active = false; }
+        /// A draw counts as lost, as on the host (STD_deinitializeCombat(1, 1)); the end waits until the draw letters are over.
+        public void PuppetEnd(int result, int winnerSide)
+        {
+            _puppetEnd = true; _puppetResult = winnerSide == 2 ? -1 : result; _puppetWinner = winnerSide;
+        }
+
+        /// <summary>The host's fighter started a finishing move: its aura (80 frames).</summary>
+        public void PuppetAura(Fighter f) { if (f == null) return; _chargeBy = f; ShowRing(true); }
+
+        /// <summary>The host's fight ended in a draw: the draw letters, as on the host.</summary>
+        public void PuppetVersus() { if (OnVersus != null && !_tVersus) { OnVersus(); _tVersus = true; } }
 
         /// <summary>The knock-out on the host's screen, for the copy's camera and WIN / LOSE scene.</summary>
         public void PuppetKnockOut(Fighter loser) { if (OnKnockOut != null && loser != null) OnKnockOut(loser); }
@@ -723,6 +750,7 @@ namespace DW1Remake.Game
             _tCount = 0; _tAcc = 0f;
             if (OnStopMusic != null) OnStopMusic();
             if (winner == 2 && OnVersus != null) { OnVersus(); _tVersus = true; }      // STD_addVersusModelScene, waited for until it is over
+            if (winner == 2 && NetVersus != null) NetVersus();
             if (winner != 2)
             {
                 var f = winner == 0 ? Partner : Enemy;
@@ -1234,6 +1262,7 @@ namespace DW1Remake.Game
                 // BTL_tickMeleeAttack / BTL_tickRangedAttack: any fighter's finishing move first gets the aura and holds 80 frames (BTL_FINISHER_TIMER) facing
                 // its target while nobody else acts; only the partner fills a bar (BTL_initializeFinisherChargeup)
                 _charging = true; _chargeBy = me; _chargeT = 0f; _chargeCount = 0; _chargeTech = t; _chargeFoe = target; ShowRing(true);
+                if (NetAura != null) NetAura(me);
                 return;
             }
             StartSwing(me, target, t, 1f);
@@ -1261,17 +1290,10 @@ namespace DW1Remake.Game
         bool _charging; float _chargeT; int _chargeCount; Tech _chargeTech; Fighter _chargeFoe, _chargeBy;
         const float ChargeSeconds = 80f / 20f;
 
-        // Square (X on the keyboard): fires the finishing move once FINISH!! shows
+        // Square: fires the finishing move once FINISH!! shows
         static bool SquarePressed()
         {
-#if ENABLE_INPUT_SYSTEM
-            var k = UnityEngine.InputSystem.Keyboard.current;
-            return k != null && k.xKey.wasPressedThisFrame;
-#elif ENABLE_LEGACY_INPUT_MANAGER
-            return Input.GetKeyDown(KeyCode.X);
-#else
-            return false;
-#endif
+            return Pad.Pressed(PadButton.Square);
         }
 
         // the finisher aura (BTL_addFinisherAura, 80 frames; BTL_renderFinisherAura). BTL_REL.BIN starts with its TIM (VRAM 768,448) and holds its TMD at 0xD20:
@@ -1346,15 +1368,7 @@ namespace DW1Remake.Game
 
         static int ChargePresses()
         {
-            int n = 0;
-#if ENABLE_INPUT_SYSTEM
-            var k = UnityEngine.InputSystem.Keyboard.current;
-            if (k != null) { if (k.qKey.wasPressedThisFrame) n++; if (k.eKey.wasPressedThisFrame) n++; }
-#elif ENABLE_LEGACY_INPUT_MANAGER
-            if (Input.GetKeyDown(KeyCode.Q)) n++;
-            if (Input.GetKeyDown(KeyCode.E)) n++;
-#endif
-            return n;
+            return (Pad.Pressed(PadButton.L1) ? 1 : 0) + (Pad.Pressed(PadButton.R1) ? 1 : 0);
         }
 
         // the fighter whose finishing move is running (NO_AI_FLAG, FINISHING_ENTITY), if any
@@ -1459,6 +1473,7 @@ namespace DW1Remake.Game
         // BTL_startEFE: the technique's own effect from the disc. Ranged ones then decide the hit themselves; a blow by hand still lands with its animation.
         void StartEffect(Swing sw)
         {
+            RemoveMoveEffect(sw.From);     // BTL_setupMoveExecution: BTL_removeMoveEffect before BTL_startEFE
             if (Effects == null || sw.Tech.Self) return;
             bool ok = false;
             try
@@ -1483,6 +1498,7 @@ namespace DW1Remake.Game
                 }, a => who.ContainsKey(a) && who[a].Hp > 0);
             }
             catch (Exception e) { Debug.LogWarning("Effect of " + sw.Tech.Name + ": " + e.Message); }
+            if (ok) { sw.From.FxRun = Effects.LastRun; sw.From.FxSection = Effects.LastSection; }
             Debug.Log("[effect] start " + sw.Tech.Name + " (technique " + sw.Tech.Id + ") by " + sw.From.Name + ": " + (ok ? "program running" : "no program, plain shot"));
             sw.Effect = ok;      // BTL_tickMeleeAttack only starts the move: a blow, like a shot, lands through its program's hit subs (addAttackObject)
         }
@@ -1683,11 +1699,24 @@ namespace DW1Remake.Game
         // the hit code (battle_main.c): from FLEE_TIMER 0x13 on, every attack object is still taken off its target but does nothing (no hit, no miss, no buff)
         bool FleeDropsHits { get { return _running && _runFrames >= 0x13; } }
 
+        // BTL_removeMoveEffect: the fighter's technique effect (the part its program started with) stops; -1 / -1 after
+        void RemoveMoveEffect(Fighter f)
+        {
+            if (f == null) return;
+            if (f.FxRun != null && Effects != null) Effects.StopSub(f.FxRun, f.FxSection);
+            if (f.FxRun != null && NetStopFx != null) NetStopFx(f);
+            f.FxRun = null; f.FxSection = -1;
+        }
+
         void Apply(Fighter a, Fighter d, Tech tech, float boost = 1f, Vector3? at = null)
         {
             if (d.Hp <= 0 || FleeDropsHits) return;
             if (_time < d.HitUntil) return;       // isHit: it is still in the reaction to the last blow (fall and getting up)
             Vector3 hitAt = at ?? HitPoint(d);
+            // BTL_tickAttackHits: every blow that reaches it, landed or blocked, first stops its own technique's effect (BTL_removeMoveEffect) and
+            // clears FIGHTER_FLAG_ATTACKING: a shot of its own still on its way is gone, and a technique that has not let go never lands
+            // (the swing itself ends below on a landed hit; a fighter in a technique's animation cannot block: BTL_calculateHitChance)
+            RemoveMoveEffect(d);
             // the hit code (battle_main.c), before the hit roll: a blow on the fighter whose finishing move is running ends it
             // (BTL_removeFinisherChargeup, BTL_removeFinisherAura, NO_AI_FLAG and FINISHING_ENTITY cleared, BTL_removeMoveEffect)
             if (_charging && _chargeBy == d) { _charging = false; ShowRing(false); _chargeBy = null; }

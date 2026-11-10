@@ -568,24 +568,42 @@ namespace DW1Remake.Game
             foreach (int t in InfoOf(type).EvolvesTo) if (t > 0 && t < 63) yield return t;
         }
 
-        int InTrainingTarget(int type)
+        /// <summary>One candidate as the evolution check saw it (for the OPTIONS evolution guide; the check itself does not need it).</summary>
+        public sealed class EvoScore
+        {
+            public int Target;
+            public bool Care, Weight, Stats, Bonus;     // the four points
+            public int Points;                          // after the raised rule
+            public int RaisedRule;                      // 0 not applied, -1 points set to 0 (raised before, the best so far not), +1 a point added
+            public int Average = -1;                    // Rookie / Champion: the average of the stats it asks for (-1 = not reached)
+            public bool Qualifies;                      // 3 points or more
+        }
+
+        int InTrainingTarget(int type, List<EvoScore> log = null)
         {
             int best = -1, bestScore = 0;
             foreach (int t in Targets(type))
             {
-                int score = RequirementScore(type, t, best);
+                var rec = log != null ? new EvoScore { Target = t } : null;
+                int score = RequirementScore(type, t, best, rec);
+                if (rec != null) { rec.Qualifies = score >= 3; log.Add(rec); }
                 if (bestScore < score && score >= 3) { best = t; bestScore = score; }
             }
             return best;
         }
 
-        // getRookieEvolutionTarget and getChampionEvolutionTarget. As in the game, the sums carry over to the next candidate unless one became the best.
-        int HigherTarget(int type, bool rookie)
+        // getRookieEvolutionTarget and getChampionEvolutionTarget. Fixed in our port (user's decision 2026-11-10): the game clears the stat sum and
+        // count only when a candidate becomes the best, so a losing candidate's average was added into the next one's; here each candidate starts at 0.
+        int HigherTarget(int type, bool rookie, List<EvoScore> log = null)
         {
             int best = -1, bestScore = 0, total = 0, count = 0;
             foreach (int t in Targets(type))
             {
-                if (RequirementScore(type, t, best) < 3) continue;
+                var rec = log != null ? new EvoScore { Target = t } : null;
+                int score = RequirementScore(type, t, best, rec);
+                if (rec != null) { rec.Qualifies = score >= 3; log.Add(rec); }
+                if (score < 3) continue;
+                total = 0; count = 0;
                 var r = ReqOf(t);
                 if (r.Hp != -1) { total += _s.Stats[4] / 10; count++; }
                 if (r.Mp != -1) { total += _s.Stats[5] / 10; count++; }
@@ -594,19 +612,36 @@ namespace DW1Remake.Game
                 if (r.Speed != -1) { total += _s.Stats[2]; count++; }
                 if (r.Brain != -1) { total += _s.Stats[3]; count++; }
                 if (count != 0) total /= count;
+                if (rec != null) rec.Average = total;
                 if (bestScore < total) { best = t; bestScore = total; total = 0; count = 0; }
             }
             if (rookie && best == -1 && P.EvoTimer >= 96) return Numemon;
             return best;
         }
 
-        int RequirementScore(int current, int target, int currentBest)
+        /// <summary>What the evolution check would choose for a Digimon of this type with the partner's numbers now (the timer not counted;
+        /// no random special evolutions). log gets every candidate in the game's order. Fresh: its one target; Ultimate: -1.</summary>
+        public int Project(int type, List<EvoScore> log)
+        {
+            switch (_levelOf(type))
+            {
+                case 1: return FreshTarget(type);
+                case 2: return InTrainingTarget(type, log);
+                case 3: return HigherTarget(type, true, log);
+                case 4: return HigherTarget(type, false, log);
+            }
+            return -1;
+        }
+
+        int RequirementScore(int current, int target, int currentBest, EvoScore rec = null)
         {
             var r = ReqOf(target); var p = P;
             bool maxCare = (r.Flags & 0x10) != 0, maxBattles = (r.Flags & 1) != 0;
             int points = 0;
-            if (maxCare ? p.CareMistakes <= r.Care : p.CareMistakes >= r.Care) points++;
-            if (r.Weight - 5 <= _s.Weight && _s.Weight <= r.Weight + 5) points++;
+            bool careOk = maxCare ? p.CareMistakes <= r.Care : p.CareMistakes >= r.Care, weightOk = r.Weight - 5 <= _s.Weight && _s.Weight <= r.Weight + 5;
+            if (careOk) points++;
+            if (weightOk) points++;
+            bool statsOk;
             int[] stats = { _s.Stats[4] / 10, _s.Stats[5] / 10, _s.Stats[0], _s.Stats[1], _s.Stats[2], _s.Stats[3] };
             int[] req = { r.Hp, r.Mp, r.Off, r.Def, r.Speed, r.Brain };
             if (_levelOf(target) == 3)
@@ -618,14 +653,14 @@ namespace DW1Remake.Game
                     for (int j = 0; j < 6; j++) if (stats[i] < stats[j]) top = false;
                     if (top) highest = i;
                 }
-                if (req[highest] == 1) points++;
+                statsOk = req[highest] == 1;
             }
             else
             {
-                bool all = true;
-                for (int i = 0; i < 6; i++) if (stats[i] < req[i]) all = false;
-                if (all) points++;
+                statsOk = true;
+                for (int i = 0; i < 6; i++) if (stats[i] < req[i]) statsOk = false;
             }
+            if (statsOk) points++;
             bool bonus = false;
             if (r.Digimon != -1 && current == r.Digimon) bonus = true;
             if (r.Discipline != -1 && _s.Discipline >= r.Discipline) bonus = true;
@@ -633,16 +668,18 @@ namespace DW1Remake.Game
             if (r.Battles != -1 && (maxBattles ? p.Battles <= r.Battles : p.Battles >= r.Battles)) bonus = true;
             if (r.Techs != -1 && MasteredMoves() >= r.Techs) bonus = true;
             if (bonus) points++;
+            int rule = 0;
             if (points >= 3 && currentBest != -1)
             {
                 bool raised = _s.Raised[GainOf(target).Target], bestRaised = _s.Raised[GainOf(currentBest).Target];
-                if (raised && !bestRaised) points = 0;
-                if (!raised && bestRaised) points++;
+                if (raised && !bestRaised) { points = 0; rule = -1; }
+                if (!raised && bestRaised) { points++; rule = 1; }
             }
+            if (rec != null) { rec.Care = careOk; rec.Weight = weightOk; rec.Stats = statsOk; rec.Bonus = bonus; rec.Points = points; rec.RaisedRule = rule; }
             return points;
         }
 
-        int MasteredMoves() { int n = 0; for (int i = 0; i < 64; i++) if (_s.Techs[i]) n++; return n; }
+        public int MasteredMoves() { int n = 0; for (int i = 0; i < 64; i++) if (_s.Techs[i]) n++; return n; }
 
         /// <summary>handleSpecialEvolutions: mode 2 after sleeping, 3 after Praise or Scold. Returns the target or -1.</summary>
         public int SpecialEvolution(int mode)

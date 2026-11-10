@@ -175,7 +175,7 @@ namespace DW1Remake.Game
 
         void DrawLines(Mesh mesh, Color c)
         {
-            if (_lineMat == null) { var sh = Shader.Find("Universal Render Pipeline/Unlit"); if (sh == null) return; _lineMat = new Material(sh); }
+            if (_lineMat == null) { var sh = MmdModel.UnlitShader; if (sh == null) return; _lineMat = new Material(sh); }
             Mesh strip;
             if (!_thickLines.TryGetValue(mesh, out strip)) { strip = new Mesh(); _thickLines[mesh] = strip; }
             if (!ThickLines(mesh, strip)) return;

@@ -284,11 +284,12 @@ namespace DW1Remake.Game
             ArenaStage.Frame(cam, c, t, _viewDist);
         }
 
-        // STD_renderPlayerMarker: the two fighters are the same kind of Digimon (STD_initializePlayerMarker)
+        // STD_renderPlayerMarker: the two fighters are the same kind of Digimon (STD_initializePlayerMarker). Not in an online match (ours: the
+        // friend is not "COM")
         void Markers()
         {
             var s = _arenaScr;
-            s.MarkersOn = _battle != null && _battle.Active && _battle.Tournament && _p1 != null && _p2 != null && _p1.Type == _p2.Type;
+            s.MarkersOn = _battle != null && _battle.Active && _battle.Tournament && !_onlineMatch && _p1 != null && _p2 != null && _p1.Type == _p2.Type;
             if (!s.MarkersOn) return;
             var fs = new[] { _p1, _p2 };
             for (int id = 0; id < 2; id++)

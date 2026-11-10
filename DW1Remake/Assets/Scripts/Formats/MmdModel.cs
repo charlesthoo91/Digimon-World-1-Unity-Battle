@@ -216,10 +216,23 @@ namespace DW1Remake.Formats
             m.renderQueue = 3000;
         }
 
+        /// <summary>URP's Unlit shader; in the browser version our DW1Remake/Unlit (URP's own shaders draw nothing in the web build).</summary>
+        public static Shader UnlitShader
+        {
+            get
+            {
+#if UNITY_WEBGL && !UNITY_EDITOR
+                var s = Shader.Find("DW1Remake/Unlit");
+                if (s != null) return s;
+#endif
+                return Shader.Find("Universal Render Pipeline/Unlit");
+            }
+        }
+
         public static Material MakeMaterial(Texture2D tex)
         {
-            Shader sh = Shader.Find(UseLit ? "Universal Render Pipeline/Lit" : "Universal Render Pipeline/Unlit");
-            if (sh == null) sh = Shader.Find("Universal Render Pipeline/Unlit");
+            Shader sh = UseLit ? Shader.Find("Universal Render Pipeline/Lit") : UnlitShader;
+            if (sh == null) sh = UnlitShader;
             if (sh == null) sh = Shader.Find("Unlit/Transparent Cutout");
             var mat = new Material(sh);
             mat.SetTexture("_BaseMap", tex);
@@ -258,7 +271,7 @@ namespace DW1Remake.Formats
                 mat = MakeMaterial(BuildAtlas(tim, rows));
             else
                 Debug.LogWarning(e.Name + ": texture not found in ALLTIM.TIM, using a plain material.");
-            if (mat == null) mat = new Material(Shader.Find("Universal Render Pipeline/Unlit"));
+            if (mat == null) mat = new Material(UnlitShader);
 
             var nodes = new Transform[bones];
             for (int i = 0; i < bones; i++)

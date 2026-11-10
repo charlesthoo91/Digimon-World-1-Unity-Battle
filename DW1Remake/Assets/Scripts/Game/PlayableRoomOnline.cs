@@ -177,6 +177,34 @@ namespace DW1Remake.Game
             return lines;
         }
 
+        // the PC's clipboard; in the browser its own (asked for once by the browser), whose answer comes later (OnWebPaste)
+        System.Action<string> _pasteTo;
+        static void CopyText(string t)
+        {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            WebFiles.CopyText(t);
+#else
+            GUIUtility.systemCopyBuffer = t;
+#endif
+        }
+
+        void PasteText(System.Action<string> to)
+        {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            _pasteTo = to; WebFiles.PasteText(gameObject.name, "OnWebPaste");
+#else
+            to(GUIUtility.systemCopyBuffer ?? "");
+#endif
+        }
+
+        /// <summary>The browser's clipboard text (DW1Web.jslib DW1_PasteText); "" = empty or not allowed.</summary>
+        public void OnWebPaste(string text)
+        {
+            var to = _pasteTo; _pasteTo = null;
+            if (text.Length == 0) { _onNote = "Nothing to paste. Copy the code again."; _onNoteUntil = Time.time + 4f; return; }
+            if (to != null) to(text);
+        }
+
         void OnlineScreenTick()
         {
             var lines = new List<string>(); var opts = new List<string>(); var acts = new List<System.Action>();
@@ -219,15 +247,14 @@ namespace DW1Remake.Game
                 lines.AddRange(Wrap(_net.Status, wrap));
                 if (_net.MyCode != null)
                 {
-                    lines.Add("");
                     lines.Add(_onlineRole == 1 ? "Your code" : "Your reply code");
                     lines.AddRange(Wrap(NetLink.Spaced(_net.MyCode), wrap));      // the groups of five go on as many lines as the box needs
-                    opts.Add("Copy my code"); acts.Add(() => { GUIUtility.systemCopyBuffer = _net.MyCode; _onNote = "Your code is copied."; _onNoteUntil = Time.time + 2.5f; });
-                    if (_net.Now == NetLink.State.Ready)
-                    {
-                        opts.Add(_onlineRole == 1 ? "Paste reply code" : "Paste friend's code");
-                        acts.Add(() => { _friendCode = GUIUtility.systemCopyBuffer ?? ""; _net.UseFriendCode(_friendCode); });
-                    }
+                    opts.Add("Copy my code"); acts.Add(() => { CopyText(_net.MyCode); _onNote = "Your code is copied."; _onNoteUntil = Time.time + 2.5f; });
+                }
+                if (_net.WantsFriendCode)
+                {
+                    opts.Add(_onlineRole == 1 ? "Paste reply code" : "Paste friend's code");
+                    acts.Add(() => PasteText(t => { if (_net == null) return; _friendCode = t ?? ""; _net.UseFriendCode(_friendCode); }));
                 }
             }
             if (_onNote != null && Time.time < _onNoteUntil) lines.Add(_onNote);

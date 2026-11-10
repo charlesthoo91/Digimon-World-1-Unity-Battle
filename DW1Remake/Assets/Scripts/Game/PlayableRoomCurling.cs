@@ -180,13 +180,7 @@ namespace DW1Remake.Game
 
         static bool KarCrossHeld()
         {
-#if ENABLE_INPUT_SYSTEM
-            var k = Keyboard.current; return k != null && k.spaceKey.isPressed;
-#elif ENABLE_LEGACY_INPUT_MANAGER
-            return Input.GetKey(KeyCode.Space);
-#else
-            return false;
-#endif
+            return Pad.Held(PadButton.Cross);
         }
         bool KarHeld(int bit) { return (_karPad & bit) != 0; }
         bool KarPressed(int bit) { return (_karPad & bit) != 0 && (_karPadPrev & bit) == 0; }

@@ -53,6 +53,7 @@ namespace DW1Remake.Game
             d.Clock = _clock; d.Day = _dayCount; d.PartnerType = PartnerType; d.MainState = _mainState;
             d.PrevScreen = _prevScreen; d.PrevExit = _prevExit; d.CurExit = _curExit;
             File.WriteAllText(SavePath, JsonUtility.ToJson(d));
+            WebFiles.Sync();
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
             Say("Saved to " + SavePath);
 #endif

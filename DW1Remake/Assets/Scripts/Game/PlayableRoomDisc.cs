@@ -32,6 +32,9 @@ namespace DW1Remake.Game
             string p = PlayerPrefs.GetString(DiscPref, "");
             if (p.Length == 0) return null;
             if (File.Exists(p)) return p;
+#if UNITY_WEBGL && !UNITY_EDITOR
+            return null;        // the browser forgets a chosen disc when the page closes: pick it again, no warning
+#endif
             why = "The disc file chosen last time is no longer there:\n" + p;
             return null;
         }
@@ -50,6 +53,7 @@ namespace DW1Remake.Game
                 string bad = DiscCheck.Check(disc);
                 if (bad != null) { fs.Dispose(); return bad; }
                 _fs = fs; _disc = disc;
+                WebFiles.KeepDisc();        // the browser version keeps the checked disc for the next visit
                 PlayerPrefs.SetString(DiscPref, path);
                 PlayerPrefs.Save();
                 return null;
@@ -77,13 +81,38 @@ namespace DW1Remake.Game
 #if UNITY_EDITOR
             return UnityEditor.EditorUtility.OpenFilePanelWithFilters("Choose your Digimon World disc", "", new[] { "Disc image", "bin,iso,cue", "All files", "*" });
 #elif UNITY_STANDALONE_WIN
-            return WinOpenFile.Show();
+            return WinOpenFile.Show("Choose your Digimon World disc", "Disc image (*.bin, *.iso, *.cue)\0*.bin;*.iso;*.cue\0All files\0*.*\0\0");
+#else
+            return null;
+#endif
+        }
+
+        // ours: a save file to import (MODS > IMPORT SAVE)
+        string BrowseForSave()
+        {
+#if UNITY_EDITOR
+            return UnityEditor.EditorUtility.OpenFilePanelWithFilters("Choose a save file", "", new[] { "Save or memory card file", "json,mcd,mcr,mc,srm,gme,vmp,mcs", "All files", "*" });
+#elif UNITY_STANDALONE_WIN
+            return WinOpenFile.Show("Choose a save file", "Save or memory card file\0*.json;*.mcd;*.mcr;*.mc;*.srm;*.gme;*.vmp;*.mcs\0All files\0*.*\0\0");
 #else
             return null;
 #endif
         }
 
         GUIStyle _pickTitle, _pickText, _pickError;
+        bool _webReading; string _webNote = "";
+
+        /// <summary>The web build's choose-file answer (DW1Web.jslib): a path in the page's memory, "" = cancelled, "#" note, "!" error.</summary>
+        public void OnWebDisc(string msg)
+        {
+            if (_picker == null) return;
+            if (msg.StartsWith("#")) { _webReading = true; _webNote = msg.Substring(1); return; }
+            _webReading = false; _webNote = "";
+            if (msg.Length == 0) return;
+            if (msg.StartsWith("!")) { _picker.Error = msg.Substring(1); return; }
+            _picker.Path = msg;
+            UsePickedDisc();
+        }
 
         void DrawDiscPicker()
         {
@@ -107,11 +136,18 @@ namespace DW1Remake.Game
             y += 64 * s;
             GUI.Label(new Rect(x, y, w, 90 * s),
                 "This remake needs your own copy of the USA PlayStation disc (SLUS-01032) as a .bin, .iso or .cue file.\n" +
-                "The file is only read on this computer. Nothing from it is uploaded or copied.", _pickText);
+                "The file is only read on this computer. Nothing from it is uploaded.", _pickText);
             y += 100 * s;
 
 #if UNITY_WEBGL && !UNITY_EDITOR
-            GUI.Label(new Rect(x, y, w, 60 * s), "Loading a disc in the browser version is not built yet.", _pickError);
+            // the browser's own choose-file box (WebFiles.PickDisc); the answer comes back in OnWebDisc
+            var button = new GUIStyle(GUI.skin.button) { fontSize = _pickText.fontSize };
+            float bh = 36 * s;
+            if (!_webReading && GUI.Button(new Rect(x + w / 2f - 130 * s, y, 260 * s, bh), "Choose disc file...", button))
+                WebFiles.PickDisc(gameObject.name, "OnWebDisc");
+            y += bh + 24 * s;
+            if (_webNote.Length > 0) { GUI.Label(new Rect(x, y, w, 40 * s), _webNote, _pickText); y += 44 * s; }
+            if (_picker != null && p.Error.Length > 0) GUI.Label(new Rect(x, y, w, 120 * s), p.Error, _pickError);
 #else
             var field = new GUIStyle(GUI.skin.textField) { fontSize = _pickText.fontSize };
             var button = new GUIStyle(GUI.skin.button) { fontSize = _pickText.fontSize };
@@ -153,15 +189,15 @@ namespace DW1Remake.Game
             [DllImport("comdlg32.dll", CharSet = CharSet.Unicode)] static extern bool GetOpenFileNameW(ref OpenFileName ofn);
             [DllImport("user32.dll")] static extern IntPtr GetActiveWindow();
 
-            public static string Show()
+            public static string Show(string titleText, string filterText)
             {
                 const int Max = 4096;
                 IntPtr file = Marshal.AllocHGlobal(Max * 2), filter = IntPtr.Zero, title = IntPtr.Zero;
                 try
                 {
                     Marshal.WriteInt16(file, 0);
-                    filter = Marshal.StringToHGlobalUni("Disc image (*.bin, *.iso, *.cue)\0*.bin;*.iso;*.cue\0All files\0*.*\0\0");
-                    title = Marshal.StringToHGlobalUni("Choose your Digimon World disc");
+                    filter = Marshal.StringToHGlobalUni(filterText);
+                    title = Marshal.StringToHGlobalUni(titleText);
                     var o = new OpenFileName
                     {
                         lStructSize = Marshal.SizeOf(typeof(OpenFileName)),

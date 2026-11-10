@@ -130,7 +130,7 @@ namespace DW1Remake.Game
         {
             if (!_shardsOn || _dooa.Count == 0) return;
             var mat = _shardFlicker ? null : PartnerMaterial();
-            if (_shardFlicker && _lineMat == null) { var sh = Shader.Find("Universal Render Pipeline/Unlit"); if (sh != null) _lineMat = new Material(sh); }
+            if (_shardFlicker && _lineMat == null) { var sh = MmdModel.UnlitShader; if (sh != null) _lineMat = new Material(sh); }
             Vector3 loc = ToGameV(_partner != null ? _partner.position : Vector3.zero);
             var v = new List<Vector3>(); var uv = new List<Vector2>(); var tri = new List<int>();
             foreach (var s in _dooa)

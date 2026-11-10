@@ -158,7 +158,23 @@ namespace DW1Remake.Game
             Exec(r, r.Ctxs[0], 0, 0, start);    // and its first step
             if (_section == -1 && r.Ctxs[0].Inst == 0) return false;   // no bones listed for this Digimon
             _runs.Add(r);
+            LastRun = r; LastSection = _section;
             return true;
+        }
+
+        /// <summary>The program the last Start began, and its EFE_ACTIVE_SECTION (the instance its first part took): BTL_setupMoveExecution keeps
+        /// them as the fighter's activeEffectSlot / efeSubEffect.</summary>
+        public object LastRun { get; private set; }
+        public int LastSection { get; private set; } = -1;
+
+        /// <summary>BTL_stopEFESubEffect(slot, b): part b of that program stops (inst = NULL, its instance's frame = -1). Parts it spawned run on.</summary>
+        public void StopSub(object run, int b)
+        {
+            var r = run as Run;
+            if (r == null || b < 0 || b >= r.Ctxs.Length || !_runs.Contains(r)) return;
+            var c = r.Ctxs[b];
+            c.Inst = 0;
+            if (c.Instance != 0) Put(r.M, c.Instance, -1);
         }
 
         public void Clear()

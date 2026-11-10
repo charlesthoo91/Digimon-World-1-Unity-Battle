@@ -278,6 +278,9 @@ namespace DW1Remake.Game
         public bool Ready { get { return Box.State == 1; } }
         public bool Closing { get { return Box.State == 3; } }
 
+        /// <summary>The Digimon under the Chart page's cursor (CHART_SELECTED_DIGIMON, cursor or detail box open), else -1. For the evolution guide (ours).</summary>
+        public int ChartDigimon { get { return Tab == 1 && State >= 2 && _digimon >= 1 && _digimon <= 62 ? _digimon : -1; } }
+
         /// <summary>Triangle menu state 5: box 1 grows out of the boy; the tab words go on the text page; the Player page first.</summary>
         public void Open(RectInt boy)
         {
@@ -468,7 +471,7 @@ namespace DW1Remake.Game
         void BuildText(ScriptState s)
         {
             string name = Tab == 1 && _digimon > 0 ? DigimonName(_digimon) : "";
-            BuildPage(Tab + "|" + _medal + "|" + name, px =>
+            BuildPage(Tab + "|" + _medal + "|" + name + "|" + ModSettings.EvolutionGuide, px =>
             {
                 Write(px, _playerLabels[0], 0, 0);
                 if (Tab == 1)
@@ -479,6 +482,8 @@ namespace DW1Remake.Game
                     Write(px, _cardLabels[3], 0, 0x24);
                     Write(px, _cardLabels[4], 0, 0x3C);
                     Write(px, name, 0, 0x30);
+                    // ours, the OPTIONS evolution guide: the square button (glyph 0x81A0) and INFO on a free row of the text page
+                    if (ModSettings.EvolutionGuide) Write(px, ((char)0x81A0) + "INFO", 0, 0x48);
                 }
                 else if (Tab == 2)
                 {
@@ -541,6 +546,8 @@ namespace DW1Remake.Game
             Words(5, 0, -0xE, 0x54, 0x3C, 0xC, 0xC);
             Words(5, 7, 0x3A, 0x54, 0xC, 0x48, 0xC);
             Words(5, 0, 0x46, 0x54, 0x3C, 0x54, 0xC);
+            // ours: the square button in pink (TEXT_COLORS 16) and INFO, bottom left, under the first columns
+            if (ModSettings.EvolutionGuide) { Words(5, 16, -0x88, 0x54, 0xC, 0, 0x48); Words(5, 0, -0x7C, 0x54, 0x30, 0xC, 0x48); }
         }
 
         int From(int id, int j) { int o = (id - 1) * 11 + j; return o >= 0 && o < _paths.Length ? _paths[o] : -1; }
@@ -742,7 +749,7 @@ namespace DW1Remake.Game
                 _model.transform.position = Away;
                 _mesh = new Mesh { name = "MEDAL.TMD" };
                 _model.AddComponent<MeshFilter>().sharedMesh = _mesh;
-                _mat = new Material(Shader.Find("Universal Render Pipeline/Unlit"));
+                _mat = new Material(MmdModel.UnlitShader);
                 _mat.SetFloat("_Cull", 0);
                 _mat.SetFloat("_AlphaClip", 1); _mat.SetFloat("_Cutoff", 0.5f); _mat.EnableKeyword("_ALPHATEST_ON");
                 _model.AddComponent<MeshRenderer>().sharedMaterial = _mat;
