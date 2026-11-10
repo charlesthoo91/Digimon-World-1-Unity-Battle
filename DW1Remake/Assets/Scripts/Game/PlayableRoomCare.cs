@@ -55,6 +55,7 @@ namespace DW1Remake.Game
             _line = null; _choiceOpts = null;
             _runner = new ScriptRunner(_scripts, _state, MapScripts.DgZero, section, new List<string>());
             _runnerSection = -1;        // DG.SCN entry 0, never a map's setup section
+            _sectionEvent = false;      // callScriptSection(0, section, 0)
             AdvanceScript();
         }
 

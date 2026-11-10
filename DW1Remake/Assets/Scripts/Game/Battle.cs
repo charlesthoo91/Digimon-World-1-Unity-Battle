@@ -125,7 +125,7 @@ namespace DW1Remake.Game
         public bool Active { get; private set; }
         public bool Won { get; private set; }
         public bool Fled { get; private set; }
-        public bool NoFlee;                     // scripted fights (script variable 250 = 1): running away is locked
+        public bool NoFlee;                     // FLEE_DISABLED[0] = flag 1 (handleBattleStart): running away is locked, enemies pay no MP, they stand after the fight
         public bool Tamerless;                  // script flag 2 at the start: the boy gives no orders and uses no items
 
         // the arena (STD_REL.BIN, std/std_main.c, the arena's own copy of the fight code): one enemy, no Run, no Change, no items, the 99 counter,

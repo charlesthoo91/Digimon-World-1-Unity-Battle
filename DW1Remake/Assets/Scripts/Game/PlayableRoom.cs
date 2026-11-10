@@ -987,7 +987,7 @@ namespace DW1Remake.Game
         {
             var log = new List<string>();
             _runner = new ScriptRunner(_scripts, _state, _scripts.ScriptIdForMap(_mapId), section, log);
-            _runnerSection = section; _bump = null;
+            _runnerSection = section; _bump = null; _sectionEvent = false;      // checkMapInteraction: callScriptSection(script, trigger, 0)
             _talkingTo = null; _scriptAny = false; _line = null; _choiceOpts = null;
             AdvanceScript();
             // he stops, unless the section's first commands already gave him a walk or an animation of his own (MIST05 Cherrymon: 0x52 runs him to
@@ -1001,9 +1001,11 @@ namespace DW1Remake.Game
 
         int _runnerSection = -1;      // the section the running script started from (0xFE = the map's own setup on arrival)
 
-        bool StartScript(int section, Npc who)
+        /// <param name="evt">SCRIPT_SECTION_IS_EVENT: callScriptSection's third value (1 = a map Digimon talked to, the map's setup and arrival)</param>
+        bool StartScript(int section, Npc who, bool evt = false)
         {
             if (_scripts == null || !_scripts.Available || _mapId < 0) return false;
+            _sectionEvent = evt || who != null || section == 0xFE;
             var log = new List<string>();
             _runner = new ScriptRunner(_scripts, _state, _scripts.ScriptIdForMap(_mapId), section, log);
             _runnerSection = section; _bump = null;
@@ -1068,7 +1070,7 @@ namespace DW1Remake.Game
                     _state.Vars[0] = _state.Var0Reset; _runner = null; _runnerSection = -1; _line = null; _lineCustom = false; _choiceOpts = null; _talkingTo = null; EndCutscene();
                     ReleaseSpeakers();
                     // section 0xFE has ended: the arrival section follows
-                    if (_thenSection != 255) { int s = _thenSection; _thenSection = 255; StartScript(s, null); return; }
+                    if (_thenSection != 255) { int s = _thenSection; _thenSection = 255; StartScript(s, null, true); return; }
                     if (_intro) FinishIntro();
                     return;
                 }
@@ -1076,11 +1078,12 @@ namespace DW1Remake.Game
                 if (a.Text != null) { _line = a.Text; _lineCustom = a.Custom; _speaker = a.Speaker; SetDialogueOwner(a.Speaker); _choiceOpts = null; _scriptAny = true; return; }
                 if (a.Options != null) { if (a.Selection) { _speaker = a.Speaker; SetDialogueOwner(a.Speaker); _line = null; } _lineCustom = false; _choiceOpts = a.Options; _choiceSel = 0; _scriptAny = true; return; }
                 // scriptTickChangeMap: the script stays on this command (its text box, glides and animations go on) until the fade has gone black
-                if (a.Map >= 0 && DoChangeMap(a)) { _scriptAny = true; return; }
+                if (a.Map >= 0 && DoChangeMap(a, false, true)) { _scriptAny = true; return; }
             }
         }
 
-        bool DoChangeMap(ScriptAction a, bool instant = false)
+        /// <param name="warp">a script's 4B / teleport: the area's name shows by consumeMapChangeShowName (a fled fight's change shows none)</param>
+        bool DoChangeMap(ScriptAction a, bool instant = false, bool warp = false)
         {
             if (a.Map < 0 || a.Map >= _mapNames.Count || a.Exit > 9) return false;
             string next = MapCatalog.PathFor(_mapNames, a.Map);
@@ -1088,8 +1091,9 @@ namespace DW1Remake.Game
             Debug.Log("Script: " + _mapNames[_mapId] + " -> " + _mapNames[a.Map] + " exit " + a.Exit);
             _prevExit = _curExit;                   // scriptTickChangeMap: PREVIOUS_EXIT = CURRENT_EXIT
             _arrive = a.Arrive;
+            bool showName = warp && ConsumeShowName();
             if (instant) { ScriptMapChangeEnd(); StartCoroutine(ChangeMap(next, a.Exit, true)); }
-            else { _scriptFadeOut = true; StartCoroutine(ChangeMap(next, a.Exit, false, true)); }
+            else { _scriptFadeOut = true; StartCoroutine(ChangeMap(next, a.Exit, false, true, false, showName ? a.Map : -1)); }
             return true;
         }
 
@@ -1687,8 +1691,10 @@ namespace DW1Remake.Game
             _tamerActive = 0;
             _battle.Walkable = GroundFree;     // walls only: in a scripted fight the opponent is a standing map Digimon and must not block itself or the boy
             if (_audio != null) { _audio.BattleMusic(noFlee, enemy.Data.Type); _audio.BattleSounds(); }
+            // handleBattleStart: FLEE_DISABLED[0] = isTriggerSet(1) (Run locked, the enemies pay no MP, they stand after the fight). Not variable 250:
+            // MIHA01's Mamemon is a plain 66 00 after 1C 00 01 00, and ran off before "Oh no. I lost." (user 2026-11-11)
             _battle.Start(_player, _anim, _partner, _partnerAnim, _menus != null ? _menus.PartnerName : _partnerName, DigimonStatsCatalog.Get(_disc, PartnerType),
-                          enemy.T, enemy.Anim, enemy.Name, DigimonStatsCatalog.Get(_disc, enemy.Data.Type), enemy.Data, right, noFlee, _tamerWay, _tamerStart, boyInfo != null ? boyInfo.Radius * Unit : 0f);
+                          enemy.T, enemy.Anim, enemy.Name, DigimonStatsCatalog.Get(_disc, enemy.Data.Type), enemy.Data, right, _state.GetFlag(1), _tamerWay, _tamerStart, boyInfo != null ? boyInfo.Radius * Unit : 0f);
             // isOnScreen (NPCEntityTick, entityIsOffScreen 0x140 x 0xF0) as it was on the last map frame: the fight does not update it (NPCEntityTickBattle)
             _onScreenAtFight.Clear(); _offAtFight.Clear();
             foreach (var n in _npcs) if (n.T != null && n.T.gameObject.activeInHierarchy && OnScreen(n)) _onScreenAtFight.Add(n.T);
@@ -2595,6 +2601,7 @@ namespace DW1Remake.Game
             if (OverlayKeyPressed()) { ShowOverlays = !ShowOverlays; if (_overlayRoot != null) _overlayRoot.SetActive(ShowOverlays); }
 #endif
             TickOverlayAnimations();
+            MapViewAutoOff();
             if (_changing)
             {
                 // the map Digimon of the new map animate while the screen is still black: what their walk carried meanwhile must not be paid out
@@ -2650,7 +2657,8 @@ namespace DW1Remake.Game
                 if (_runner == null && !_pBusy && !_routineOn)     // (not while our routine without a script runs: the online link screen takes typed codes) tamerTickWalkingState: the menu opens only while the boy walks freely, not during a partner scene (tamer state 6)
                 {
                     if (GameMenus.EscapeKey()) { StartCoroutine(BackToTitle()); return; }      // ours: Escape while walking = back to the title screen
-                    if (GameMenus.TriangleMenuKey()) { _menus.OpenMain(); return; }      // isKeyDown(Triangle): held and fresh
+                    if (GameMenus.TriangleMenuKey()) { _mapViewOn = false; _menus.OpenMain(); return; }      // isKeyDown(Triangle): held and fresh
+                    MapViewKey();       // ours: Select opens / closes the Map mod
                     if (GameMenus.BagKey()) { _menus.OpenBag(); return; }
                     if (GameMenus.ShopKey() && !_routineOn) { StartCoroutine(Shop(i => i < _itemCatalog.Count && _itemCatalog[i].Price > 0 && _itemCatalog[i].Category <= 2, 0xFF)); return; }   // dev: a test shop with every priced item, the 0x4CE texts
                     if (GameMenus.GiveKey()) _menus.DebugGive();
@@ -3005,7 +3013,7 @@ namespace DW1Remake.Game
                 string next = MapCatalog.PathFor(_mapNames, h[0]);
                 if (!_disc.Exists(next) || !_disc.Exists(next.Substring(0, next.Length - 4) + ".TFS")) continue;
                 Debug.Log("Door " + trigger + " in " + _mapNames[_mapId] + " -> " + _mapNames[h[0]] + " exit " + h[1] + (hits.Count > 1 ? "  (script has " + hits.Count + " possible targets, using the first)" : ""));
-                StartCoroutine(ChangeMap(next, h[1], false, false, true));
+                StartCoroutine(ChangeMap(next, h[1], false, false, true, h[0]));
                 return;
             }
             Say("Trigger " + trigger + " in " + _mapNames[_mapId] + " is a script event (no door found). Not supported yet.");
@@ -3028,29 +3036,33 @@ namespace DW1Remake.Game
                 return;
             }
             _prevExit = exitIndex;      // checkMapInteraction: PREVIOUS_EXIT = trigger - 110
-            StartCoroutine(ChangeMap(next, w.TargetExit, false, false, true));
+            StartCoroutine(ChangeMap(next, w.TargetExit, false, false, true, w.TargetMap));
         }
 
         /// <param name="script">a script's 4B (scriptTickChangeMap): the world and the script's scene go on under the fade; the scene ends once it is black</param>
         /// <param name="walk">an exit walked into (tamerTickChangeMap): startAnimationTamer(2) for the fade</param>
-        IEnumerator ChangeMap(string path, int exit, bool instant = false, bool script = false, bool walk = false)
+        /// <param name="nameOf">addMapNameObject: from fade frame 10 this map's area name is drawn on the fading picture until the new map is in (-1 none)</param>
+        IEnumerator ChangeMap(string path, int exit, bool instant = false, bool script = false, bool walk = false, int nameOf = -1)
         {
+            string name = nameOf >= 0 ? AreaName(nameOf) : null;
             if (script)
             {
                 // the room keeps ticking (glides, animations, map Digimon) while the picture goes black
-                for (float t = _fade; t < 1f; t += Time.deltaTime / Mathf.Max(0.01f, FadeSeconds)) { _fade = t; yield return null; }
+                for (float t = _fade; t < 1f; t += Time.deltaTime / Mathf.Max(0.01f, FadeSeconds)) { _fade = t; if (t >= 0.5f) _mapNameShown = name; yield return null; }
                 ScriptMapChangeEnd();
             }
             _changing = true;
             if (_anim != null && !script) _anim.SetSlot(walk ? WalkSlot : IdleSlot);
             // instant: under the life-lost scene's full-screen black (MURD_renderFullscreenFade 0xFF), which changes map with no fade of its own
             // a fade already under way (Run's fadeToBlack) goes on from where it is
-            if (!instant) for (float t = _fade; t < 1f; t += Time.deltaTime / Mathf.Max(0.01f, FadeSeconds)) { _fade = t; yield return null; }
+            if (!instant) for (float t = _fade; t < 1f; t += Time.deltaTime / Mathf.Max(0.01f, FadeSeconds)) { _fade = t; if (t >= 0.5f) _mapNameShown = name; yield return null; }
             _fade = instant ? 0f : 1f;
+            if (!instant) { _mapNameShown = name; yield return null; }      // ours: the black frame with the name is seen at least once (the PS1 shows it while the disc loads)
             if (_anim != null && walk) _anim.SetSlot(IdleSlot);      // changeMap: initializeTamer puts him back in his idle
             int fromMap = _mapId;
             try { LoadMap(path, exit); NotePreviousMap(fromMap, _mapId, exit); }
             catch (Exception e) { _error = e.Message; Debug.LogException(e); }
+            _mapNameShown = null;      // removeObject(0xFA1) right after changeMap
             yield return null;
             // scriptTickChangeMap: changeMap (the map head script, then its section 0xFE and the arrival section) and fadeFromBlack(20) in the same
             // frame, so the map's own script already plays while the picture fades in. TWNB07's 0xFE glides the recruited Betamon 33 m to his stall
@@ -3080,7 +3092,7 @@ namespace DW1Remake.Game
         void RunMapStart(int arrive)
         {
             _thenSection = arrive;
-            if (!StartScript(0xFE, null) && _runner == null && _thenSection != 255) { int s = _thenSection; _thenSection = 255; StartScript(s, null); }
+            if (!StartScript(0xFE, null) && _runner == null && _thenSection != 255) { int s = _thenSection; _thenSection = 255; StartScript(s, null, true); }
         }
 
         void Say(string text) { _message = text; _messageUntil = Time.time + 3f; }
@@ -3390,6 +3402,7 @@ namespace DW1Remake.Game
             DrawTraining();
             DrawCurling();
             DrawFishing();
+            DrawMapView();          // ours: the Map mod
             DrawTournament();
             DrawDebugMenu();        // last, so nothing covers it
         }
@@ -3476,6 +3489,7 @@ namespace DW1Remake.Game
                 GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), Texture2D.whiteTexture);
                 GUI.color = old;
             }
+            DrawMapName();          // renderMapName, on the fading picture
             DrawEvoFront();
             DrawSysScreen();        // the sleep menu shows on the black screen
         }

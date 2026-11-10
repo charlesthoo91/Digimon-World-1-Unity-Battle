@@ -31,6 +31,9 @@ namespace DW1Remake.Game
         /// <summary>A "PRESS X" plate over the float while a bite can be struck (FISH_tryStrike would hook it); the original gives no sign but the float.</summary>
         public static bool FishingIndicator { get { return Get("FishingIndicator"); } set { Set("FishingIndicator", value); } }
 
+        /// <summary>Select while the boy walks freely shows a see-through map of the screen (its walking grid, the exits with the areas they lead to, everyone as dots).</summary>
+        public static bool MapView { get { return Get("MapView"); } set { Set("MapView", value); } }
+
         // ---- controls (MODS > CONTROLS; Pad, TouchPadView). These change only how the pad is pressed, not the game, so they start usable:
         // a player with only a touch screen or only a controller must be able to reach this page.
 
