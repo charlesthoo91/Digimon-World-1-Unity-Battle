@@ -270,6 +270,34 @@ namespace DW1Remake.Game
             catch (System.Exception ex) { Debug.LogWarning("[objects] training poop: " + ex.Message); }
         }
 
+        // loadWarpCrystals (map.c calls it for maps 101-103, ICSA05-07): \ETCNA\WARP.TMD, its pictures in the map's images; object 0 at
+        // (x, -188, z), object 1 hangs on object 0's coordinates at (0, -188, 0); no rotation, scale 0x1000 (WARP_CRYSTAL_SCALE), never moved
+        // (renderWarpCrystals has no tick). The places are addWarpCrystal's in loadWarpCrystals; map 104's four are never reached (100 < map < 104).
+        void LoadWarpCrystals(byte[] mapBytes)
+        {
+            if (_mapId <= 100 || _mapId >= 104 || _mapId >= _num8.Count) return;
+            int[][] at = _mapId == 101 ? new[] { new[] { 2237, -1667 }, new[] { -2237, -1667 }, new[] { 2358, 419 }, new[] { -2358, 419 } }
+                       : _mapId == 102 ? new[] { new[] { 0, 0 } }
+                       : new[] { new[] { 2376, -127 }, new[] { 1566, -3358 } };
+            try
+            {
+                if (_mapVram == null) _mapVram = MapOverlay.Parse(mapBytes, _num8[_mapId], _num4[_mapId]);
+                var model = ReadTmd(_disc.ReadFile("/ETCNA/WARP.TMD"));
+                if (model.Parts.Count < 2) return;
+                System.Func<MmdModel.Face, int, Vector2> uv = (f, i) => new Vector2((f.U[i] + 0.5f) / 256f, 1f - (f.T[i] + 0.5f) / 256f);
+                var lower = BuildStatic(model.Parts[0], PageTexture, uv, _objAssets);
+                var upper = BuildStatic(model.Parts[1], PageTexture, uv, _objAssets);
+                foreach (var p in at)
+                {
+                    var t0 = MakeStaticObject(lower, "Warp crystal", ObjRoot());
+                    PlaceStatic(t0, new[] { p[0], -188, p[1] }, new int[3]);
+                    var t1 = MakeStaticObject(upper, "Warp crystal top", t0);
+                    PlaceStatic(t1, new[] { 0, -188, 0 }, new int[3]);
+                }
+            }
+            catch (System.Exception ex) { Debug.LogWarning("[objects] warp crystal: " + ex.Message); }
+        }
+
         // renderDoors: model 10 is drawn twice, the second one mirrored and 680 units along Z
         void PlaceDoors()
         {

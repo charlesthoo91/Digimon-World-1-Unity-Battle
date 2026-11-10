@@ -279,6 +279,8 @@ namespace DW1Remake.Game
         public bool Closing { get { return Box.State == 3; } }
 
         /// <summary>The Digimon under the Chart page's cursor (CHART_SELECTED_DIGIMON, cursor or detail box open), else -1. For the evolution guide (ours).</summary>
+        /// <summary>The recruit tab (ours) is open and its page may be drawn.</summary>
+        public bool RecruitPage { get { return Tab == 4 && State >= 1 && Box.State == 1; } }
         public int ChartDigimon { get { return Tab == 1 && State >= 2 && _digimon >= 1 && _digimon <= 62 ? _digimon : -1; } }
 
         /// <summary>Triangle menu state 5: box 1 grows out of the boy; the tab words go on the text page; the Player page first.</summary>
@@ -299,10 +301,12 @@ namespace DW1Remake.Game
         {
             if (State < 2)
             {
-                if (side > 0) { Tab++; if (Tab >= 4) Tab = 3; else { State = 0; _sub = 0; Snd(2); } }
+                // ours, the OPTIONS recruit tab: a fifth tab after Card
+                int tabs = ModSettings.RecruitTab ? 5 : 4;
+                if (side > 0) { Tab++; if (Tab >= tabs) Tab = tabs - 1; else { State = 0; _sub = 0; Snd(2); } }
                 if (side < 0) { Tab--; if (Tab < 0) Tab = 0; else { State = 0; _sub = 0; Snd(2); } }
                 if (cancel) { Snd(4); return true; }
-                if (cross && State == 1 && Tab != 0) { State = 2; Snd(3); _medal = _medalShown = 0; _card = 0; }
+                if (cross && State == 1 && Tab != 0 && Tab != 4) { State = 2; Snd(3); _medal = _medalShown = 0; _card = 0; }
                 return false;
             }
             if (cancel && State == 2) { Snd(4); State = 1; _digimon = -1; }
@@ -421,7 +425,7 @@ namespace DW1Remake.Game
             if (State != 0) return;
             _sub++;
             // drawPlayerInfoStrings and drawMedalViewStrings take 6 frames, drawCardViewStrings 2, drawEvoChartStrings 1
-            int need = Tab == 1 ? 1 : Tab == 3 ? 2 : 6;
+            int need = Tab == 1 || Tab == 4 ? 1 : Tab == 3 ? 2 : 6;
             if (_sub >= need) { State = 1; _sub = 0; }
         }
 
@@ -471,9 +475,10 @@ namespace DW1Remake.Game
         void BuildText(ScriptState s)
         {
             string name = Tab == 1 && _digimon > 0 ? DigimonName(_digimon) : "";
-            BuildPage(Tab + "|" + _medal + "|" + name + "|" + ModSettings.EvolutionGuide, px =>
+            BuildPage(Tab + "|" + _medal + "|" + name + "|" + ModSettings.EvolutionGuide + "|" + ModSettings.RecruitTab, px =>
             {
                 Write(px, _playerLabels[0], 0, 0);
+                if (ModSettings.RecruitTab) Write(px, "Rec.", 0xC4, 0);         // ours: the recruit tab's word, after the four
                 if (Tab == 1)
                 {
                     // drawEvoChartStrings
@@ -513,11 +518,12 @@ namespace DW1Remake.Game
             }
             // US: the tab words, colour 0 for the open tab and 1 for the others, over the tab pictures
             int[] tx = { -0x89, -0x3E, 0xD, 0x40 }, tw = { 0x3C, 0x3C, 0x24, 0x24 }, tu = { 0, 0x3C, 0x78, 0x9C };
+            int[] tabX = { -0x91, -0x46, 5, 0x38 }, tabW = { 0x4C, 0x4C, 0x34, 0x34 };
+            // ours, with the recruit tab: Player and Chart 8 pixels narrower and every tab moved so the five have room (word 8 right of the tab's edge)
+            if (ModSettings.RecruitTab) { tabX = new[] { -0x92, -0x4C, -6, 0x30 }; tabW = new[] { 0x44, 0x44, 0x34, 0x34 }; for (int i = 0; i < 4; i++) tx[i] = tabX[i] + 8; }
             for (int i = 0; i < 4; i++) Words(5, Tab == i ? 0 : 1, tx[i], -0x65, tw[i], tu[i], 0);
-            MenuTab(-0x91, 0x4C, Tab == 0 ? 0 : 1);
-            MenuTab(-0x46, 0x4C, Tab == 1 ? 0 : 1);
-            MenuTab(5, 0x34, Tab == 2 ? 0 : 1);
-            MenuTab(0x38, 0x34, Tab == 3 ? 0 : 1);
+            if (ModSettings.RecruitTab) { Words(5, Tab == 4 ? 0 : 1, 0x6E, -0x65, 0x24, 0xC4, 0); MenuTab(0x66, 0x30, Tab == 4 ? 0 : 1); }
+            for (int i = 0; i < 4; i++) MenuTab(tabX[i], tabW[i], Tab == i ? 0 : 1);
         }
 
         // ---- renderEvoChartView

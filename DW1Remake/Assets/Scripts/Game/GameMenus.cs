@@ -755,11 +755,18 @@ namespace DW1Remake.Game
             var v = PlayerMenu;
             if (v == null) return;
             v.Draw(_s, DrawPlayerInfo);
+            if (v.Tab == 4 && !ModSettings.RecruitTab) v.Tab = 3;
+            if (v.RecruitPage)
+            {
+                if (_recruits == null && !_recruitsTried && Disc != null) { _recruitsTried = true; try { _recruits = RecruitView.Load(Disc); } catch (Exception e) { Debug.LogWarning("[menu] recruits: " + e.Message); } }
+                if (_recruits != null) _recruits.Draw(Disc, _s);
+            }
             if (_guide.Showing && (!v.Showing || v.Closing)) _guide.Close();
             if (_guide.Showing) _guide.Draw(Disc, _s, Care, ItemName);
         }
 
         readonly EvolutionGuideView _guide = new EvolutionGuideView();
+        RecruitView _recruits; bool _recruitsTried;
         string ItemName(int id) { foreach (var e in _items) if (e.Id == id) return e.Name; return "item " + id; }
         public PartnerCare Care;                         // the evolution guide asks it what the evolution check would choose
 

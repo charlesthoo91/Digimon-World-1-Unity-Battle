@@ -2065,6 +2065,7 @@ namespace DW1Remake.Game
             BuildOverlays(mapBytes);
             LoadDoors(mapBytes);
             LoadTrainingPoop(mapBytes);
+            LoadWarpCrystals(mapBytes);
             if (Hd2D && UseMapLights) SetupLights();
 
             // where the Digimon appears

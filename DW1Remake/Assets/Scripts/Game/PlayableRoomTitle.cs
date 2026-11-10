@@ -483,25 +483,27 @@ namespace DW1Remake.Game
                 s.Text("ONLINE BATTLE", 0x1C, 0x37 + 12); s.Text(ModSettings.OnlineBattle ? "ON" : "OFF", 0xD8, 0x37 + 12);
                 s.Text("SMOOTH 60 FPS", 0x1C, 0x37 + 24); s.Text(ModSettings.Smooth60 ? "ON" : "OFF", 0xD8, 0x37 + 24);
                 s.Text("EVOLUTION GUIDE", 0x1C, 0x37 + 36); s.Text(ModSettings.EvolutionGuide ? "ON" : "OFF", 0xD8, 0x37 + 36);
-                s.Text("CONTROLS", 0x1C, 0x37 + 48);
-                s.Text("EXPORT SAVE", 0x1C, 0x37 + 60);
-                s.Text("IMPORT SAVE", 0x1C, 0x37 + 72);
-                s.Text("BACK", 0x1C, 0x37 + 84);
-                s.Box(0x12, 0x32, 0xF0, 0x2E + 60);
+                s.Text("RECRUIT TAB", 0x1C, 0x37 + 48); s.Text(ModSettings.RecruitTab ? "ON" : "OFF", 0xD8, 0x37 + 48);
+                s.Text("CONTROLS", 0x1C, 0x37 + 60);
+                s.Text("EXPORT SAVE", 0x1C, 0x37 + 72);
+                s.Text("IMPORT SAVE", 0x1C, 0x37 + 84);
+                s.Text("BACK", 0x1C, 0x37 + 96);
+                s.Box(0x12, 0x32, 0xF0, 0x2E + 72);
                 s.Cursor(System.BitConverter.ToInt16(exe, h + 8) - (0x52 - 0x1C), System.BitConverter.ToInt16(exe, h + 10), 0xE6,
-                         System.BitConverter.ToInt16(exe, h + 14), System.BitConverter.ToInt16(exe, h + 6), 8);
+                         System.BitConverter.ToInt16(exe, h + 14), System.BitConverter.ToInt16(exe, h + 6), 9);
                 s.Pos = pos;
                 int answer = 0;
                 yield return Ask(s, a => answer = a);
                 pos = s.Pos;
-                if (answer != 1 || pos == 7) yield break;
-                if (pos == 4) yield return ControlsPage();
-                else if (pos == 5) yield return ExportSave();
-                else if (pos == 6) yield return ImportSave();
+                if (answer != 1 || pos == 8) yield break;
+                if (pos == 5) yield return ControlsPage();
+                else if (pos == 6) yield return ExportSave();
+                else if (pos == 7) yield return ImportSave();
                 else if (pos == 0) ModSettings.DigitalClock = !ModSettings.DigitalClock;
                 else if (pos == 1) ModSettings.OnlineBattle = !ModSettings.OnlineBattle;
                 else if (pos == 2) ModSettings.Smooth60 = !ModSettings.Smooth60;
-                else ModSettings.EvolutionGuide = !ModSettings.EvolutionGuide;
+                else if (pos == 3) ModSettings.EvolutionGuide = !ModSettings.EvolutionGuide;
+                else ModSettings.RecruitTab = !ModSettings.RecruitTab;
             }
         }
 

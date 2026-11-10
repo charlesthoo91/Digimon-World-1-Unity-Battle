@@ -22,6 +22,9 @@ namespace DW1Remake.Game
         /// <summary>Square on a Digimon of the Chart page shows what its evolutions ask for, the partner's numbers and the evolution the game would choose (EvolutionGuideView).</summary>
         public static bool EvolutionGuide { get { return Get("EvolutionGuide"); } set { Set("EvolutionGuide", value); } }
 
+        /// <summary>A fifth Player menu tab ("Rec.") lists who has joined File City, the points each brings and the prosperity (RecruitView).</summary>
+        public static bool RecruitTab { get { return Get("RecruitTab"); } set { Set("RecruitTab", value); } }
+
         // ---- controls (MODS > CONTROLS; Pad, TouchPadView). These change only how the pad is pressed, not the game, so they start usable:
         // a player with only a touch screen or only a controller must be able to reach this page.
 
