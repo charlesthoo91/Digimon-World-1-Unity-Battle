@@ -289,7 +289,8 @@ namespace DW1Remake.Game
             _menus.Inv = InventoryView.Load(_disc, Battle.StatFont, _state, _itemCatalog, _menus.Icons);
             if (_menus.Inv != null) { _menus.Inv.Sound = n => { if (_audio != null) _audio.Play(0, n); }; _menus.Inv.Art = _battle != null ? _battle.Art : null; }
             _menus.Care = _care;
-            _menus.ItemFunction = id => _care.ItemFunction(id);       // a thrown item in a fight: ITEM_FUNCTIONS[item] (tickThrownItem)
+            // a thrown item in a fight: ITEM_FUNCTIONS[item] (tickThrownItem); the disks (0x0F-0x15, handleBuffDisks) raise the fight's own numbers
+            _menus.ItemFunction = id => { if (id >= 0x0F && id <= 0x15) { if (_battle != null && _battle.Active) _battle.BuffDisk(id); } else _care.ItemFunction(id); };
             {
                 byte[] exe = _disc.ReadFile("/SLUS_010.32"); uint load = System.BitConverter.ToUInt32(exe, 0x18);
                 for (int i = 0; i < 4; i++) PartnerCare.HealingValues[i] = System.BitConverter.ToInt16(exe, (int)(0x8013435C - load + 0x800) + 2 * i);   // HEALING_VALUES

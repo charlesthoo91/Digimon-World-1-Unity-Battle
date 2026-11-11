@@ -1673,6 +1673,50 @@ namespace DW1Remake.Game
 
         void AddFinish(Fighter f, int amount) { if (f.Finisher != null) f.Finish = Mathf.Min(f.FinishMax, f.Finish + amount); }
 
+        /// <summary>
+        /// handleBuffDisks (main.c), ITEM_FUNCTIONS for items 0x0F-0x15 when the thrown disk reaches the partner: Off. Disk / Def. Disk /
+        /// Hispeed dsk +20, S.Off / S.Def / S.speed +50, each held under 130% of that stat at the fight's start (INITIAL_COMBAT_STATS, at most
+        /// 999); Omni Disk +20 to all three (ours holds it under the same limit; the original adds 20 whatever the limit). Each raise is BTL_buffStats: the green number with the stat's icon over the partner, as a
+        /// buff technique. Nothing with no HP left. (BTL_addBuffDiskEffect's turning model and trails are not drawn yet.)
+        /// </summary>
+        public void BuffDisk(int item)
+        {
+            var f = Partner;
+            if (f == null || f.Hp == 0) return;
+            int offLimit = Mathf.Min(999, _s.Stats[0] + _s.Stats[0] * 3 / 10);
+            int defLimit = Mathf.Min(999, _s.Stats[1] + _s.Stats[1] * 3 / 10);
+            int spdLimit = Mathf.Min(999, _s.Stats[2] + _s.Stats[2] * 3 / 10);
+            int n = 0;
+            switch (item)
+            {
+                case 0x0F: DiskStat(f, ref f.Off, f.Off + 20 > offLimit ? offLimit - f.Off : 20, 3, n++); break;
+                case 0x10: DiskStat(f, ref f.Def, f.Def + 20 > defLimit ? defLimit - f.Def : 20, 4, n++); break;
+                case 0x11: DiskStat(f, ref f.Spd, f.Spd + 20 > spdLimit ? spdLimit - f.Spd : 20, 5, n++); break;
+                case 0x12:
+                    // ours (user's decision 2026-11-11): the same 130% limit as the other disks. The original computes no limit for it (US: the
+                    // tests are missing; the other builds test and then change nothing), so it always adds 20
+                    DiskStat(f, ref f.Off, f.Off + 20 > offLimit ? offLimit - f.Off : 20, 3, n++);
+                    DiskStat(f, ref f.Def, f.Def + 20 > defLimit ? defLimit - f.Def : 20, 4, n++);
+                    DiskStat(f, ref f.Spd, f.Spd + 20 > spdLimit ? spdLimit - f.Spd : 20, 5, n++);
+                    break;
+                case 0x13: DiskStat(f, ref f.Off, f.Off + 50 > offLimit ? offLimit - f.Off : 50, 3, n++); break;
+                case 0x14: DiskStat(f, ref f.Def, f.Def + 50 > defLimit ? defLimit - f.Def : 50, 4, n++); break;
+                case 0x15: DiskStat(f, ref f.Spd, f.Spd + 50 > spdLimit ? spdLimit - f.Spd : 50, 5, n++); break;
+                default: return;
+            }
+            Debug.Log("[battle] " + f.Name + " disk " + item.ToString("X2") + ": Off " + f.Off + ", Def " + f.Def + ", Speed " + f.Spd);
+        }
+
+        // BTL_buffStats: addWithLimit(stat, value, 999), then addEntityText(colour 0xB, the value, icon): a stat already past the limit gets a
+        // negative value (limit - stat) and goes down, and that number is shown. Each later number starts 4 pixels on and waits 11 frames, as
+        // the buff techniques' numbers do
+        void DiskStat(Fighter f, ref int stat, int value, int icon, int order)
+        {
+            stat = Mathf.Min(999, stat + value);
+            if (f.T == null) return;
+            _pops.Add(new Pop { Text = value.ToString(), Pos = f.T.position + Vector3.up * 1.2f, Col = new Color(0f, 1f, 0f), Icon = icon, Shift = order * 4, Wait = order * 11f / 20f });
+        }
+
         // self moves (BTL_applyBuffMove): Muscle Charge, War Cry, Mass Morph, Aqua Magic, Full Potential raise stats by a share of their value, up to 999
         void Buff(Fighter f, Tech t)
         {
