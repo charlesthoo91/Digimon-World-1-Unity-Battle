@@ -99,16 +99,32 @@ namespace DW1Remake.Game
                     if (th.Time >= 24)
                     {
                         _throws.RemoveAt(i);
-                        int h0 = _s.Stats[6], m0 = _s.Stats[7];
+                        int[] shown = ItemNumbers(th.Item);       // read before the item works (alive or not, Restore's half of the max)
                         if (th.Apply != null) th.Apply();
                         ItemConditions(th.Item);        // handleStatusItems (BattleStatus.cs)
                         ReadBack();
-                        if (_s.Stats[6] > h0) _pops.Add(new Pop { Text = (_s.Stats[6] - h0).ToString(), Pos = Partner.T.position + Vector3.up * 0.9f, Col = new Color(0f, 1f, 0f), Icon = 1 });     // TEXT_COLORS[0xB], icon 1 (item.c)
-                        if (_s.Stats[7] > m0) _pops.Add(new Pop { Text = (_s.Stats[7] - m0).ToString(), Pos = Partner.T.position + Vector3.up * 1.4f, Col = new Color(0f, 1f, 0f), Icon = 2 });
+                        // addEntityText(partner, 0, 0xB, the item's own amount, icon 1 HP / 2 MP): the amount the item gives, not how much went up
+                        // (Omnipotent shows 1500 and 1500 even near full); a second number starts 4 pixels on and waits 11 frames
+                        for (int k = 0; k < shown.Length; k += 2)
+                            _pops.Add(new Pop { Text = shown[k].ToString(), Pos = Partner.T.position + Vector3.up * 1.2f, Col = new Color(0f, 1f, 0f), Icon = shown[k + 1], Shift = k / 2 * 4, Wait = k / 2 * 11f / 20f });
                         if (Effects != null) Effects.AddItemParticles(Partner.T.position, Partner.Info != null ? Partner.Info.Height : 200);
                     }
                 }
             }
+        }
+
+        // the numbers ITEM_FUNCTIONS show in a fight, as (value, icon) pairs: handleHPHealingItem / handleMPHealingItem HEALING_VALUES (nothing at
+        // 0 HP), handleDoubleFloppy and Omnipotent 1500 HP then 1500 MP, handleRestore (even at 0 HP) half the max HP / Sup.restore 9999
+        int[] ItemNumbers(int item)
+        {
+            bool alive = _s.Stats[6] != 0;
+            var v = PartnerCare.HealingValues;
+            if (item <= 3) return alive ? new[] { v[item], 1 } : new int[0];
+            if (item <= 6) return alive ? new[] { v[item - 4], 2 } : new int[0];
+            if (item == 7 || item == 9) return alive ? new[] { 1500, 1, 1500, 2 } : new int[0];
+            if (item == 11) return new[] { _s.Stats[4] / 2, 1 };
+            if (item == 12) return new[] { 9999, 1 };
+            return new int[0];
         }
 
         enum Phase { Notice, Banner, Fight, Win, Lose, Fled, Leave, TimeUp, Cheer }
@@ -1677,7 +1693,7 @@ namespace DW1Remake.Game
         /// handleBuffDisks (main.c), ITEM_FUNCTIONS for items 0x0F-0x15 when the thrown disk reaches the partner: Off. Disk / Def. Disk /
         /// Hispeed dsk +20, S.Off / S.Def / S.speed +50, each held under 130% of that stat at the fight's start (INITIAL_COMBAT_STATS, at most
         /// 999); Omni Disk +20 to all three (ours holds it under the same limit; the original adds 20 whatever the limit). Each raise is BTL_buffStats: the green number with the stat's icon over the partner, as a
-        /// buff technique. Nothing with no HP left. (BTL_addBuffDiskEffect's turning model and trails are not drawn yet.)
+        /// buff technique. Nothing with no HP left. Then the green wall over the partner (BTL_addBuffDiskEffect).
         /// </summary>
         public void BuffDisk(int item)
         {
@@ -1705,6 +1721,7 @@ namespace DW1Remake.Game
                 default: return;
             }
             Debug.Log("[battle] " + f.Name + " disk " + item.ToString("X2") + ": Off " + f.Off + ", Def " + f.Def + ", Speed " + f.Spd);
+            AddBuffDiskEffect(f);       // BTL_addBuffDiskEffect(partner): the turning wall and its streaks (BattleStatus.cs)
         }
 
         // BTL_buffStats: addWithLimit(stat, value, 999), then addEntityText(colour 0xB, the value, icon): a stat already past the limit gets a

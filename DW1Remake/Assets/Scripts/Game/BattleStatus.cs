@@ -120,6 +120,7 @@ namespace DW1Remake.Game
         {
             if (!Active) return;
             DrawConditions3D();
+            DrawBuffDisk();
             _condAcc += dt;
             while (_condAcc >= Frame)
             {
@@ -133,6 +134,7 @@ namespace DW1Remake.Game
                         TickConditionFrame(f, noAi);
                     }
                 TickCondFx();
+                TickBuffDisk();
                 if (fight) TickFlatBullets();
             }
         }
@@ -275,6 +277,7 @@ namespace DW1Remake.Game
             foreach (var f in _modelHidden) SetModelShown(f, true);
             _modelHidden.Clear();
             _condFx.Clear(); _bubbles.Clear(); _sparks.Clear(); _bullets.Clear();
+            _disk = null; _trailTable = null;       // BTL_removeAllBuffDiskEffects; BTL_initializeBuffTrails rolls new places next fight
         }
 
         // ------------------------------------------------------------------ the effect over the Digimon (statusFxId)
@@ -764,6 +767,163 @@ namespace DW1Remake.Game
         {
             Art.HudPs(row, 1, u, v, w, h, p.x - mx * scale, p.y - my * scale, w * scale, h * scale);
         }
+
+        // ------------------------------------------------------------------ the disks' wall (BTL_addBuffDiskEffect, battle_effect.c)
+
+        // handleBuffDisks ends with BTL_addBuffDiskEffect(partner) for every disk. One slot (BTL_BUFF_DISKS[1]): a disk thrown while the wall
+        // still shows starts none. The wall is object 5 of BUFF_MODEL (BTL_REL 0x80055328, an eight-sided tube 400 high, radius 200; added
+        // see-through, its picture in ETCTIM.BIN at (768,384)) at the Digimon's feet: x / z scale radius x 0xBB8 / 200, y height x 0xB22 / 200,
+        // from a third to full size in 15 frames, held to frame 0x37, down to a tenth by 0x43, then gone; it turns 0x32 a frame.
+        // tickBuffModel swaps its colour set every frame between 0x7ACC and 0x7B0C (rows 491 / 492: the shimmer). BTL_addBuffTrails: 8 streaks
+        const uint BuffModel = 0x80055328;
+        const int BuffTrailTpage = 0x3C, BuffTrailClut = 0x7A4C;        // getTPage(0, 1, 768, 256), getClut(192, 489)
+        sealed class BuffDiskFx { public Fighter Owner; public int Frame, Spin, ScaleXZ, ScaleY, TrailFrame; public readonly Trail[] Trails = new Trail[8]; }
+        sealed class Trail { public int Life = -1; public readonly Vector3[] P = new Vector3[4]; }
+        BuffDiskFx _disk;
+        int _diskModelFrame;            // BUFF_MODEL_FRAME
+        int[] _trailTable;              // BTL_BUFF_TRAIL_A_X, A_Z, B_X, B_Z (8 each)
+        PsxTmd.Built[] _wallBuilt;      // the wall with colour set 491, then 492
+        bool _wallTried;
+        Mesh _trailMesh; Material _trailSolid, _trailAdd;
+
+        void AddBuffDiskEffect(Fighter f)
+        {
+            if (f == null || _disk != null) return;
+            if (_trailTable == null) InitBuffTrails();
+            int rad = f.Info != null ? f.Info.Radius : 100, hgt = f.Info != null ? f.Info.Height : 200;
+            _disk = new BuffDiskFx { Owner = f };
+            for (int i = 0; i < 8; i++) _disk.Trails[i] = new Trail();
+            _diskTargetXZ = rad * 0xBB8 / 200; _diskTargetY = hgt * 0xB22 / 200;
+        }
+        int _diskTargetXZ, _diskTargetY;    // scaleTargetXZ, scaleTargetY
+
+        // BTL_initializeBuffTrails: the eight streaks' places round the Digimon, an eighth of a turn each in a random order, each turned a little
+        // more at random and 160-198 out (x radius / 200), 60 wide
+        void InitBuffTrails()
+        {
+            _trailTable = new int[32];
+            var pool = new List<int> { 0, 1, 2, 3, 4, 5, 6, 7 };
+            for (int i = 0; i < 8; i++)
+            {
+                int r = _rng.Next(32768) % (8 - i);
+                int k = pool[r]; pool.RemoveAt(r);
+                int s = (_rng.Next(32768) % 0x14 + 0x50) * 200 / 100;
+                int vy = k * 0x1000 / 8 + _rng.Next(32768) % 0x200;
+                int c = Mathf.RoundToInt(Mathf.Cos(vy * Mathf.PI / 2048f) * 4096f), sn = Mathf.RoundToInt(Mathf.Sin(vy * Mathf.PI / 2048f) * 4096f);
+                // RotMatrixZYX (only y) then ApplyMatrixSV on (30, 0, s) and (-30, 0, s)
+                _trailTable[i] = (30 * c + s * sn) >> 12;         // A x
+                _trailTable[8 + i] = (-30 * sn + s * c) >> 12;    // A z
+                _trailTable[16 + i] = (-30 * c + s * sn) >> 12;   // B x
+                _trailTable[24 + i] = (30 * sn + s * c) >> 12;    // B z
+            }
+        }
+
+        // BTL_tickBuffDisk, BTL_tickBuffTrails, tickBuffModel: once a game frame
+        void TickBuffDisk()
+        {
+            _diskModelFrame++;
+            var d = _disk;
+            if (d == null) return;
+            if (d.Frame >= 0x43 || d.Owner.T == null) { _disk = null; return; }
+            if (d.Frame < 0xF)
+            {
+                d.ScaleXZ = EffectPlayer.PsLerp(_diskTargetXZ / 3, _diskTargetXZ, 0, 0xF, d.Frame);
+                d.ScaleY = EffectPlayer.PsLerp(_diskTargetY / 3, _diskTargetY, 0, 0xF, d.Frame);
+            }
+            else if (d.Frame < 0x37) { d.ScaleXZ = _diskTargetXZ; d.ScaleY = _diskTargetY; }
+            else
+            {
+                d.ScaleXZ = EffectPlayer.PsLerp(_diskTargetXZ, _diskTargetXZ * 10 / 100, 0x37, 0x43, d.Frame);
+                d.ScaleY = EffectPlayer.PsLerp(_diskTargetY, _diskTargetY * 10 / 100, 0x37, 0x43, d.Frame);
+            }
+            d.Spin += 0x32;
+            d.Frame++;
+            // the streaks: a new one each frame for 0x3B frames (slot frame % 8, 8 frames of life) at the feet; the top edge rises 100 a frame,
+            // the bottom 0x25
+            if (d.TrailFrame < 0x3B)
+            {
+                int k = d.TrailFrame % 8;
+                var t = d.Trails[k];
+                Vector3 g = EffectPlayer.ToGame(d.Owner.T.position);
+                int rad = d.Owner.Info != null ? d.Owner.Info.Radius : 100;
+                t.Life = 8;
+                t.P[0] = t.P[2] = new Vector3(g.x + rad * _trailTable[k] / 200, g.y, g.z + rad * _trailTable[8 + k] / 200);
+                t.P[1] = t.P[3] = new Vector3(g.x + rad * _trailTable[16 + k] / 200, g.y, g.z + rad * _trailTable[24 + k] / 200);
+            }
+            foreach (var t in d.Trails)
+            {
+                t.Life--;
+                t.P[0].y -= 100; t.P[1].y -= 100; t.P[2].y -= 0x25; t.P[3].y -= 0x25;
+            }
+            d.TrailFrame++;
+        }
+
+        void LoadWall()
+        {
+            if (_wallTried) return;
+            _wallTried = true;
+            LoadCondModels();
+            try
+            {
+                var btl = BtlRel;
+                if (btl == null || _condVram == null) return;
+                int at = (int)(BuffModel - BtlBase);
+                var d = new byte[btl.Length - at];
+                Array.Copy(btl, at, d, 0, d.Length);
+                _wallBuilt = new PsxTmd.Built[2];
+                for (int n = 0; n < 2; n++)
+                {
+                    var tmd = PsxTmd.Parse(d);
+                    if (tmd.Objs.Count < 6) { _wallBuilt = null; return; }
+                    var obj = tmd.Objs[5];
+                    foreach (var p in obj.Prims) p.Clut = n == 0 ? 0x7ACC : 0x7B0C;       // BUFF_MODEL_MORPH_VALUE[0] / [1]
+                    var b = PsxTmd.Built.Make(obj, _condVram, (p, layer) => CondMaterial(p, layer), _condOwned);
+                    // TGE packets: the picture as it is, the colour words are not used
+                    var grey = new Color32[b.Mesh.vertexCount];
+                    for (int i = 0; i < grey.Length; i++) grey[i] = new Color32(128, 128, 128, 255);
+                    b.Mesh.colors32 = grey;
+                    _wallBuilt[n] = b;
+                }
+                var tp = new PsxTmd.Prim { Count = 4, Textured = true, Semi = true, Tpage = BuffTrailTpage, Clut = BuffTrailClut };
+                _trailSolid = CondMaterial(tp, 1); _trailAdd = CondMaterial(tp, 2);
+                foreach (var m in new[] { _trailSolid, _trailAdd }) if (m != null) { m.SetFloat("_Cull", (float)UnityEngine.Rendering.CullMode.Off); _condOwned.Add(m); }
+                _trailMesh = new Mesh { name = "BuffTrails" };
+                _trailMesh.MarkDynamic();
+                _condOwned.Add(_trailMesh);
+            }
+            catch (Exception e) { Debug.LogWarning("Disk wall not available: " + e.Message); _wallBuilt = null; }
+        }
+
+        // BTL_renderBuffDisk (renderTMDModel: RotMatrix, ScaleMatrix, TransMatrix at the Digimon's place) and BTL_renderBuffTrails (POLY_FT4s,
+        // added, u 0x5F-0x30 along the streak, v 0xA0-0xA7 across it, colour life x (200, 255, 180) / 8)
+        void DrawBuffDisk()
+        {
+            var d = _disk;
+            if (d == null || d.Owner.T == null) return;
+            LoadWall();
+            if (_wallBuilt == null) return;
+            Vector3 g = EffectPlayer.ToGame(d.Owner.T.position);
+            DrawBuilt(_wallBuilt[_diskModelFrame & 1], GameModelMatrix(g, PsRotY(d.Spin), new Vector3(d.ScaleXZ / 4096f, d.ScaleY / 4096f, d.ScaleXZ / 4096f)));
+            if (_trailMesh == null) return;
+            var v = new List<Vector3>(); var uv = new List<Vector2>(); var col = new List<Color32>(); var tri = new List<int>();
+            Vector2[] uvs = { PageUv(0x5F, 0xA0), PageUv(0x5F, 0xA7), PageUv(0x30, 0xA0), PageUv(0x30, 0xA7) };
+            foreach (var t in d.Trails)
+            {
+                if (t.Life <= 0) continue;
+                int b = v.Count;
+                var c = new Color32((byte)(t.Life * 200 / 8), (byte)(t.Life * 255 / 8), (byte)(t.Life * 180 / 8), 255);
+                for (int k = 0; k < 4; k++) { v.Add(new Vector3(t.P[k].x, -t.P[k].y, t.P[k].z) * 0.01f); uv.Add(uvs[k]); col.Add(c); }
+                tri.Add(b); tri.Add(b + 1); tri.Add(b + 2); tri.Add(b + 1); tri.Add(b + 3); tri.Add(b + 2);
+            }
+            _trailMesh.Clear();
+            if (tri.Count == 0) return;
+            _trailMesh.SetVertices(v); _trailMesh.SetUVs(0, uv); _trailMesh.SetColors(col); _trailMesh.SetTriangles(tri, 0);
+            _trailMesh.RecalculateBounds();
+            if (_trailSolid != null) Graphics.DrawMesh(_trailMesh, Matrix4x4.identity, _trailSolid, 0);
+            if (_trailAdd != null) Graphics.DrawMesh(_trailMesh, Matrix4x4.identity, _trailAdd, 0);
+        }
+
+        static Vector2 PageUv(int u, int v) { return new Vector2((u + 0.5f) / 256f, 1f - (v + 0.5f) / 256f); }
 
         // the depth along the view in game units (worldPosToScreenPos's otz x 4)
         static bool Ps1Depth(Camera cam, Vector3 world, out float depth)
