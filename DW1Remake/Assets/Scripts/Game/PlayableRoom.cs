@@ -1389,6 +1389,7 @@ namespace DW1Remake.Game
         // ------------------------------------------------------------------ battles with wild Digimon
 
         Battle _battle; Npc _battleNpc; Vector3 _battleFocus; float _camBack = 1f;
+        bool _recentrePending;      // ours: the mod Recentre camera waits for the fight's script to end
 
         // tickPartnerWaypoints: a partner left far off screen is put on the first off-screen tile on the line from the boy
         void BringPartnerNear()
@@ -1771,6 +1772,9 @@ namespace DW1Remake.Game
             if (!Free(_player.position)) _player.position = _prePlayerPos;
             if (_camOn) { _camMove = false; _camPos = _camGoal = _battleFocus - Vector3.up * 1f; }
             else _camOffsetPx = MapPixel(_battleFocus) - MapPixel(_player.position + Vector3.up * 1f);
+            // ours (mod Recentre camera): after a won wild fight (no flag 1: the enemies ran off) the picture glides back to the boy once
+            // the script that started the fight has ended
+            _recentrePending = ModSettings.FightRecentre && _battle.Won && !_battle.NoFlee;
             // the end of the fight (battle_main.c): a map Digimon with isOnScreen = 1 leaves the map (isOnMap = 0), any other is put back (isOnMap = 1).
             // isOnScreen is not updated during the fight, so the ones that were on screen when it began (the enemies and those that ran) are gone,
             // and the ones that were off screen (taken off the map by handleBattleStart) come back where they were. After a scripted fight its
@@ -2602,6 +2606,11 @@ namespace DW1Remake.Game
 #endif
             TickOverlayAnimations();
             MapViewAutoOff();
+            if (_recentrePending && _runner == null && !_camOn && !_changing && !(_battle != null && _battle.Active))
+            {
+                // the same 1 s glide from where the fight left the picture to the boy, then the picture follows him from his middle
+                _recentrePending = false; _camOffsetPx = Vector2.zero; _camBack = 0f;
+            }
             if (_changing)
             {
                 // the map Digimon of the new map animate while the screen is still black: what their walk carried meanwhile must not be paid out
@@ -3268,6 +3277,7 @@ namespace DW1Remake.Game
             DrawGroundItems();
             if (_healFx != null) _healFx.Update(Time.deltaTime, _battle != null ? _battle.Effects : null, _cam);
             EvoCameraLate();
+            CullDoors();        // renderDoors: isBoxOffScreen
             FishDrawWorld();
         }
 

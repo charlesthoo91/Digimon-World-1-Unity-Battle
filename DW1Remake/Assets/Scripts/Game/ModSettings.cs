@@ -34,6 +34,9 @@ namespace DW1Remake.Game
         /// <summary>Select while the boy walks freely shows a see-through map of the screen (its walking grid, the exits with the areas they lead to, everyone as dots).</summary>
         public static bool MapView { get { return Get("MapView"); } set { Set("MapView", value); } }
 
+        /// <summary>After a won wild fight (no flag 1, the enemies run off) the picture glides back to the boy; the original leaves it where the fight left it.</summary>
+        public static bool FightRecentre { get { return Get("FightRecentre"); } set { Set("FightRecentre", value); } }
+
         // ---- controls (MODS > CONTROLS; Pad, TouchPadView). These change only how the pad is pressed, not the game, so they start usable:
         // a player with only a touch screen or only a controller must be able to reach this page.
 

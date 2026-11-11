@@ -313,6 +313,48 @@ namespace DW1Remake.Game
             }
         }
 
+        // renderDoors: a door is drawn only when isBoxOffScreen(translation, 700, 800) says some corner of its box (x and z +-700, y 0 and -800) is on
+        // the screen (isOffScreen: within 160 x 120 of the picture's middle); model 10's other half goes with it. YAKA26's DOOR16 stands 225
+        // units in front of the camera with every corner off the screen: the PS1 never draws it; ours drew it over half the dining room
+        // (user's screenshot 2026-11-11). Once a frame, after the camera is placed.
+        void CullDoors()
+        {
+            if (_doors.Count == 0 || _map == null || _h == 0f) return;
+            float cx = _scrollPx.x - _map.PixelWidth * 0.5f, cy = _scrollPx.y - _map.PixelHeight * 0.5f;
+            foreach (var d in _doors)
+            {
+                if (d.T == null || d.Model < 0) continue;
+                bool on = !BoxOffScreen(d.Pos[0], d.Pos[1], d.Pos[2], 700, 800, cx, cy);
+                if (d.T.gameObject.activeSelf != on) d.T.gameObject.SetActive(on);
+                if (d.Copy != null && d.Copy.gameObject.activeSelf != on) d.Copy.gameObject.SetActive(on);
+            }
+        }
+
+        static readonly int[,] DirectionFactors = { { -1, 1 }, { 1, 1 }, { -1, -1 }, { 1, -1 } };     // DIRECTION_FACTORS
+
+        // isBoxOffScreen: the 8 corners through GsWSMATRIX (RTPS); 1 when none is on the screen
+        bool BoxOffScreen(int x, int y, int z, int width, int height, float viewX, float viewY)
+        {
+            for (int i = 0; i < 2; i++)
+                for (int j = 0; j < 4; j++)
+                {
+                    Vector2 s = RtpsPoint(new Vector3(x + width * DirectionFactors[j, 0], y - i * height, z + width * DirectionFactors[j, 1]));
+                    float sx = s.x - viewX, sy = s.y - viewY;
+                    if (!(sx < -160f || sx > 160f || sy < -120f || sy > 120f)) return false;     // isOffScreen(screen, 320, 240) == 0
+                }
+            return true;
+        }
+
+        // RTPS as the GTE does it: x and y times H / SZ, where SZ below 0 counts as 0 and the quotient stops at 0x1FFFF (about 2), so a point near
+        // or behind the camera lands at about twice its view x / y; the result is held within -1024..1023
+        Vector2 RtpsPoint(Vector3 g)
+        {
+            Vector3 q = g - _vpG;
+            float vx = Vector3.Dot(q, _rG), vy = Vector3.Dot(q, _dG), vz = Vector3.Dot(q, _fG);
+            float k = vz <= 0f ? 0x1FFFF / 65536f : Mathf.Min(_h / vz, 0x1FFFF / 65536f);
+            return new Vector2(Mathf.Clamp(vx * k, -1024f, 1023f), Mathf.Clamp(vy * k, -1024f, 1023f));
+        }
+
         // tickRotateDoor: one game frame; true when done
         bool TickRotateDoor(int slot, int target)
         {
