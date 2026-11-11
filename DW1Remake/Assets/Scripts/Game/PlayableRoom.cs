@@ -2283,12 +2283,24 @@ namespace DW1Remake.Game
 
         GameObject[] _ovPieces;
         float _white;      // the screen fade to white (built-ins 0x2D / 0x2E)
+        int _whiteRun;     // the white fade running now; a black fade that takes over ends it
 
         System.Collections.IEnumerator WhiteFade(bool toWhite, int frames)
         {
+            int run = ++_whiteRun;
             float secs = Mathf.Max(1, frames) / 20f;
-            for (float t = 0f; t < secs; t += Time.deltaTime) { _white = toWhite ? t / secs : 1f - t / secs; yield return null; }
-            _white = toWhite ? 1f : 0f;
+            for (float t = 0f; t < secs; t += Time.deltaTime) { if (run != _whiteRun) yield break; _white = toWhite ? t / secs : 1f - t / secs; yield return null; }
+            if (run == _whiteRun) _white = toWhite ? 1f : 0f;
+        }
+
+        // fadeToBlack / fadeToWhite share one fade (object 4005, FADE_PROGRESS): a black fade removes the white one and goes on from how far it
+        // had got, only subtracting now. MGEN99 fades to white (64 2D) and its 4B to TEND02 then goes black at once and comes up from black;
+        // ours kept the white over TEND02 (user 2026-11-11: a white screen with only the text sounds)
+        void BlackTakesOverWhite()
+        {
+            if (_white <= 0f) return;
+            _fade = Mathf.Max(_fade, _white);
+            _white = 0f; _whiteRun++;
         }
 
         // resetMapObjectAnimation: these pieces start their animation again from the first frame
@@ -3077,6 +3089,7 @@ namespace DW1Remake.Game
         {
             string name = nameOf >= 0 ? AreaName(nameOf) : null;
             int wantId = _wantMapId;       // the number PathOfMap gave with this path, kept through the fade
+            if (!instant) BlackTakesOverWhite();
             if (script)
             {
                 // the room keeps ticking (glides, animations, map Digimon) while the picture goes black
