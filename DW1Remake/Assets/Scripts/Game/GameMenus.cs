@@ -77,7 +77,7 @@ namespace DW1Remake.Game
         /// <summary>Test helper (F6): a few Bits and some items so the menus have something in them.</summary>
         public void DebugGive()
         {
-            _s.Money += 1000;
+            _s.Money = Mathf.Min(_s.Money + 1000, 999999);      // the game's top (MONEY at most 999999)
             _s.AddItem(38, 3);   // Meat
             _s.AddItem(0, 2);    // small recovery
             _s.AddItem(4, 1);    // MP floppy

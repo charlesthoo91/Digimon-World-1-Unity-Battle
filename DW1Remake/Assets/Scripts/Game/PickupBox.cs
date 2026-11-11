@@ -13,7 +13,10 @@ namespace DW1Remake.Game
     public sealed class PickupBox : UiBoxPage
     {
         public readonly UiBox Box = new UiBox { Id = 1 };
-        public int State;                   // TAKE_CHEST_STATE: 0 the item, 1 the bag is full, 2 an empty chest
+        public int State;                   // TAKE_CHEST_STATE: 0 the item, 1 the bag is full, 2 an empty chest; ours: 3 the award box
+        // tamerTickAwardSomething: up to three lines drawn at rows 0x78, 0x84, 0x90 in setTextColor's colour; renderAwardSomethingTextbox
+        // shows them with renderString(0, -0x7D, 0x2D, 0xF0, 0x24, 0, 0x78)
+        string[] _award = new string[0]; int _awardColour;
         string _name, _woah;
         int _timer;                         // TEXTBOX_OPEN_TIMER (renderItemPickupTextbox counts it each frame it draws)
         float _acc;
@@ -32,6 +35,9 @@ namespace DW1Remake.Game
         /// <summary>drawString into rows 0x18 (the item name or a message) and 0x24 ("Woah!").</summary>
         public void SetText(string line, int state) { _name = line; State = state; }
 
+        /// <summary>The award box (state 3): the lines and their FONT_CLUT colour.</summary>
+        public void SetAward(string[] lines, int colour) { _award = lines ?? new string[0]; _awardColour = colour; State = 3; }
+
         public void Draw()
         {
             if (!Showing) return;
@@ -40,9 +46,14 @@ namespace DW1Remake.Game
                 _acc += Time.unscaledDeltaTime;
                 while (_acc >= 0.05f) { _acc -= 0.05f; Step(Box); if (Box.State == 1) _timer++; }
             }
-            BuildPage((_name ?? "") + "|" + _woah, px =>
+            BuildPage((_name ?? "") + "|" + _woah + "|" + State + "|" + string.Join("|", _award) + "|" + _awardColour, px =>
             {
                 if (Font == null) return;
+                if (State == 3)
+                {
+                    for (int i = 0; i < _award.Length && i < 3; i++) Font.Render(_award[i] ?? "", px, 256, 256, 0, 0x78 + 12 * i, Font.Colour(_awardColour));
+                    return;
+                }
                 Font.Render(_name ?? "", px, 256, 256, 0, 0x18);
                 Font.Render(_woah ?? "", px, 256, 256, 0, 0x24);
             });
@@ -50,7 +61,8 @@ namespace DW1Remake.Game
             DrawBox(Box, () =>
             {
                 int z = 6 - Box.Id;
-                if (State == 0)
+                if (State == 3) PageText(z, 0, -0x7D, 0x2D, 0xF0, 0x24, 0, 0x78);
+                else if (State == 0)
                 {
                     PageText(z, 0, -0x7D, 0x39, 0x5A, 12, 0, 0x24);
                     PageText(z, 0x0F, -0x7D, 0x2D, 0x60, 12, 0, 0x18);

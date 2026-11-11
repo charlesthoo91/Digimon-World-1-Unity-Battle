@@ -313,7 +313,7 @@ namespace DW1Remake.Game
             if (GUILayout.Button("Full HP and MP")) { _state.Stats[6] = _state.Stats[4]; _state.Stats[7] = _state.Stats[5]; }
             if (GUILayout.Button("Brains 500 (all battle orders)")) _state.Stats[3] = 500;
             if (GUILayout.Button("Offense/Defense/Speed 300")) { _state.Stats[0] = 300; _state.Stats[1] = 300; _state.Stats[2] = 300; }
-            if (GUILayout.Button("+10000 Bits")) _state.Money += 10000;
+            if (GUILayout.Button("+10000 Bits")) _state.Money = Mathf.Min(_state.Money + 10000, 999999);
             if (GUILayout.Button("5 of every item (bag slots 128)")) { for (int i = 0; i < _state.Bag.Length; i++) _state.Bag[i] = 5; _state.ItemSlots = 128; }
             if (GUILayout.Button("Learn every technique")) { for (int i = 0; i < 58; i++) _state.Techs[i] = true; }
             if (GUILayout.Button("Raise every Digimon (Chart page)")) { for (int i = 0; i < _state.Raised.Length; i++) _state.Raised[i] = true; }

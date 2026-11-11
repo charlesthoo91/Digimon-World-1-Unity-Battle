@@ -2755,6 +2755,9 @@ namespace DW1Remake.Game
             if (ActionPressed() && TryChest()) return;
             if (ActionPressed()) TryTalk();
             if (_runner != null) return;
+            // tamerTickWalkingState: checkMedalConditions, then checkPendingAwards (tamer state 0x14, the award box)
+            CheckMedalConditions();
+            if (CheckPendingAwards()) return;
             WalkBoy();
 
             // exits: grid values 110..119, doors and triggers: 50..109

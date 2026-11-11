@@ -848,7 +848,7 @@ namespace DW1Remake.Game
 
         void End()
         {
-            if (_phase == Phase.Win || _phase == Phase.Leave) { int[] idx = { 4, 5, 0, 1, 2, 3 }; for (int i = 0; i < 6; i++) _s.SetStat(idx[i], _before[i] + _gain[i]); _s.Money += _bits; if (Partner.A != null) Partner.A.SetSlot(0); }
+            if (_phase == Phase.Win || _phase == Phase.Leave) { int[] idx = { 4, 5, 0, 1, 2, 3 }; for (int i = 0; i < 6; i++) _s.SetStat(idx[i], _before[i] + _gain[i]); _s.Money = Math.Min(_s.Money + _bits, 999999); if (Partner.A != null) Partner.A.SetSlot(0); }      // tickBitBox: MONEY >= 1000000 -> 999999
             ClearShots();
             Active = false;
             foreach (var f in new[] { Partner, Enemy }) if (f.A != null) f.A.BodyMovesItself = false;
@@ -2054,7 +2054,7 @@ namespace DW1Remake.Game
                     break;
                 case 1:
                     if (press) _skip = true;
-                    if (_skip) { for (int i = 0; i < 6; i++) { _shown[i] += _left[i]; _left[i] = 0; } _statWait = 0; }
+                    if (_skip) { for (int i = 0; i < 6; i++) { if (_left[i] > 0) _shown[i] = StatCap(i, _shown[i] + _left[i]); _left[i] = 0; } _statWait = 0; }
                     else CountStat();
                     if (!HasLeft() && _statWait == 0)
                     {
@@ -2091,8 +2091,12 @@ namespace DW1Remake.Game
         {
             if (_statWait > 0) { _statWait--; return; }
             for (int i = 0; i < 6; i++)
-                if (_left[i] > 0) { Snd(0x16); _left[i]--; _shown[i]++; return; }
+                if (_left[i] > 0) { Snd(0x16); _left[i]--; _shown[i] = StatCap(i, _shown[i] + 1); return; }
         }
+
+        // renderPostBattleStatsBox / tickPostBattleStatsBox: the count-up holds HP and MP (rows 0, 1) at 9999 and the others at 999; the "+n" still
+        // counts down beside it. Ours went past and the 4-digit number showed 10000 as 0000 (user 2026-11-11)
+        static int StatCap(int row, int v) { return Math.Min(v, row < 2 ? 9999 : 999); }
 
         static Vector2 Ps1Of(Camera cam, Vector3 world)
         {
@@ -2625,7 +2629,7 @@ namespace DW1Remake.Game
         void FinalContent()
         {
             PsText(_bitsLabel, -78, -3, Tinted(0x80, 0x80, 0x80));
-            PsNumber(_s.Money + _bits - _bitsLeft, 6, -30, -3, Tinted(0x80, 0x80, 0x80));
+            PsNumber(Math.Min(_s.Money + _bits - _bitsLeft, 999999), 6, -30, -3, Tinted(0x80, 0x80, 0x80));
         }
 
         // getEntityScreenPos(entity, 1) - 5: the 10 x 10 square these boxes grow out of

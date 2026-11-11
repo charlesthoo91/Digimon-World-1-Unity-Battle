@@ -106,6 +106,87 @@ namespace DW1Remake.Game
 
         PickupBox _pickup;
 
+        // ------------------------------------------------------------------ medals and the Tamer Level (tamer.c)
+        bool _medalPending;      // MEDAL_AWARD_PENDING
+
+        // hasMedal / unlockMedal: trigger 0x16C + medal
+        bool HasMedal(int m) { return _state.GetFlag(0x16C + m); }
+        void UnlockMedal(int m) { if (m < 0x13) _state.SetFlag(0x16C + m, true); }
+
+        // checkMedalConditions: every frame the boy walks freely, the medals the game hands out by itself
+        void CheckMedalConditions()
+        {
+            if (_state == null) return;
+            int i;
+            if (!HasMedal(5))
+            {
+                // every technique 0-0x38 learned (hasMove)
+                for (i = 0; i < 0x39; i++) if (!_state.Techs[i]) break;
+                if (i == 0x39) { UnlockMedal(5); _medalPending = true; }
+            }
+            if (!HasMedal(7))
+            {
+                // the partner's base stats all at their tops: HP and MP 9999, the other four 999
+                var st = _state.Stats;
+                if (st[4] == 9999 && st[5] == 9999 && st[0] == 999 && st[1] == 999 && st[2] == 999 && st[3] == 999) { UnlockMedal(7); _medalPending = true; }
+            }
+            if (!HasMedal(0xD) && _state.Money == 999999) { UnlockMedal(0xD); _medalPending = true; }
+            if (!HasMedal(0xE) && _dayCount / 30 == 10) { UnlockMedal(0xE); _medalPending = true; }       // YEAR == 10
+            if (!HasMedal(6))
+            {
+                // every Digimon 1-61 raised (hasDigimonRaised); the Tamer Level goes up one with it (no award box of its own)
+                for (i = 1; i < 62; i++) if (!_state.Raised[i]) break;
+                if (i == 62)
+                {
+                    UnlockMedal(6); _medalPending = true;
+                    _state.TamerLevel = Mathf.Min(_state.TamerLevel + 1, 10);
+                }
+            }
+            if (!HasMedal(9) && _state.Para.FishCaught >= 100) { UnlockMedal(9); _medalPending = true; }
+            if (!HasMedal(0xC))
+            {
+                // at least one of every card 0-65 (getCardAmount)
+                for (i = 0; i < 66; i++) if (_state.CardCount[i] == 0) break;
+                if (i == 66) { UnlockMedal(0xC); _medalPending = true; }
+            }
+        }
+
+        // checkPendingAwards: tamerSetState(0x14) and the game clock stops
+        bool CheckPendingAwards()
+        {
+            if (!_medalPending && (_care == null || !_care.TamerLevelPending)) return false;
+            Run(AwardScene(), true);
+            return true;
+        }
+
+        // tamerTickAwardSomething: the boy idles, the partner waits (state 0xB). A medal: "Congratulations!" / "To recognize your great" /
+        // "recors, they sent a Medal!" (the original's own spelling) in colour 7, one line a frame; else the Tamer Level: "Tamer level went up!!!"
+        // (colour 7) or "... down!!!" (colour 3). Box 1 grows out of the boy (sound 7); held Cross closes it into him and both awards are done
+        IEnumerator AwardScene()
+        {
+            string[] lines; int colour;
+            if (_medalPending)
+            {
+                lines = new[] { DigimonStatsCatalog.ExeText(_disc, 0x80122DC8), DigimonStatsCatalog.ExeText(_disc, 0x80122DDC), DigimonStatsCatalog.ExeText(_disc, 0x80122DF4) };
+                colour = 7;
+            }
+            else if (_care.TamerLevelAwarded == 1) { lines = new[] { DigimonStatsCatalog.ExeText(_disc, 0x80122D94) }; colour = 7; }
+            else { lines = new[] { DigimonStatsCatalog.ExeText(_disc, 0x80122DAC) }; colour = 3; }
+            Debug.Log("[award] " + string.Join(" ", lines));
+            // states 1-3 (a medal) draw one line a frame; state 4 waits for UI box 1
+            for (int f = 0; f < (_medalPending ? 4 : 2); f++) yield return new WaitForSeconds(0.05f);
+            var v = PickupView();
+            while (v != null && v.Showing) yield return null;
+            if (v != null) { v.SetAward(lines, colour); OpenPickupBox(v); } else _boxText = string.Join(" ", lines);
+            Snd(7);
+            yield return new WaitForSeconds(0.05f);
+            // state 5: POLLED_INPUT & CONFIRM_BUTTON, the button held (not a fresh press)
+            while (!Pad.Held(PadButton.Cross)) yield return null;
+            if (v != null) { v.Box.Origin = BoySquare(); v.Close(v.Box); }
+            _boxText = null;
+            _medalPending = false; _care.TamerLevelPending = false;
+        }
+
         PickupBox PickupView()
         {
             if (_pickup == null && _disc != null && Battle.StatFont != null) { _pickup = PickupBox.Load(_disc, Battle.StatFont); if (_pickup != null) _pickup.Sound = Snd; }

@@ -534,9 +534,17 @@ namespace DW1Remake.Game
             if (RandomLimit(100) < P.Tiredness - ratio) P.Condition |= Injured;
         }
 
+        /// <summary>TAMER_LEVEL_AWARD_PENDING / TAMER_LEVELS_AWARDED: the boy's award box ("Tamer level went up / down!!!") waits for the next walking frame.</summary>
+        public bool TamerLevelPending;
+        public int TamerLevelAwarded = 1;
+
+        // addTamerLevel (tamer.c): a roll of 0-99 under 'chance' changes the level; when the new level is still 0-10 the award box follows
         public void AddTamerLevel(int chance, int amount)
         {
-            if (RandomLimit(100) < chance) _s.TamerLevel = Clamp(_s.TamerLevel + amount, 0, 10);
+            if (RandomLimit(100) >= chance) return;
+            int level = _s.TamerLevel + amount;
+            if (level >= 0 && level < 11) { TamerLevelAwarded = amount >= 1 ? 1 : -1; TamerLevelPending = true; }
+            _s.TamerLevel = Clamp(level, 0, 10);
         }
 
         // ---------------------------------------------------------------- evolution

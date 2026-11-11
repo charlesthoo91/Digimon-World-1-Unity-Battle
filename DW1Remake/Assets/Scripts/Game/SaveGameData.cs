@@ -61,7 +61,8 @@ namespace DW1Remake.Game
             if (Raised != null) Array.Copy(Raised, s.Raised, Math.Min(Raised.Length, s.Raised.Length));
             for (int i = 0; i < Stats.Length && i < s.Stats.Length; i++) s.Stats[i] = (ushort)Math.Max(0, Math.Min(9999, Stats[i]));
             s.TechSet = new List<int>(TechSet ?? new List<int>());
-            s.Money = Money; s.ItemSlots = ItemSlots; s.Happiness = Happiness; s.Discipline = Discipline; s.Age = Age; s.Weight = Weight; s.Life = Life;
+            s.Money = System.Math.Max(0, System.Math.Min(Money, 999999));      // MONEY never passes 999999 (older saves made with the test keys could)
+            s.ItemSlots = ItemSlots; s.Happiness = Happiness; s.Discipline = Discipline; s.Age = Age; s.Weight = Weight; s.Life = Life;
             s.TamerLevel = TamerLevel;
             if (Version >= 3 && Para != null) s.Para = Para;
             if (Registry != null && Registry.Length == 40) s.Registry = Registry;
