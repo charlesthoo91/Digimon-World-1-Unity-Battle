@@ -23,8 +23,9 @@ namespace DW1Remake.Formats
                 if (p + 10 > exe.Length) break;
                 int n = 0;
                 while (n < 10 && exe[p + n] >= 32 && exe[p + n] < 127) n++;
-                if (n == 0) break;
-                names.Add(Encoding.ASCII.GetString(exe, p, n));
+                // an empty entry is a gap, not the end: 240-246 and 250-252 are empty and MGEN06-MGEN10 (247-249, 253, 254) come after them.
+                // Stopping at the first gap lost those maps, and MGEN05's pads (4B F7 00) went nowhere (user 2026-11-11)
+                names.Add(n == 0 ? "" : Encoding.ASCII.GetString(exe, p, n));
             }
             return names;
         }
@@ -40,8 +41,8 @@ namespace DW1Remake.Formats
             for (int i = 0; i < 255; i++)
             {
                 int p = o + 16 * i;
-                if (p + 16 > exe.Length || exe[p] < 32 || exe[p] >= 127) break;
-                flags.Add(exe[p + 12]);
+                if (p + 16 > exe.Length) break;
+                flags.Add(exe[p] < 32 || exe[p] >= 127 ? (byte)0 : exe[p + 12]);      // an empty entry (a gap) keeps its place
             }
             return flags;
         }
@@ -57,8 +58,9 @@ namespace DW1Remake.Formats
             for (int i = 0; i < 255; i++)
             {
                 int p = o + 16 * i;
-                if (p + 16 > exe.Length || exe[p] < 32 || exe[p] >= 127) break;
-                num8.Add(exe[p + 10]); num4.Add(exe[p + 11]);
+                if (p + 16 > exe.Length) break;
+                bool gap = exe[p] < 32 || exe[p] >= 127;      // an empty entry keeps its place
+                num8.Add(gap ? (byte)0 : exe[p + 10]); num4.Add(gap ? (byte)0 : exe[p + 11]);
             }
         }
 

@@ -1098,9 +1098,9 @@ namespace DW1Remake.Game
         /// <param name="warp">a script's 4B / teleport: the area's name shows by consumeMapChangeShowName (a fled fight's change shows none)</param>
         bool DoChangeMap(ScriptAction a, bool instant = false, bool warp = false)
         {
-            if (a.Map < 0 || a.Map >= _mapNames.Count || a.Exit > 9) return false;
+            if (a.Map < 0 || a.Map >= _mapNames.Count || a.Exit > 9) { Debug.LogWarning("[script] map change to map " + a.Map + " exit " + a.Exit + " refused (no such map)"); return false; }
             string next = PathOfMap(a.Map);
-            if (!_disc.Exists(next) || !_disc.Exists(next.Substring(0, next.Length - 4) + ".TFS")) return false;
+            if (!_disc.Exists(next) || !_disc.Exists(next.Substring(0, next.Length - 4) + ".TFS")) { Debug.LogWarning("[script] map change to " + next + " refused (file missing)"); return false; }
             Debug.Log("Script: " + _mapNames[_mapId] + " -> " + _mapNames[a.Map] + " exit " + a.Exit);
             _prevExit = _curExit;                   // scriptTickChangeMap: PREVIOUS_EXIT = CURRENT_EXIT
             _arrive = a.Arrive;

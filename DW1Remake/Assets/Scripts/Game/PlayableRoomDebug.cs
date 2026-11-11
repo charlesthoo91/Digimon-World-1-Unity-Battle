@@ -361,6 +361,7 @@ namespace DW1Remake.Game
             for (int i = 0; i < _mapNames.Count && shown < 40; i++)
             {
                 if (_mapFilter.Length > 0 && _mapNames[i].IndexOf(_mapFilter, System.StringComparison.OrdinalIgnoreCase) < 0) continue;
+                if (_mapNames[i].Length == 0) continue;      // an empty entry
                 shown++;
                 if (GUILayout.Button(i + "  " + _mapNames[i])) { GotoMap(PathOfMap(i)); _debugOpen = false; }
             }
