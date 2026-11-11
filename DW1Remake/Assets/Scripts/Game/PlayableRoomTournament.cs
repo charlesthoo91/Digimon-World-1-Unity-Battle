@@ -607,7 +607,7 @@ namespace DW1Remake.Game
             int mi = _mapNames.IndexOf("ROOM13");
             if (mi < 0) { Say("ROOM13 not found."); return; }
             _debugOpen = false;
-            StartCoroutine(ChangeMap(MapCatalog.PathFor(_mapNames, mi), 0));
+            StartCoroutine(ChangeMap(PathOfMap(mi), 0));
         }
 
         // as if registered for 'cup' today and the script's 64 06 ran (no script: variable 255 is only logged)

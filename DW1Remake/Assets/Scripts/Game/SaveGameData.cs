@@ -13,6 +13,7 @@ namespace DW1Remake.Game
     {
         public int Version = 3;                     // 3 = holds the care numbers (Para) with piles and evolution
         public string Map;
+        public int MapId = -1;                      // the map's number (MAP_ENTRIES): two entries share YAKA25; -1 in older saves
         public float X, Y, Z, Clock;
         public int Day, PartnerType;
         public string PlayerName, PartnerName;

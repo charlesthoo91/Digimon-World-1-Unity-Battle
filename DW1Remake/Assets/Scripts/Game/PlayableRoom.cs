@@ -98,6 +98,10 @@ namespace DW1Remake.Game
         readonly List<float> _lightBase = new List<float>();
         MapScripts _scripts;
         int _mapId;
+        // the map number to load: two map entries share a file (65 and 232 are both YAKA25; 232 is the one YAKA11B leads to, script 188, with
+        // the way out on tile 81; 65 uses script 5, an empty table), so the number cannot be found again from the file name (user 2026-11-11)
+        int _wantMapId = -1;
+        string PathOfMap(int id) { _wantMapId = id; return MapCatalog.PathFor(_mapNames, id); }
         MapBackground _map;
         Camera _cam;
         Transform _player;
@@ -359,20 +363,20 @@ namespace DW1Remake.Game
             if (NewGame)
             {
                 int ti = _mapNames.IndexOf("TOPN01");        // the opening takes place here
-                if (ti >= 0) MapPath = MapCatalog.PathFor(_mapNames, ti);
+                if (ti >= 0) MapPath = PathOfMap(ti);
                 _state.SetFlag(54, true); _state.SetFlag(55, true);      // the same flags as the game's own "Opening mode"
             }
             else if (loadSave)
             {
                 ApplySave(sv);
-                int mi = _mapNames.IndexOf(sv.Map);
-                if (mi >= 0) MapPath = MapCatalog.PathFor(_mapNames, mi);
+                int mi = SavedMapId(sv);
+                if (mi >= 0) MapPath = PathOfMap(mi);
             }
             else if (QuickStart)
             {
                 QuickStartState();
                 int ti = _mapNames.IndexOf("TWNA01");
-                if (ti >= 0) MapPath = MapCatalog.PathFor(_mapNames, ti);
+                if (ti >= 0) MapPath = PathOfMap(ti);
             }
             else foreach (var f in InitialFlags) _state.SetFlag(f, true);
             LoadMap(MapPath, NewGame ? 9 : (QuickStart && !loadSave) ? 2 : -1);
@@ -1086,7 +1090,7 @@ namespace DW1Remake.Game
         bool DoChangeMap(ScriptAction a, bool instant = false, bool warp = false)
         {
             if (a.Map < 0 || a.Map >= _mapNames.Count || a.Exit > 9) return false;
-            string next = MapCatalog.PathFor(_mapNames, a.Map);
+            string next = PathOfMap(a.Map);
             if (!_disc.Exists(next) || !_disc.Exists(next.Substring(0, next.Length - 4) + ".TFS")) return false;
             Debug.Log("Script: " + _mapNames[_mapId] + " -> " + _mapNames[a.Map] + " exit " + a.Exit);
             _prevExit = _curExit;                   // scriptTickChangeMap: PREVIOUS_EXIT = CURRENT_EXIT
@@ -2078,7 +2082,9 @@ namespace DW1Remake.Game
 
             _map = map;
             MapPath = path;
-            _mapId = _mapNames.IndexOf(Path.GetFileNameWithoutExtension(path));
+            string fileName = Path.GetFileNameWithoutExtension(path);
+            _mapId = _wantMapId >= 0 && _wantMapId < _mapNames.Count && _mapNames[_wantMapId] == fileName ? _wantMapId : _mapNames.IndexOf(fileName);
+            _wantMapId = -1;
             _curPalette = DesiredPalette(out _lightFactor);
 
             // the game's camera, in game space (Y down)
@@ -2997,7 +3003,7 @@ namespace DW1Remake.Game
         {
             try
             {
-                string p = MapCatalog.PathFor(_mapNames, id);
+                string p = MapCatalog.PathFor(_mapNames, id);     // only looks: not PathOfMap
                 if (!_disc.Exists(p)) return 0;
                 var m = MapBackground.Parse(_disc.ReadFile(p), _disc.ReadFile(p.Substring(0, p.Length - 4) + ".TFS"));
                 foreach (var w in m.Warps) if (w.TargetMap == _mapId) return 1;
@@ -3019,13 +3025,16 @@ namespace DW1Remake.Game
             hits = ordered;
             foreach (var h in hits)
             {
-                string next = MapCatalog.PathFor(_mapNames, h[0]);
+                string next = PathOfMap(h[0]);
                 if (!_disc.Exists(next) || !_disc.Exists(next.Substring(0, next.Length - 4) + ".TFS")) continue;
                 Debug.Log("Door " + trigger + " in " + _mapNames[_mapId] + " -> " + _mapNames[h[0]] + " exit " + h[1] + (hits.Count > 1 ? "  (script has " + hits.Count + " possible targets, using the first)" : ""));
                 StartCoroutine(ChangeMap(next, h[1], false, false, true, h[0]));
                 return;
             }
-            Say("Trigger " + trigger + " in " + _mapNames[_mapId] + " is a script event (no door found). Not supported yet.");
+            // checkMapInteraction -> callScriptSection(script, trigger, 0): the map's script has no section for this tile (getScriptSection
+            // gives 0; YAKA25's script 5 is only a stub table, sections 5-8), so nothing happens on the PS1 either. Ours said "not supported"
+            // on the screen (user 2026-11-11); now only the Console notes it
+            Debug.Log("[script] trigger " + trigger + " in " + _mapNames[_mapId] + ": the map's script has no section for it (nothing happens)");
         }
 
         void TryExit(int exitIndex)
@@ -3037,7 +3046,7 @@ namespace DW1Remake.Game
                 _armed = false;
                 return;
             }
-            string next = MapCatalog.PathFor(_mapNames, w.TargetMap);
+            string next = PathOfMap(w.TargetMap);
             if (!_disc.Exists(next) || !_disc.Exists(next.Substring(0, next.Length - 4) + ".TFS"))
             {
                 Say("Map file not found: " + next);
@@ -3054,6 +3063,7 @@ namespace DW1Remake.Game
         IEnumerator ChangeMap(string path, int exit, bool instant = false, bool script = false, bool walk = false, int nameOf = -1)
         {
             string name = nameOf >= 0 ? AreaName(nameOf) : null;
+            int wantId = _wantMapId;       // the number PathOfMap gave with this path, kept through the fade
             if (script)
             {
                 // the room keeps ticking (glides, animations, map Digimon) while the picture goes black
@@ -3069,6 +3079,7 @@ namespace DW1Remake.Game
             if (!instant) { _mapNameShown = name; yield return null; }      // ours: the black frame with the name is seen at least once (the PS1 shows it while the disc loads)
             if (_anim != null && walk) _anim.SetSlot(IdleSlot);      // changeMap: initializeTamer puts him back in his idle
             int fromMap = _mapId;
+            _wantMapId = wantId;
             try { LoadMap(path, exit); NotePreviousMap(fromMap, _mapId, exit); }
             catch (Exception e) { _error = e.Message; Debug.LogException(e); }
             _mapNameShown = null;      // removeObject(0xFA1) right after changeMap

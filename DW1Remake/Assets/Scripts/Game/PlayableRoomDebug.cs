@@ -49,7 +49,7 @@ namespace DW1Remake.Game
         {
             if (_player == null || _mapId < 0) return;
             var d = SaveGameData.From(_state);
-            d.Map = _mapNames[_mapId]; d.X = _player.position.x; d.Y = _player.position.y; d.Z = _player.position.z;
+            d.Map = _mapNames[_mapId]; d.MapId = _mapId; d.X = _player.position.x; d.Y = _player.position.y; d.Z = _player.position.z;
             d.Clock = _clock; d.Day = _dayCount; d.PartnerType = PartnerType; d.MainState = _mainState;
             d.PrevScreen = _prevScreen; d.PrevExit = _prevExit; d.CurExit = _curExit;
             File.WriteAllText(SavePath, JsonUtility.ToJson(d));
@@ -66,6 +66,16 @@ namespace DW1Remake.Game
         }
 
         // applies a save to the state; the caller loads the map and puts the player down (see PlaceFromSave)
+        /// <summary>The save's map: its number when it holds one that still names that file (two entries share YAKA25), else the first map of that name.</summary>
+        int SavedMapId(SaveGameData d)
+        {
+            if (d == null || string.IsNullOrEmpty(d.Map)) return -1;
+            if (d.MapId >= 0 && d.MapId < _mapNames.Count && _mapNames[d.MapId] == d.Map) return d.MapId;
+            // an older save without the number: the last entry of that name. The only shared name is YAKA25, and entry 65 is never entered in the
+            // game (no exit or script leads to it); 232 is the room off YAKA11B
+            return _mapNames.LastIndexOf(d.Map);
+        }
+
         void ApplySave(SaveGameData d)
         {
             d.ApplyTo(_state);
@@ -92,9 +102,9 @@ namespace DW1Remake.Game
             if (d == null) { Say("No save file yet (F11 saves)."); return; }
             if (_changing || _battle != null && _battle.Active) return;
             ApplySave(d);
-            int mi = _mapNames.IndexOf(d.Map);
+            int mi = SavedMapId(d);
             if (mi < 0) { Say("Save points to an unknown map " + d.Map); return; }
-            try { LoadMap(MapCatalog.PathFor(_mapNames, mi), -1); PlaceFromSave(d); RunMapStart(255); }
+            try { LoadMap(PathOfMap(mi), -1); PlaceFromSave(d); RunMapStart(255); }
             catch (System.Exception e) { _error = e.Message; Debug.LogException(e); return; }
             Say("Loaded.");
         }
@@ -180,7 +190,7 @@ namespace DW1Remake.Game
             if (_battle == null || _battle.Active || _runner != null || _player == null || _partner == null || _changing) { Say("Not now."); return; }
             int mi = _mapNames.IndexOf(mapName);
             if (mi < 0) { Say(mapName + " not found."); return; }
-            string path = MapCatalog.PathFor(_mapNames, mi);
+            string path = PathOfMap(mi);
             MapBackground bg;
             try { bg = MapBackground.Parse(_disc.ReadFile(path), _disc.ReadFile(path.Substring(0, path.Length - 4) + ".TFS")); }
             catch (System.Exception e) { Say("Map read failed: " + e.Message); return; }
@@ -231,7 +241,7 @@ namespace DW1Remake.Game
             if (_partner == null) { HasPartner = true; BuildPartner(); }
             int ti = _mapNames.IndexOf("TWNA01");
             if (ti < 0) { Say("TWNA01 not found."); return; }
-            try { LoadMap(MapCatalog.PathFor(_mapNames, ti), 2); }
+            try { LoadMap(PathOfMap(ti), 2); }
             catch (System.Exception e) { _error = e.Message; Debug.LogException(e); return; }
             if (_partner != null) { _partner.gameObject.SetActive(true); PlacePartner(_player.position, Vector3.back); }
             Say("Opening skipped.");
@@ -352,7 +362,7 @@ namespace DW1Remake.Game
             {
                 if (_mapFilter.Length > 0 && _mapNames[i].IndexOf(_mapFilter, System.StringComparison.OrdinalIgnoreCase) < 0) continue;
                 shown++;
-                if (GUILayout.Button(i + "  " + _mapNames[i])) { GotoMap(MapCatalog.PathFor(_mapNames, i)); _debugOpen = false; }
+                if (GUILayout.Button(i + "  " + _mapNames[i])) { GotoMap(PathOfMap(i)); _debugOpen = false; }
             }
             GUILayout.EndScrollView();
             GUILayout.EndArea();

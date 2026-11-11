@@ -192,7 +192,7 @@ namespace DW1Remake.Game
             int screen = b[s + 0x49A];
             d.PrevScreen = b[s + 0x49B]; d.CurExit = b[s + 0x49C]; d.PrevExit = b[s + 0x49D];
             if (screen >= _mapNames.Count) throw new System.Exception("unknown map " + screen);
-            d.Map = _mapNames[screen];
+            d.Map = _mapNames[screen]; d.MapId = screen;
             // battleRegistrationData: 40 x 0x40 (hp, mp, off, def, speed, brains, discipline, name, type, three move animations)
             var reg = ScriptState.NewRegistry();
             for (int i = 0; i < 40; i++)

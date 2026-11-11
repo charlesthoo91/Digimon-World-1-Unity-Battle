@@ -1886,7 +1886,7 @@ namespace DW1Remake.Game
             if (mi < 0) { Say("FRZL17 not found."); return; }
             _state.Vars[0x7A] = (byte)opponent;
             _debugOpen = false;
-            StartCoroutine(ChangeMap(MapCatalog.PathFor(_mapNames, mi), 1));      // as script 206 does: 4B 88 01 FF
+            StartCoroutine(ChangeMap(PathOfMap(mi), 1));      // as script 206 does: 4B 88 01 FF
         }
     }
 }
