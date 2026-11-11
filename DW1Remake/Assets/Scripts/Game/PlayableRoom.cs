@@ -1079,11 +1079,20 @@ namespace DW1Remake.Game
                     return;
                 }
                 if (a.Cmd >= 0) { if (ExecCmd(a)) return; continue; }
-                if (a.Text != null) { _line = a.Text; _lineCustom = a.Custom; _speaker = a.Speaker; SetDialogueOwner(a.Speaker); _choiceOpts = null; _scriptAny = true; return; }
+                if (a.Text != null) { _line = FixedText(a.Text); _lineCustom = a.Custom; _speaker = a.Speaker; SetDialogueOwner(a.Speaker); _choiceOpts = null; _scriptAny = true; return; }
                 if (a.Options != null) { if (a.Selection) { _speaker = a.Speaker; SetDialogueOwner(a.Speaker); _line = null; } _lineCustom = false; _choiceOpts = a.Options; _choiceSel = 0; _scriptAny = true; return; }
                 // scriptTickChangeMap: the script stays on this command (its text box, glides and animations go on) until the fade has gone black
                 if (a.Map >= 0 && DoChangeMap(a, false, true)) { _scriptAny = true; return; }
             }
+        }
+
+        // ours (glitch N4, user's decision 2026-11-11): OMOC08 Nanimon's last meeting reuses the first meeting's text "I can hold up to twenty Items
+        // now." while its 23 1E makes the bag 30 slots. The text shows before that command, so the bag still holds 20 then (10 at the first)
+        string FixedText(string text)
+        {
+            if (text != null && _state.ItemSlots >= 20 && _mapId >= 0 && _mapNames[_mapId] == "OMOC08" && text.Contains("twenty Items"))
+                return text.Replace("twenty Items", "thirty Items");
+            return text;
         }
 
         /// <param name="warp">a script's 4B / teleport: the area's name shows by consumeMapChangeShowName (a fled fight's change shows none)</param>
