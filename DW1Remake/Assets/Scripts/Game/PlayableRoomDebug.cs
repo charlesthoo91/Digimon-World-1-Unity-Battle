@@ -87,6 +87,38 @@ namespace DW1Remake.Game
             _clock = _care.ClockHours;
             if (d.Version < 3) _care.InitPartner(PartnerType);   // a save from before the care numbers
             _intro = false;
+            ApplyCheats();
+        }
+
+        // ------------------------------------------------------------------ ours: OPTIONS > CHEATS, put into effect on loading a game
+
+        // the story items the bank cheat leaves out: Electo ring, then Moon mirror .. AS Decoder (items 0x72-0x7C)
+        static bool CheatSkipsItem(int id) { return id == 0x53 || (id >= 0x72 && id <= 0x7C); }
+
+        bool _cheatHour;        // L1 + R1 + Circle passes an hour (CheatHour as it was when this game was loaded)
+
+        void ApplyCheats()
+        {
+            _cheatHour = ModSettings.CheatHour;
+            // the Item Keeper is Agumon: only once it has joined (recruit flag 0xCB); 99 = keeperMoveOne's limit
+            if (ModSettings.CheatBank && _state.GetFlag(0xCB))
+            {
+                if (_itemCatalog == null) _itemCatalog = ItemCatalog.Load(_disc);
+                foreach (var it in _itemCatalog)
+                    if (!string.IsNullOrEmpty(it.NameEn) && it.Id >= 0 && it.Id < _state.Stored.Length && !CheatSkipsItem(it.Id)) _state.Stored[it.Id] = 0x63;
+            }
+            if (ModSettings.CheatChart) for (int i = 0; i < _state.Raised.Length; i++) _state.Raised[i] = true;
+            // unlockMedal: trigger 0x16C + medal (the Medals page shows 15)
+            if (ModSettings.CheatMedals) for (int i = 0; i < 15; i++) _state.SetFlag(0x16C + i, true);
+            // getCardAmount: the count (0-9) of each of the 66 cards
+            if (ModSettings.CheatCards) for (int i = 0; i < 66; i++) { if (_state.CardCount[i] == 0) _state.CardCount[i] = 1; _state.Cards[i] = true; }
+            if (ModSettings.CheatBits) _state.Money = 999999;
+        }
+
+        // L1 + R1 held and Circle pressed while the game clock runs: one hour on (as the dev key T)
+        void CheatHourKey()
+        {
+            if (_cheatHour && GameTimeRuns && Pad.Held(PadButton.L1) && Pad.Held(PadButton.R1) && Pad.Pressed(PadButton.Circle)) _care.SkipHours(1);
         }
 
         void PlaceFromSave(SaveGameData d)

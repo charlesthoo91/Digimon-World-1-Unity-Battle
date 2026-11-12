@@ -69,7 +69,7 @@ namespace DW1Remake.Game
                     byte[] m;
                     while ((m = _net.Receive()) != null) ReadOnline(m);
                     // both pressed Battle!: the host says start, and both PCs go to the arena
-                    if (_onlineRole == 1 && _meReady && _friendReady && _friend != null && !_onlineMatch) { _net.SendSure(new[] { MsgStart, (byte)(_onlineOrders ? 1 : 0) }); StartCoroutine(OnlineMatch(true)); }
+                    if (_onlineRole == 1 && _meReady && _friendReady && _friend != null && !_onlineMatch) { _net.SendSure(new[] { MsgStart, (byte)(_onlineOrders ? 1 : 0), (byte)_onlineTime }); StartCoroutine(OnlineMatch(true)); }
                     if (_onlineMatch) OnlineFrame();
                 }
                 // the link screen while no match runs (the match has the arena's own screens)
@@ -248,8 +248,10 @@ namespace DW1Remake.Game
                     if (_onlineRole == 1)
                     {
                         opts.Add(DW1Remake.Formats.Tr.Format("Orders   {0}", DW1Remake.Formats.Tr.Text(_onlineOrders ? "ON" : "OFF", "ours"))); acts.Add(() => { _onlineOrders = !_onlineOrders; });
+                        // ours: the match's time, 99 seconds (the arena's), 300, or none
+                        opts.Add(DW1Remake.Formats.Tr.Format("Time   {0}", OnlineTimeName(_onlineTime))); acts.Add(() => { _onlineTime = (_onlineTime + 1) % 3; });
                     }
-                    else lines.Add(_onlineOrders ? "Orders ON" : "The host chooses the orders.");
+                    else { lines.Add(_onlineOrders ? "Orders ON" : "The host chooses the orders."); lines.Add("The host chooses the time limit."); }
                     if (!_meReady) { opts.Add("Battle!"); acts.Add(() => { _meReady = true; _net.SendSure(new[] { MsgReady }); }); }
                     else lines.Add(_friendReady ? "Starting..." : "Waiting for your friend's Battle!...");
                 }

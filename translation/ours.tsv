@@ -90,3 +90,17 @@ This file is not a PlayStation disc image (.bin or .iso).	這個檔案不是 Pla
 Looking for the disc you chose before ...	正在尋找你之前選擇的光碟……
 CONTROLLER	手把
 BACK	返回
+Time   {0}	時間   {0}
+{0} s	{0} 秒
+No limit	無限制
+The host chooses the time limit.	由主持者決定時間限制。
+Surrender?	要投降嗎？
+UP	上
+DOWN	下
+LEFT	左
+RIGHT	右
+CROSS	叉
+CIRCLE	圈
+TRIANGLE	三角
+SQUARE	方塊
+RESET	重設

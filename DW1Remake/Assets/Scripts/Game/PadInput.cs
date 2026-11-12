@@ -8,7 +8,7 @@ using UnityEngine.InputSystem.Controls;
 namespace DW1Remake.Game
 {
     /// <summary>The PS1 pad's buttons (the game reads only these).</summary>
-    public enum PadButton { Up, Down, Left, Right, Cross, Circle, Triangle, Square, L1, R1, Start, Select }
+    public enum PadButton { Up, Down, Left, Right, Cross, Circle, Triangle, Square, L1, R1, Start, Select, L2, R2 }      // L2 / R2: ours (online battle: surrender)
 
     /// <summary>
     /// Ours (mod "Controls"): the one pad every game key goes through (GameMenus, PlayableRoom, Battle, curling). It is held when any of
@@ -18,7 +18,7 @@ namespace DW1Remake.Game
     /// </summary>
     public static class Pad
     {
-        const int Count = 12;
+        const int Count = 14;
         static readonly bool[] _held = new bool[Count], _prev = new bool[Count], _down = new bool[Count];
         static int _frame = -1;
 
@@ -34,6 +34,7 @@ namespace DW1Remake.Game
             new[] { Key.UpArrow, Key.W }, new[] { Key.DownArrow, Key.S }, new[] { Key.LeftArrow, Key.A }, new[] { Key.RightArrow, Key.D },
             new[] { Key.Space }, new[] { Key.Z }, new[] { Key.Tab, Key.C }, new[] { Key.X },
             new[] { Key.Q }, new[] { Key.E }, new[] { Key.Enter, Key.NumpadEnter }, new[] { Key.Backspace },
+            new[] { Key.Digit1 }, new[] { Key.Digit3 },      // L2 / R2 (ours): above Q / E, the L1 / R1 keys
         };
         static List<Key>[] _keys;
         const string KeysPref = "DW1Remake.Mod.Keys";
@@ -127,6 +128,7 @@ namespace DW1Remake.Game
             new[] { "dpad/up", "leftStick/up" }, new[] { "dpad/down", "leftStick/down" }, new[] { "dpad/left", "leftStick/left" }, new[] { "dpad/right", "leftStick/right" },
             new[] { "buttonSouth" }, new[] { "buttonEast" }, new[] { "buttonNorth" }, new[] { "buttonWest" },
             new[] { "leftShoulder" }, new[] { "rightShoulder" }, new[] { "start" }, new[] { "select" },
+            new[] { "leftTrigger" }, new[] { "rightTrigger" },
         };
         static List<string>[] _buttons;
         const string ButtonsPref = "DW1Remake.Mod.PadButtons";

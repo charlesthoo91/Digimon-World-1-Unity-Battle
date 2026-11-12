@@ -155,6 +155,9 @@ namespace DW1Remake.Game
         public bool Tournament;
         public bool TournamentWeak;             // PARTNER_PARA.condition & 0x60: STD_initializeCombat takes a fifth off Offense, Defense, Speed and Brains for the fight
         public int Timer;                       // STD_TIMER (STD_addFighterCounter(0x63))
+        public int TimerStart = 99;             // ours (online battle's time option): the counter's start, 99 as the arena
+        public bool NoTimeLimit;                // ours (online battle's time option): the counter never runs down
+        public static bool InputLocked;         // ours (online battle's surrender question): the fight's own buttons (Square, L1 / R1) are not read
         public int Result;                      // STD_combatMain: 1 won, -1 lost (a draw is lost too: STD_deinitializeCombat(1, 1) returns -1)
         public int WinnerSide = -1;             // STD_deinitializeCombat's a: 0 the partner, 1 the enemy, 2 nobody (a draw)
         public bool TimeUpWord, TimeUpBox;      // STD_renderTimeoutText / STD_addTimeoutWindow are up
@@ -378,7 +381,7 @@ namespace DW1Remake.Game
         {
             NoFlee = true; _boyDone = true;
             _puppetEnd = false;
-            Timer = 99; _tFrames = 1; _tTimerAcc = 0f; Result = 0; WinnerSide = -1; TimeUpWord = TimeUpBox = false; TourDamage[0] = TourDamage[1] = 0;
+            Timer = TimerStart; _tFrames = 1; _tTimerAcc = 0f; Result = 0; WinnerSide = -1; TimeUpWord = TimeUpBox = false; TourDamage[0] = TourDamage[1] = 0;
             _tCount = 0; _tLoser = -1; _tCheer = 0; _tAcc = 0f; _tPress = false;
             _tStartHp0 = Partner.Hp; _tStartHp1 = Enemy.Hp;
             _tVersus = false; _tKo.Clear(); TournamentStartDone = false;
@@ -695,7 +698,7 @@ namespace DW1Remake.Game
                 _tTimerAcc -= Frame;
                 _tFrames++;
                 bool down = (Partner.A != null && Partner.A.Slot == DownSlot) || (Enemy.A != null && Enemy.A.Slot == DownSlot);
-                if (!down && _tFrames % 20 == 0 && Timer != 0) Timer--;
+                if (!down && _tFrames % 20 == 0 && Timer != 0 && !NoTimeLimit) Timer--;
             }
         }
 
@@ -1495,7 +1498,7 @@ namespace DW1Remake.Game
         // Square: fires the finishing move once FINISH!! shows
         static bool SquarePressed()
         {
-            return Pad.Pressed(PadButton.Square);
+            return !InputLocked && Pad.Pressed(PadButton.Square);
         }
 
         // the finisher aura (BTL_addFinisherAura, 80 frames; BTL_renderFinisherAura). BTL_REL.BIN starts with its TIM (VRAM 768,448) and holds its TMD at 0xD20:
@@ -1570,6 +1573,7 @@ namespace DW1Remake.Game
 
         static int ChargePresses()
         {
+            if (InputLocked) return 0;
             return (Pad.Pressed(PadButton.L1) ? 1 : 0) + (Pad.Pressed(PadButton.R1) ? 1 : 0);
         }
 

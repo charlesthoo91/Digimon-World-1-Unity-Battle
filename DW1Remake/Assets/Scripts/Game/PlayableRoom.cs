@@ -2587,6 +2587,7 @@ namespace DW1Remake.Game
             {
                 _clockFrames += ClockMinutesPerSecond * 20f * Time.deltaTime;
                 while (_clockFrames >= 1f) { _clockFrames -= 1f; _care.Tick(!_pBusy); }
+                CheatHourKey();
             }
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
 #if ENABLE_INPUT_SYSTEM
@@ -2686,7 +2687,8 @@ namespace DW1Remake.Game
                 if (_battle != null && _battle.Active)
                 {
                     _battle.ReadBack();
-                    _battle.Tick(GameMenus.SideStep(), ActionPressed(), GameMenus.TriangleKey() || GameMenus.BagKey(), GameMenus.CancelKey());   // Triangle opens the item page
+                    if (_surrenderAsk) _battle.Tick(0, false, false, false);      // ours: the surrender question has the buttons (online battle)
+                    else _battle.Tick(GameMenus.SideStep(), ActionPressed(), GameMenus.TriangleKey() || GameMenus.BagKey(), GameMenus.CancelKey());   // Triangle opens the item page
                     if (!_battle.Active && !_tourOn)        // an arena match: the tournament's own code takes over (PlayableRoomTournament)
                     {
                         EndBattle();

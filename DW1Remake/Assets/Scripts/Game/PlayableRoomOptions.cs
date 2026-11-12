@@ -65,6 +65,8 @@ namespace DW1Remake.Game
                 HelpEn = "Left and right turn the sound down or up, 0 to 100.", HelpZh = "按左右鍵調整音量，0 到 100。" });
             r.Add(new OptionRow { En = "LANGUAGE", Zh = "語言", Value = () => Zh ? "繁體中文" : "ENGLISH", Act = ToggleLanguage, Side = d => { ToggleLanguageNow(); },
                 HelpEn = "English or Traditional Chinese, for the whole game: texts, menus and names. The player and partner names stay as typed.", HelpZh = "英文或繁體中文，套用到整個遊戲：對話、選單與名稱。主角與夥伴的名字維持輸入時的樣子。" });
+            r.Add(new OptionRow { En = "CHEATS", Zh = "作弊", Act = () => ModsPage(CheatRows),
+                HelpEn = "Cheats that act when a saved game is loaded, and a quick way to pass the time.", HelpZh = "載入存檔時生效的作弊，以及快速推進時間的方法。" });
             r.Add(new OptionRow { En = "CONTROLS", Zh = "操作設定", Act = ControlsPage,
                 HelpEn = "Keyboard keys, controller buttons and the touch buttons.", HelpZh = "鍵盤、手把與觸控按鈕的設定。" });
             r.Add(new OptionRow { En = "EXPORT SAVE", Zh = "匯出存檔", Act = ExportSave,
@@ -76,9 +78,33 @@ namespace DW1Remake.Game
             return r;
         }
 
+        // ours (OPTIONS > CHEATS): each is put into effect when a game is next loaded (CONTINUE), not at once (ApplyCheats)
+        List<OptionRow> CheatRows()
+        {
+            var r = new List<OptionRow>();
+            System.Func<System.Action, System.Func<IEnumerator>> just = a => () => { a(); return null; };
+            r.Add(new OptionRow { En = "ITEM BANK 99", Zh = "銀行道具 99", Value = () => OnOff(ModSettings.CheatBank), Act = just(() => ModSettings.CheatBank = !ModSettings.CheatBank),
+                HelpEn = "On loading a game: 99 of every item in Agumon's item bank, once Agumon has joined the city. Story items are left out.", HelpZh = "載入存檔時：亞古獸加入城鎮後，牠的道具銀行裡每種道具都有 99 個。劇情道具除外。" });
+            r.Add(new OptionRow { En = "FULL CHART", Zh = "完整圖鑑", Value = () => OnOff(ModSettings.CheatChart), Act = just(() => ModSettings.CheatChart = !ModSettings.CheatChart),
+                HelpEn = "On loading a game: every Digimon of the evolution chart counts as raised.", HelpZh = "載入存檔時：進化圖鑑上的所有數碼寶貝都算作已培育。" });
+            r.Add(new OptionRow { En = "ALL MEDALS", Zh = "全部獎牌", Value = () => OnOff(ModSettings.CheatMedals), Act = just(() => ModSettings.CheatMedals = !ModSettings.CheatMedals),
+                HelpEn = "On loading a game: every medal is won.", HelpZh = "載入存檔時：獲得全部獎牌。" });
+            r.Add(new OptionRow { En = "ALL CARDS", Zh = "全部卡片", Value = () => OnOff(ModSettings.CheatCards), Act = just(() => ModSettings.CheatCards = !ModSettings.CheatCards),
+                HelpEn = "On loading a game: at least 1 of each card.", HelpZh = "載入存檔時：每種卡片至少有 1 張。" });
+            r.Add(new OptionRow { En = "MAX BITS", Zh = "最多位元", Value = () => OnOff(ModSettings.CheatBits), Act = just(() => ModSettings.CheatBits = !ModSettings.CheatBits),
+                HelpEn = "On loading a game: 999,999 Bits.", HelpZh = "載入存檔時：擁有 999,999 位元。" });
+            r.Add(new OptionRow { En = "PASS AN HOUR", Zh = "快轉一小時", Value = () => OnOff(ModSettings.CheatHour), Act = just(() => ModSettings.CheatHour = !ModSettings.CheatHour),
+                HelpEn = "From the next loaded game: L1 + R1 + Circle while the clock runs moves time on by one hour.", HelpZh = "從下次載入存檔起：時鐘走動時按 L1 + R1 + 圈，時間前進一小時。" });
+            r.Add(new OptionRow { En = "BACK", Zh = "返回", Act = null,
+                HelpEn = "Back to the options.", HelpZh = "返回設定。" });
+            return r;
+        }
+
         const int OptVisible = 11, OptTop = 0x1C, OptBoxY = 0x17, OptHelpY = 0xAA;
 
-        IEnumerator ModsPage()
+        IEnumerator ModsPage() { return ModsPage(OptionRows); }
+
+        IEnumerator ModsPage(System.Func<List<OptionRow>> make)
         {
             byte[] exe = _disc.ReadFile("/SLUS_010.32");
             uint load = System.BitConverter.ToUInt32(exe, 0x18);
@@ -88,7 +114,7 @@ namespace DW1Remake.Game
             int pos = 0, scroll = 0;
             while (true)
             {
-                var rows = OptionRows();
+                var rows = make();
                 int max = Mathf.Max(0, rows.Count - OptVisible);
                 var s = new SysScreen();
                 s.Refresh = sc => FillOptions(sc, rows);

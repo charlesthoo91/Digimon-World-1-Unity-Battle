@@ -17,7 +17,7 @@ namespace DW1Remake.Game
     {
         public enum State { Starting, Ready, Linking, Linked, Failed, Closed }
 
-        const int Version = 4;            // 4: WebRTC (PC and browser); 3 was the PC-only UDP link
+        const int Version = 5;            // 5: the time option, a 2-byte counter and surrender; 4: WebRTC (PC and browser); 3 was the PC-only UDP link
         const byte MsgData = 1, MsgPing = 2, MsgPong = 3, MsgBye = 4;
 
         public State Now { get; private set; }

@@ -119,7 +119,24 @@ namespace DW1Remake.Game
             _state.GameDigits = true;
             string t = HeadText(section, 6);
             _state.GameDigits = false;
-            return t;
+            return BitsLine(t);
+        }
+
+        // ours (translation): renderShopBitsBox shows the line's first 0x30 pixels, then the next 0x3C under them, so the number must start at
+        // pixel 0x30. "Bits" and the game's padding spaces put it there; after a Chinese label each space moves 12 (the last glyph's width)
+        // and the number was cut across the two rows. In Chinese: the label, 6-pixel gaps (UiBoxPage.Gap) up to 0x30, then the number with
+        // its padding as 6-pixel gaps
+        string BitsLine(string t)
+        {
+            var font = Battle.StatFont;
+            if (!Tr.Chinese || font == null || string.IsNullOrEmpty(t) || !Tr.HasCjk(t)) return t;
+            int cut = t.IndexOf(' ');
+            if (cut <= 0) return t;
+            string label = t.Substring(0, cut), number = t.Substring(cut + 1);
+            var sb = new System.Text.StringBuilder(label);
+            for (int w = font.MeasureRaw(label); w + 6 <= 0x30; w += 6) sb.Append(UiBoxPage.Gap);
+            foreach (char c in number) sb.Append(c == ' ' ? UiBoxPage.Gap : c);
+            return sb.ToString();
         }
 
         // openShop (built-in 8, states 0-9) with tickItemMenu, tickItemMenuAmountBox and tickItemMenuDescriptionBox. Flag 0x180 + item = sold here
@@ -407,7 +424,7 @@ namespace DW1Remake.Game
             _state.GameDigits = true;
             string t = HeadText(section, 7);
             _state.GameDigits = false;
-            return t;
+            return BitsLine(t);
         }
 
         // rollCard: a rarity (1% 0, 4% 1, 15% 2, 30% 3, 50% 4), then one of the cards of that rarity

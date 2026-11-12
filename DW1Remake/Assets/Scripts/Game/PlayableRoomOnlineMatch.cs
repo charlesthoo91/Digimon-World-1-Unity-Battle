@@ -16,12 +16,21 @@ namespace DW1Remake.Game
     /// The friend's PC runs Battle as a copy (Battle.Puppet) and shows all of that. Its world is the host's turned half round the arena's middle,
     /// so each player sees their own Digimon on their own side.
     /// Messages (after MsgProfile = 1): 2 ready, 3 start, 4 state (sent once, may be lost), 5 technique, 6 number, 7 knock-out, 8 end (sure),
-    /// 9 order, 10 introductions done, 11 finishing-move aura, 12 draw letters, 13 a technique's effect stopped.
+    /// 9 order, 10 introductions done, 11 finishing-move aura, 12 draw letters, 13 a technique's effect stopped, 14 the friend surrenders.
+    /// The host also chooses the time (99 seconds, 300, none; MsgStart's third byte). L2 + R2 asks "Surrender?" (Yes / No); Yes puts one's own
+    /// Digimon at 0 HP, so the match ends as a knock-out (the friend's PC asks the host to do it).
     /// Sides in messages are the host's: 0 the host's partner, 1 the friend's partner.
     /// </summary>
     public sealed partial class PlayableRoom
     {
-        const byte MsgReady = 2, MsgStart = 3, MsgState = 4, MsgSwing = 5, MsgPop = 6, MsgKo = 7, MsgEnd = 8, MsgOrder = 9, MsgIntroDone = 10, MsgAura = 11, MsgVersus = 12, MsgStopFx = 13;
+        const byte MsgReady = 2, MsgStart = 3, MsgState = 4, MsgSwing = 5, MsgPop = 6, MsgKo = 7, MsgEnd = 8, MsgOrder = 9, MsgIntroDone = 10, MsgAura = 11, MsgVersus = 12, MsgStopFx = 13, MsgSurrender = 14;
+        int _onlineTime;                           // 0 = 99 seconds, 1 = 300, 2 = no limit (the host chooses; MsgStart carries it)
+        bool _surrenderAsk; int _surrenderSel;     // the "Surrender?" question is up; 0 = Yes, 1 = No
+
+        static string OnlineTimeName(int t)
+        {
+            return t == 2 ? DW1Remake.Formats.Tr.Text("No limit", "ours") : DW1Remake.Formats.Tr.Format("{0} s", t == 1 ? 300 : 99);
+        }
         bool _onlineOrders, _friendIntroDone;      // orders on (the host chooses; MsgStart carries it); the friend has finished the introductions
         bool _meReady, _friendReady, _onlineMatch, _onlineHost, _endSent, _netBattleSeen;
         float _stateAcc;
@@ -51,6 +60,8 @@ namespace DW1Remake.Game
             Vector3 camPos = _cam.transform.position; Quaternion camRot = _cam.transform.rotation;
             float camFov = _cam.fieldOfView, camFocal = _cam.focalLength; Vector2 camSensor = _cam.sensorSize, camShift = _cam.lensShift;
             bool camPhys = _cam.usePhysicalProperties; var camGate = _cam.gateFit;
+            _battle.TimerStart = _onlineTime == 1 ? 300 : 99; _battle.NoTimeLimit = _onlineTime == 2;
+            _surrenderAsk = false; Battle.InputLocked = false;
             yield return TourFade(1f, 5);
             if (_audio != null) { _audio.SetMapSounds(0x10); _audio.BattleSounds(); }
             int arena = _mapId == 0x6A ? 1 : 0;
@@ -88,6 +99,7 @@ namespace DW1Remake.Game
             }
             else Debug.LogWarning("[online] the friend's Digimon could not be made (type " + (_friend != null ? _friend.Type : -1) + ")");
             _tourFoe = null; _p2 = null;
+            _battle.TimerStart = 99; _battle.NoTimeLimit = false; _surrenderAsk = false; Battle.InputLocked = false;
             _battle.Puppet = false; _battle.NetSwing = null; _battle.NetKnockOut = null; _battle.NetAura = null; _battle.NetVersus = null; _battle.NetStopFx = null; _battle.NetOrder = null; _battle.EnemyCommanded = false;
             // as STD_deinitializeTournament: back to the room
             if (_audio != null) { _audio.StopMusic(); _audio.StopSound(); }
@@ -186,6 +198,7 @@ namespace DW1Remake.Game
         void OnlineFrame()
         {
             if (_battle == null) return;
+            SurrenderTick();
             if (_battle.Active) _netBattleSeen = true;
             if (_onlineHost)
             {
@@ -227,9 +240,14 @@ namespace DW1Remake.Game
             {
                 case MsgReady: _friendReady = true; break;
                 case MsgStart:
-                    if (_onlineRole == 0 && !_onlineMatch && _friend != null) { _onlineOrders = m.Length >= 2 && m[1] != 0; StartCoroutine(OnlineMatch(false)); }
+                    if (_onlineRole == 0 && !_onlineMatch && _friend != null)
+                    {
+                        _onlineOrders = m.Length >= 2 && m[1] != 0; _onlineTime = m.Length >= 3 ? Mathf.Clamp(m[2], 0, 2) : 0;
+                        StartCoroutine(OnlineMatch(false));
+                    }
                     break;
                 case MsgIntroDone: _friendIntroDone = true; break;
+                case MsgSurrender: if (_onlineHost && _onlineMatch && _battle != null && _battle.Active && _battle.Enemy != null) _battle.Enemy.Hp = 0; break;
                 case MsgOrder: if (_onlineHost && _onlineMatch && _battle != null && _battle.Active) _battle.RemoteOrder(Encoding.UTF8.GetString(m, 1, m.Length - 1)); break;
                 case MsgState: if (!_onlineHost && _onlineMatch) ReadState(m); break;
                 case MsgSwing:
@@ -252,6 +270,45 @@ namespace DW1Remake.Game
             }
         }
 
+        // ---------------------------------------------------------------- surrender (ours): L2 + R2, then Yes / No
+
+        void SurrenderTick()
+        {
+            bool fighting = _battle.Active && _battle.TournamentStartDone;
+            if (!fighting) { if (_surrenderAsk) { _surrenderAsk = false; Battle.InputLocked = false; } return; }
+            if (!_surrenderAsk)
+            {
+                if (Pad.Held(PadButton.L2) && Pad.Held(PadButton.R2) && (Pad.Pressed(PadButton.L2) || Pad.Pressed(PadButton.R2)))
+                {
+                    _surrenderAsk = true; _surrenderSel = 1; Battle.InputLocked = true; Snd(3);      // No first: a slip of the fingers gives nothing away
+                }
+                return;
+            }
+            int side = GameMenus.SideStep(), step = MenuStep();
+            if (side != 0 || step != 0) { _surrenderSel = 1 - _surrenderSel; Snd(2); }
+            if (GameMenus.TriangleKey() || GameMenus.CancelKey()) { _surrenderAsk = false; Battle.InputLocked = false; Snd(4); return; }
+            if (!ActionPressed()) return;
+            Snd(3);
+            _surrenderAsk = false; Battle.InputLocked = false;
+            if (_surrenderSel != 0) return;
+            // Yes: one's own Digimon goes to 0 HP and the match ends as a knock-out (the host runs the fight)
+            if (_onlineHost) { if (_battle.Partner != null) _battle.Partner.Hp = 0; }
+            else if (_net != null) _net.SendSure(new[] { MsgSurrender });
+        }
+
+        void DrawSurrender()
+        {
+            if (!_surrenderAsk || !_onlineMatch) return;
+            UiKit.Begin();
+            var r = new Rect(457, 420, 500, 190);
+            UiKit.Box(r, UiKit.DialogFill);
+            UiKit.Text(new Rect(r.x, r.y + 22, r.width, 60), DW1Remake.Formats.Tr.Text("Surrender?", "ours"), 48, Color.white, TextAnchor.MiddleCenter);
+            string yes = DW1Remake.Formats.Tr.Text("Yes", "ours"), no = DW1Remake.Formats.Tr.Text("No", "ours");
+            UiKit.Text(new Rect(r.x, r.y + 105, r.width / 2f, 60), (_surrenderSel == 0 ? "> " : "") + yes, 46, _surrenderSel == 0 ? UiKit.Yellow : Color.white, TextAnchor.MiddleCenter);
+            UiKit.Text(new Rect(r.x + r.width / 2f, r.y + 105, r.width / 2f, 60), (_surrenderSel == 1 ? "> " : "") + no, 46, _surrenderSel == 1 ? UiKit.Yellow : Color.white, TextAnchor.MiddleCenter);
+            UiKit.End();
+        }
+
         // side 0 = the host's partner, 1 = the friend's partner
         Battle.Fighter NetSide(int s)
         {
@@ -270,7 +327,7 @@ namespace DW1Remake.Game
         {
             var ms = new MemoryStream(); var w = new BinaryWriter(ms);
             w.Write(MsgState);
-            w.Write((byte)Mathf.Clamp(_battle.Timer, 0, 255));
+            w.Write((ushort)Mathf.Clamp(_battle.Timer, 0, 65535));
             w.Write((byte)((_battle.TimeUpWord ? 1 : 0) | (_battle.TimeUpBox ? 2 : 0)));
             w.Write((ushort)Mathf.Clamp(_battle.TourDamage[0], 0, 65535)); w.Write((ushort)Mathf.Clamp(_battle.TourDamage[1], 0, 65535));
             for (int s = 0; s < 2; s++)
@@ -292,7 +349,7 @@ namespace DW1Remake.Game
             try
             {
                 r.ReadByte();
-                _battle.Timer = r.ReadByte();
+                _battle.Timer = r.ReadUInt16();
                 int flags = r.ReadByte();
                 _battle.TimeUpWord = (flags & 1) != 0; _battle.TimeUpBox = (flags & 2) != 0;
                 int d0 = r.ReadUInt16(), d1 = r.ReadUInt16();

@@ -428,26 +428,33 @@ namespace DW1Remake.Game
             Box(5, -0x54, 0x52, s.Para.Virus * 3, 6, 0xC8, 0xC8, 0x3C);
             if (ModSettings.StatusNumbers)
             {
-                // ours (mod STATUS NUMBERS): the three bars' values in white over their middle, and the hours of life left right of the Brains bar
-                ModNumber(happy.ToString(), -0x22, 0x35 + 3);
-                ModNumber(disc.ToString(), -0x22, 0x44 + 3);
-                ModNumber(s.Para.Virus.ToString(), -0x22, 0x52 + 3);
-                ModText((Tr.Chinese ? "壽命 " : "Life ") + Mathf.Max(0, s.Para.Lifetime) + "h", 0x5E, 0x4C);
+                // ours (mod STATUS NUMBERS): the three bars' values in small white digits over the middle of each bar (bars 50 wide from
+                // -0x54, 6 high), and right of the stat bars "Life" with the hours left in a box under it
+                ModNumber(happy.ToString(), -0x54 + 25, 0x35 + 3, SmallPx);
+                ModNumber(disc.ToString(), -0x54 + 25, 0x44 + 3, SmallPx);
+                ModNumber(s.Para.Virus.ToString(), -0x54 + 25, 0x52 + 3, SmallPx);
+                // "Lifespan" (not "Life": the page's own Life is the three hearts), smaller so it fits over the box
+                if (Tr.Chinese) ModNumber("壽命", 0x75, 0x3E, 4.42f);
+                else ModNumber("Lifespan", 0x75, 0x3F, SmallPx);
+                Inset(0x5E + 0xA0, 0x47 + 0x78, 0x2E, 0x0F);
+                ModNumber(Mathf.Max(0, s.Para.Lifetime) + "h", 0x75, 0x47 + 8, 4.42f);
             }
             foreach (var r in _insets) Inset(r.x, r.y, r.width, r.height);
             Flush();
         }
 
-        // ours (mod STATUS NUMBERS): a white text with a black copy 1 pixel down and right; ModNumber centres it on (cx, cy)
-        void ModText(string t, int x, int y)
+        const float SmallPx = 3.1f;     // the bar numbers' size (the page's own letters are 4.42 screen pixels a PS1 pixel)
+
+        // ours (mod STATUS NUMBERS): a white text with a black copy 1 pixel down and right, centred on (cx, cy), in slot 4: in front of
+        // the page's bars and boxes (slot 5)
+        void ModNumber(string t, float cx, float cy, float px)
         {
             var f = Font; if (f == null) return;
+            float s = px / 4.42f, x = cx - f.MeasureRaw(t) * s / 2f, y = cy - 6f * s, o = Mathf.Max(0.7f, s);
             // in one slot the command added last is drawn first: the white, then the black copy under it
-            Add(5, () => f.Draw(t, X(x), Y(y), 4.42f, Color.white));
-            Add(5, () => f.Draw(t, X(x + 1), Y(y + 1), 4.42f, Color.black));
+            Add(4, () => f.Draw(t, X(x), Y(y), px, Color.white));
+            Add(4, () => f.Draw(t, X(x + o), Y(y + o), px, Color.black));
         }
-
-        void ModNumber(string t, int cx, int cy) { if (Font != null) ModText(t, cx - Font.MeasureRaw(t) / 2, cy - 6); }
 
         void StatBar(int value, int limit, int full, int x, int y) { Box(5, x, y, (byte)(full * value / limit), 2, 0x32, 0xC8, 0xC8); }
 

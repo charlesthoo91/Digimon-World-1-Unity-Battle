@@ -29,6 +29,7 @@ namespace DW1Remake.Game
 
         // the fight's counter and the time-up box
         public bool ShowTimer; public int Timer;
+        public bool Versus, NoLimit;           // ours (online battle): "2P" for "COM" on the counter; no time limit = no digits
         public string GaveText = "", DamageText = "", PartnerName = "", EnemyName = "";
         public int DamageByPartner, DamageByEnemy;   // STD_DAMAGE[1] (what the partner dealt), STD_DAMAGE[0]
 
@@ -245,9 +246,16 @@ namespace DW1Remake.Game
             var tex = DigitsTex();
             if (tex == null) return;
             Picture(3, tex, -0x1C, -0x63, 8, 0x12, 0x78, 0x30);
-            Picture(3, tex, 0x14, -0x63, 8, 0x12, 0x88, 0x30);
+            // ours (online battle): the "2P" piece the sheet has between "1P" and "COM" (u 0x80), as the VS mode's counter
+            Picture(3, tex, 0x14, -0x63, 8, 0x12, Versus ? 0x80 : 0x88, 0x30);
+            if (!NoLimit && Timer > 99)
+            {
+                // ours (online battle's 300 seconds): three digits, 13 apart, in the same space between the end pieces
+                string t = Mathf.Clamp(Timer, 0, 999).ToString();
+                for (int i = 0; i < t.Length; i++) Picture(3, tex, -0x13 + (3 - t.Length + i) * 13, -0x61, 0xC, 0xF, (t[i] - '0') * 12, 0x30);
+            }
             string s = Mathf.Clamp(Timer, 0, 99).ToString();
-            for (int i = 0; i < s.Length; i++)
+            for (int i = 0; i < s.Length && !NoLimit && Timer <= 99; i++)
             {
                 int digit = s[i] - '0';
                 Picture(3, tex, -0xD + (2 - s.Length + i) * 14, -0x61, 0xC, 0xF, digit * 12, 0x30);

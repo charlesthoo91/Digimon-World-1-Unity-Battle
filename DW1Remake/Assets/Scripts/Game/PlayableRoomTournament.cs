@@ -572,6 +572,7 @@ namespace DW1Remake.Game
                 if (v != null)
                 {
                     v.ShowTimer = true; v.Timer = _battle.Timer;        // STD_addFighterCounter(0x63) in STD_initializeCombat, gone at STD_deinitializeCombat's end
+                    v.Versus = _onlineMatch; v.NoLimit = _onlineMatch && _onlineTime == 2;      // ours (online battle)
                     v.ShowTimeUpWord = _battle.TimeUpWord;
                     v.DamageByPartner = _battle.TourDamage[1]; v.DamageByEnemy = _battle.TourDamage[0];
                     if (_battle.TimeUpBox && v.TimeUp.State == 0) v.OpenTimeUp();
@@ -579,7 +580,7 @@ namespace DW1Remake.Game
                 }
                 yield return null;
             }
-            if (v != null) { v.ShowTimer = false; v.ShowTimeUpWord = false; v.CloseNow(v.TimeUp); }
+            if (v != null) { v.ShowTimer = false; v.ShowTimeUpWord = false; v.CloseNow(v.TimeUp); v.Versus = false; v.NoLimit = false; }
             _arenaScr.HudOn = false; _arenaScr.MarkersOn = false;
             _battle.Tournament = false; _battle.TournamentMusic = null;
             _battle.OnTechStart = null; _battle.OnTechHit = null; _battle.OnKnockOut = null; _battle.OnVersus = null; _battle.VersusBusy = null;
@@ -599,7 +600,7 @@ namespace DW1Remake.Game
             return sb.ToString();
         }
 
-        void DrawTournament() { if (_tourView != null) _tourView.Draw(); }
+        void DrawTournament() { if (_tourView != null) _tourView.Draw(); DrawSurrender(); }
 
         // ------------------------------------------------------------------ debug (F10)
 

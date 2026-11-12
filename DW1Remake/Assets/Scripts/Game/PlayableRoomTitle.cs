@@ -502,7 +502,7 @@ namespace DW1Remake.Game
             }
         }
 
-        static readonly string[] PadNames = { "UP", "DOWN", "LEFT", "RIGHT", "CROSS", "CIRCLE", "TRIANGLE", "SQUARE", "L1", "R1", "START", "SELECT" };
+        static readonly string[] PadNames = { "UP", "DOWN", "LEFT", "RIGHT", "CROSS", "CIRCLE", "TRIANGLE", "SQUARE", "L1", "R1", "START", "SELECT", "L2", "R2" };
 
         // ours: one row per PS1 button with its keyboard key (or controller button); Cross on a row, then the new key / button (Escape, or 10 seconds
         // without one, keeps the old one); RESET = the game's own keys / the PS layout

@@ -52,6 +52,25 @@ namespace DW1Remake.Game
         /// <summary>Ours (OPTIONS > STATUS NUMBERS): the Status page shows happiness, discipline and virus as numbers on their bars, and the life span left.</summary>
         public static bool StatusNumbers { get { return Get("StatusNumbers"); } set { Set("StatusNumbers", value); } }
 
+        // ours (OPTIONS > CHEATS): put into effect when a game is loaded (PlayableRoom.ApplyCheats). Kept in memory only, never in PlayerPrefs: every cheat is off
+        // each time the game starts, so a clean save is not changed by a cheat left on from an earlier session
+        /// <summary>99 of every item but the story ones in the Item Keeper's (Agumon's) bank, once Agumon is recruited (flag 0xCB).</summary>
+        public static bool CheatBank;
+        /// <summary>Every Digimon of the Chart page counts as raised.</summary>
+        public static bool CheatChart;
+        /// <summary>Every medal won (flags 0x16C + n).</summary>
+        public static bool CheatMedals;
+        /// <summary>At least 1 of each of the 66 cards.</summary>
+        public static bool CheatCards;
+        /// <summary>999,999 Bits (the game's top).</summary>
+        public static bool CheatBits;
+        /// <summary>L1 + R1 + Circle while the clock runs moves time on one hour (from the next loaded game).</summary>
+        public static bool CheatHour;
+
+        // all cheats off at each start of the game (also in the editor when Play starts without reloading the scripts)
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        static void CheatsOff() { CheatBank = CheatChart = CheatMedals = CheatCards = CheatBits = CheatHour = false; }
+
         public static int Volume { get { return Mathf.Clamp(GetInt("Volume", 100), 0, 100); } set { SetInt("Volume", value); } }
 
         /// <summary>The language of the OPTIONS page and the remake's own texts: 0 English, 1 Traditional Chinese (the disc's texts stay English).</summary>
