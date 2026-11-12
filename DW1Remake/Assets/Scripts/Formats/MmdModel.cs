@@ -252,6 +252,9 @@ namespace DW1Remake.Formats
             return mat;
         }
 
+        /// <summary>Mod AI UPSCALE (ours): told about each model's texture sheet and material as it is built (type, sheet, material).</summary>
+        public static Action<int, Texture2D, Material> AtlasMade;
+
         /// <summary>Builds the Digimon as a bone hierarchy in its first pose.</summary>
         public GameObject Build(DigimonEntry e, byte[] allTim)
         {
@@ -268,7 +271,11 @@ namespace DW1Remake.Formats
             Material mat = null;
             TimImage tim;
             if (TimImage.TryParse(allTim, e.Type * 0x4800, out tim) && tim.Width <= 256 && tim.Height <= 128 && tim.BitsPerPixel == 4)
-                mat = MakeMaterial(BuildAtlas(tim, rows));
+            {
+                var atlas = BuildAtlas(tim, rows);
+                mat = MakeMaterial(atlas);
+                if (AtlasMade != null) AtlasMade(e.Type, atlas, mat);      // mod AI UPSCALE (PlayableRoomAiUpscale)
+            }
             else
                 Debug.LogWarning(e.Name + ": texture not found in ALLTIM.TIM, using a plain material.");
             if (mat == null) mat = new Material(UnlitShader);

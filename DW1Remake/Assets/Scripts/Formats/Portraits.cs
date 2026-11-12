@@ -31,7 +31,7 @@ namespace DW1Remake.Formats
 
         public Rect Uv(int n, int frame = 0)
         {
-            float w = 16f / Sheet.width, h = 16f / Sheet.height;
+            float w = 16f / TimImage.W(Sheet), h = 16f / TimImage.H(Sheet);
             return new Rect(((n % PerRow) * 2 + frame) * w, 1f - (n / PerRow + 1) * h, w, h);
         }
     }

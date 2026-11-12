@@ -76,7 +76,7 @@ namespace DW1Remake.Game
                 // the US code stops its pen on the character '0' (it meant the end of the text): "reduced by 10%" / "20%" stopped at the 1 / 2.
                 // Ours (fix of glitch Q, user's request 2026-11-09): a '0' is drawn like any other glyph; the end of the text stops the pen
                 _glyphs.Add(new KeyValuePair<Vector3Int, char>(new Vector3Int(_penX, _penY, _colour), c));
-                _penX += Font != null ? Font.Measure(c.ToString()) : 8;
+                _penX += Font != null ? Font.MeasureRaw(c.ToString(), GameFont.ChineseText(_text)) : 8;      // ours: the whole text says whether it is Chinese
                 _cursor++;
                 return;
             }
@@ -121,7 +121,7 @@ namespace DW1Remake.Game
             return sb.ToString();
         }
 
-        int Measure(string s) { int n = 0; foreach (char c in s) n += Font != null ? Font.Measure(c.ToString()) : 8; return n; }
+        int Measure(string s) { int n = 0; bool zh = GameFont.ChineseText(s); foreach (char c in s) n += Font != null ? Font.MeasureRaw(c.ToString(), zh) : 8; return n; }
 
         public void Draw(Action stats, Action bits, Action final)
         {
@@ -135,7 +135,8 @@ namespace DW1Remake.Game
             BuildPage(key.ToString(), px =>
             {
                 if (Font == null) return;
-                foreach (var g in _glyphs) Font.Render(g.Value.ToString(), px, 256, 256, g.Key.x, g.Key.y, Font.Colour(g.Key.z));
+                bool zh = GameFont.ChineseText(_text);
+                foreach (var g in _glyphs) Font.RenderRaw(g.Value.ToString(), px, 256, 256, g.Key.x, g.Key.y, Font.Colour(g.Key.z), zh);
             });
             Begin();
             DrawBox(Stats, () => Add(6 - Stats.Id, stats));

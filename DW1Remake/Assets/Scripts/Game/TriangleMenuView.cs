@@ -111,9 +111,12 @@ namespace DW1Remake.Game
             if (tex == null || w <= 0 || h <= 0) return;
             int row = v - 0xC0;
             Color c = off ? new Color(0x32 / 128f, 0x32 / 128f, 0x32 / 128f, 1f) : Color.white;
-            Rect uv = new Rect(u / (float)tex.width, 1f - (row + h) / (float)tex.height, w / (float)tex.width, h / (float)tex.height);
+            Rect uv = new Rect(u / TimImage.W(tex), 1f - (row + h) / TimImage.H(tex), w / TimImage.W(tex), h / TimImage.H(tex));
             Add(z, () => { var o = GUI.color; GUI.color = c; GUI.DrawTextureWithTexCoords(new Rect(X(x), Y(y), w * 4.42f, h * 4.42f), tex, uv); GUI.color = o; });
         }
+
+        // GAME_MENU_TEXT_SPRITES 1-7 in Chinese: ITEM, DIGIMON (the partner's pages), PLAYER, PRAISE, SCOLD, SLEEP, FISH
+        static readonly string[] ZhLabels = { null, "道具", "夥伴", "玩家", "稱讚", "責罵", "睡覺", "釣魚" };
 
         void Content()
         {
@@ -127,7 +130,10 @@ namespace DW1Remake.Game
                 int hi = i == Selection && _frames % 10 < 5 ? 0x14 : 0;
                 Rect4(6, s.X - 0x42, s.Y - 0x50 + yOff, s.W, s.H, s.TexX + hi, s.TexY + 0xC0, s.Clut, Disabled[i]);
                 var l = _label[i];
-                Rect4(6, l.X - 0x42, yOff + l.Y - 0x50, l.W, l.H, l.TexX, l.TexY + 0xBF, 13, Disabled[i]);     // CLUT 0x7F50 = (256, 509)
+                // ours (translation, LANGUAGE Chinese only): the label picture as Chinese text, white with a black copy as the picture has it
+                if (Tr.Chinese && i < ZhLabels.Length && ZhLabels[i] != null)
+                    ZhWord(6, ZhLabels[i], l.X - 0x42, yOff + l.Y - 0x50, l.W, l.H, Disabled[i] ? new Color(0x32 / 128f, 0x32 / 128f, 0x32 / 128f, 1f) : Color.white, null, true);
+                else Rect4(6, l.X - 0x42, yOff + l.Y - 0x50, l.W, l.H, l.TexX, l.TexY + 0xBF, 13, Disabled[i]);     // CLUT 0x7F50 = (256, 509)
             }
             // US: "Year" (u 0, 0x24 wide) at (-0x3C, -0x49), "Day" (u 0x24, 0x1C wide) at (6, -0x49), text colour 3, with a shadow
             ShadowText(6, 3, -0x3C, -0x49, 0x24, 0, 0xE7 - 0xD0);
@@ -137,11 +143,8 @@ namespace DW1Remake.Game
         // renderString(colour, x, y, w, 12, u, v, layer, 1): the page slice in TEXT_COLORS[colour] over a black copy 1 pixel down and right
         void ShadowText(int z, int colour, int x, int y, int w, int u, int v)
         {
-            PageText(z, colour, x, y, w, 12, u, v);
-            var tex = Page;
-            if (tex == null) return;
-            Rect uv = new Rect(u / 256f, 1f - (v + 12) / 256f, w / 256f, 12 / 256f);
-            Add(z, () => { var o = GUI.color; GUI.color = Color.black; GUI.DrawTextureWithTexCoords(new Rect(X(x + 1), Y(y + 1), w * 4.42f, 12 * 4.42f), tex, uv); GUI.color = o; });
+            // the same as PsPage.Words (slice, then its black copy), so a Chinese slice replaces the English in both (ours, translation)
+            Words(z, colour, x, y, w, u, v);
         }
 
         // renderDateDigits (US): DAY + 1 in 2 places from x 0x25, YEAR + 1 in up to 3 from x -0x16, 9 apart, 7 x 12 each, colour set 12
@@ -176,7 +179,7 @@ namespace DW1Remake.Game
                 float u0 = _cu0[i], u1 = _cu1[i], v0 = _cv0[i] - 0xC0, v1 = _cv1[i] - 0xC0;
                 int x = bx + _cx[i], y = by + _cy[i] + yOff, w = _cw[i], h = _ch[i];
                 // a piece whose u or v runs backwards is drawn mirrored
-                Rect uv = new Rect(u0 / tex.width, 1f - v1 / tex.height, (u1 - u0) / tex.width, (v1 - v0) / tex.height);
+                Rect uv = new Rect(u0 / TimImage.W(tex), 1f - v1 / TimImage.H(tex), (u1 - u0) / TimImage.W(tex), (v1 - v0) / TimImage.H(tex));
                 Add(5, () => GUI.DrawTextureWithTexCoords(new Rect(X(x), Y(y), w * 4.42f, h * 4.42f), tex, uv));
             }
         }

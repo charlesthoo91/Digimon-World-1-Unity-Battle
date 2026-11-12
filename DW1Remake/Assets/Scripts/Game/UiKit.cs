@@ -25,26 +25,57 @@ namespace DW1Remake.Game
         public static void Begin()
         {
             _old = GUI.matrix;
-            float s = Mathf.Min(Screen.width / W, Screen.height / H);
-            GUI.matrix = Matrix4x4.TRS(new Vector3((Screen.width - W * s) / 2f, (Screen.height - H * s) / 2f, 0f), Quaternion.identity, new Vector3(s, s, 1f));
+            Rect p = Picture;
+            float s = p.height / H;
+            GUI.matrix = Matrix4x4.TRS(new Vector3(p.x, p.y, 0f), Quaternion.identity, new Vector3(s, s, 1f));
         }
 
         public static void End() { GUI.matrix = _old; }
 
-        /// <summary>The PS1 picture on the screen in pixels (GUI space, top left): 4:3, as big as fits, centred. The 3D view is drawn only here.</summary>
+        /// <summary>The PS1 picture on the screen in pixels (GUI space, top left): 4:3, as big as fits, centred. The HUD, menus and every
+        /// PS1 screen place are worked out in it. With the mod 16:9 it is the 4:3 middle of the wider View, as tall as it.</summary>
         public static Rect Picture
         {
             get
             {
+                if (ModSettings.Widescreen)
+                {
+                    Rect v = View;
+                    float w = v.height * W / H;
+                    return new Rect(v.x + (v.width - w) / 2f, v.y, w, v.height);
+                }
                 float s = Mathf.Min(Screen.width / W, Screen.height / H);
                 return new Rect((Screen.width - W * s) / 2f, (Screen.height - H * s) / 2f, W * s, H * s);
             }
         }
 
-        /// <summary>Black over everything outside the 4:3 picture.</summary>
+        /// <summary>Where the 3D view is drawn: the 4:3 Picture, or with the mod 16:9 (ours, OPTIONS > SCREEN) a 16:9 area as big as fits,
+        /// centred; the camera then shows more of the map at the sides and the HUD stays in the 4:3 middle.</summary>
+        public static Rect View
+        {
+            get
+            {
+                if (!ModSettings.Widescreen) return Picture;
+                float s = Mathf.Min(Screen.width / 16f, Screen.height / 9f);
+                return new Rect((Screen.width - 16f * s) / 2f, (Screen.height - 9f * s) / 2f, 16f * s, 9f * s);
+            }
+        }
+
+        /// <summary>Mod 16:9 (ours): how far, in canvas units (the 1415-wide canvas of Begin), a corner HUD piece moves out to the side of the
+        /// wider view: side -1 = to the left edge, +1 = to the right edge; 0 in 4:3. The clock and the orders go left, the HP / MP, the
+        /// finishing gauge and the mood bars right, so they sit in the corners instead of the 4:3 middle.</summary>
+        public static float EdgeShift(int side)
+        {
+            if (!ModSettings.Widescreen || side == 0) return 0f;
+            Rect p = Picture, v = View;
+            float s = p.height / H;
+            return (side < 0 ? v.x - p.x : v.xMax - p.xMax) / s;
+        }
+
+        /// <summary>Black over everything outside the 3D view (4:3, or 16:9 with the mod).</summary>
         public static void Bars()
         {
-            Rect p = Picture;
+            Rect p = View;
             var o = GUI.color; GUI.color = Color.black;
             if (p.x > 0.5f) { GUI.DrawTexture(new Rect(0, 0, p.x, Screen.height), Texture2D.whiteTexture); GUI.DrawTexture(new Rect(p.xMax, 0, Screen.width - p.xMax, Screen.height), Texture2D.whiteTexture); }
             if (p.y > 0.5f) { GUI.DrawTexture(new Rect(0, 0, Screen.width, p.y), Texture2D.whiteTexture); GUI.DrawTexture(new Rect(0, p.yMax, Screen.width, Screen.height - p.yMax), Texture2D.whiteTexture); }

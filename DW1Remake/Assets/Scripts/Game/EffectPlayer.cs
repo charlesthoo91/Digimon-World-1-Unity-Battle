@@ -333,6 +333,15 @@ namespace DW1Remake.Game
             _entityFx.Add(new EntityFx { Owner = owner, Timer = timer, Bone = Rand() % (bones - 1) + 1, Mode = 0 });
         }
 
+        /// <summary>createCloudFX(pos) outside a technique (the training gyms): a puff at game x / z, its height CLOUD_FX_Y over pos.vy.</summary>
+        public void AddCloudAt(int x, int y, int z) { AddCloud(x, z, y); }
+
+        /// <summary>createParticleFX(0, 0, pos, NULL, 0) outside a fight (the training gyms): the orange sparks at a place in game units.</summary>
+        public void AddSparksAt(int x, int y, int z) { AddHitFx(0, 0, ToUnity(x, y, z), null, 0); }
+
+        /// <summary>A random number below n (randomLimit), from the effects' own generator.</summary>
+        public int RandomBelow(int n) { return n <= 0 ? 0 : _rng.Next(n); }
+
         void AddCloud(float x, float z, float ground)
         {
             if (_clouds.Count >= 0x3C) return;
@@ -398,7 +407,7 @@ namespace DW1Remake.Game
                     {
                         Vector3 g = fx.Pos + new Vector3(fx.Spread[0, k], fx.Spread[1, k], fx.Spread[2, k]);
                         float half = fx.Spread[3, k] * 8f * 63f / 1024f * Unit;
-                        DrawSpot(ToUnity((int)g.x, (int)g.y, (int)g.z), half, new Rect(64f / _spot.width, 64f / _spot.height, 63f / _spot.width, 63f / _spot.height),
+                        DrawSpot(ToUnity((int)g.x, (int)g.y, (int)g.z), half, new Rect(64f / TimImage.W(_spot), 64f / TimImage.H(_spot), 63f / TimImage.W(_spot), 63f / TimImage.H(_spot)),
                                  new Color(fx.R / 128f, fx.G / 128f, fx.B / 128f, 1f), cam, null);
                         Drawn++;
                     }
@@ -1232,7 +1241,7 @@ namespace DW1Remake.Game
                     mat = _subFront;
                 }
             }
-            DrawSpot(f.Pos, half, new Rect(u / _spot.width, 64f / _spot.height, 63f / _spot.width, 63f / _spot.height), col, cam, mat);
+            DrawSpot(f.Pos, half, new Rect(u / TimImage.W(_spot), 64f / TimImage.H(_spot), 63f / TimImage.W(_spot), 63f / TimImage.H(_spot)), col, cam, mat);
         }
 
         // BTL_renderProjectedSprite: scale x VIEWPORT_DISTANCE x 32 / otz, where otz is RotTransPers's return, the depth / 4 (worldPosToScreenPos multiplies

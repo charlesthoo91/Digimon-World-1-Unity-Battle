@@ -168,10 +168,15 @@ namespace DW1Remake.Game
         {
             if (_otHooked) UnityEngine.Rendering.RenderPipelineManager.beginCameraRendering -= OtFlatten;
             if (_fs != null) _fs.Dispose();
+            AiUpscaleDispose();
         }
 
         void Load()
         {
+            MmdModel.AtlasMade = AiChrSheet;      // mod AI UPSCALE (PlayableRoomAiUpscale): Digimon and the boy; does nothing with it off
+            TimImage.Made = AiTim;                // mod AI UPSCALE: HUD, menus, effects and every other TIM picture
+            SetVolume(ModSettings.Volume);        // OPTIONS > VOLUME (PlayableRoomOptions)
+            ApplyScreen();                        // OPTIONS > SCREEN MODE / RESOLUTION (ours, PC)
             _mapNames = MapCatalog.Load(_disc);
             _mapFlags = MapCatalog.LoadFlags(_disc);
             MapCatalog.LoadImageCounts(_disc, out _num8, out _num4);
@@ -303,7 +308,7 @@ namespace DW1Remake.Game
             _state.SpeciesNameOf = t =>
             {
                 if (_entries == null) _entries = new List<DigimonEntry>(DigimonCatalog.Load(_disc));
-                foreach (var e in _entries) if (e.Type == t) return e.Name;
+                foreach (var e in _entries) if (e.Type == t) return DW1Remake.Formats.Tr.Text(e.Name, "Digimon name");      // ours: in the current language
                 return "";
             };
             var itemList = ItemCatalog.Load(_disc);
@@ -2365,6 +2370,8 @@ namespace DW1Remake.Game
             foreach (var kv in _ovTex)
             {
                 if (!_overlay.UsesMapPalette(kv.Key / 4)) continue;
+                var ob = _overlay.Objects[kv.Key / 4];
+                AiForget(kv.Value, ob.W, ob.H);     // mod AI UPSCALE: back to the disc's size; this colour set's sharp pieces follow
                 kv.Value.SetPixels32(_overlay.BuildObject(kv.Key / 4, pal, kv.Key % 4));
                 kv.Value.Apply();
             }
@@ -2417,6 +2424,7 @@ namespace DW1Remake.Game
             }
             quad.GetComponent<MeshRenderer>().sharedMaterial = mat;
             _backdrop = quad;
+            AiUpscaleBackdrop();        // mod AI UPSCALE MAPS (PlayableRoomAiUpscale): the sharp picture replaces it when ready
         }
 
         // converts a screen direction (x right, y up) into a walking direction on the ground, using the real camera
@@ -2605,6 +2613,7 @@ namespace DW1Remake.Game
                     mat.SetTexture("_BaseMap", _map.BuildTexture(pal));
                     if (old != null) Destroy(old);
                     RefreshOverlayPalette();
+                    AiUpscaleBackdrop();        // mod AI UPSCALE MAPS: this colour set's sharp picture
                 }
             }
         }
@@ -3267,7 +3276,7 @@ namespace DW1Remake.Game
         void LateUpdate()
         {
             if (_player == null || _map == null) return;
-            Rect pic = UiKit.Picture;      // the PS1 picture is 4:3: the camera draws only there, black bars beside it
+            Rect pic = UiKit.View;      // the PS1 picture is 4:3 (16:9 with the mod): the camera draws only there, black bars beside it
             _cam.rect = new Rect(pic.x / Screen.width, pic.y / Screen.height, pic.width / Screen.width, pic.height / Screen.height);
             if (_arenaOn) { ArenaCameraLate(); return; }     // the arena's own camera (STD_tickVSPhase); no map scrolling, shadows or map items there
             Vector3 focus = (_camOn ? _camPos : _player.position) + Vector3.up * 1f;
@@ -3313,6 +3322,8 @@ namespace DW1Remake.Game
             DrawDropShadows();
             DrawGroundItems();
             if (_healFx != null) _healFx.Update(Time.deltaTime, _battle != null ? _battle.Effects : null, _cam);
+            // the training gyms' sparks and dust (createParticleFX / createCloudFX in TRN_tick*Training): the effects are stepped and drawn while a training runs
+            if (_trainFxOn && _battle != null && _battle.Effects != null && !_battle.Active) _battle.Effects.Tick(Time.deltaTime, _cam);
             EvoCameraLate();
             CullDoors();        // renderDoors: isBoxOffScreen
             FishDrawWorld();

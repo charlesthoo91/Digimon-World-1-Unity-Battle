@@ -50,11 +50,8 @@ namespace DW1Remake.Game
         // renderString(colour, x, y, w, 12, u, v, 5, 1): the page slice in TEXT_COLORS[colour] over a black copy 1 pixel down and right
         void Text(int colour, int x, int y, int w, int u, int v)
         {
-            PageText(5, colour, x, y, w, 12, u, v);
-            var tex = Page;
-            if (tex == null || w <= 0) return;
-            Rect uv = new Rect(u / 256f, 1f - (v + 12) / 256f, w / 256f, 12 / 256f);
-            Add(5, () => { var o = GUI.color; GUI.color = Color.black; GUI.DrawTextureWithTexCoords(new Rect(X(x + 1), Y(y + 1), w * 4.42f, 12 * 4.42f), tex, uv); GUI.color = o; });
+            // the same as PsPage.Words (slice, then its black copy), so a Chinese slice replaces the English in both (ours, translation)
+            Words(5, colour, x, y, w, u, v);
         }
 
         public void Draw(ScriptState s, string playerName, int raisedCount, int medals)
@@ -77,7 +74,7 @@ namespace DW1Remake.Game
             Number(5, 0, 0x35, -0x36, 2, level);
             // US: the title, then a piece of the "Bits ... Time" row right after it (u 0xB4, as the game has it)
             Text(0, 0x28, -0x24, 0x64, 0, level * 12 + 0x40);
-            int n = (_titles[level] ?? "").Length / 2;
+            int n = Tr.Cells(Tr.Text(_titles[level] ?? "")) / 2;
             Text(0, n * 12 + 0x28, -0x25, 0x30, 0xB4, 0x18);
             Number(5, 0, 0x35, -0x11, 2, raisedCount);
             Number(5, 0, 0x29, 2, 6, s.Money);
@@ -478,7 +475,7 @@ namespace DW1Remake.Game
             BuildPage(Tab + "|" + _medal + "|" + name + "|" + ModSettings.EvolutionGuide + "|" + ModSettings.RecruitTab, px =>
             {
                 Write(px, _playerLabels[0], 0, 0);
-                if (ModSettings.RecruitTab) Write(px, "Rec.", 0xC4, 0);         // ours: the recruit tab's word, after the four
+                if (ModSettings.RecruitTab) Write(px, Tr.Chinese ? "招募 " : "Rec.", 0xC4, 0);         // ours: the recruit tab's word, after the four
                 if (Tab == 1)
                 {
                     // drawEvoChartStrings
@@ -488,7 +485,7 @@ namespace DW1Remake.Game
                     Write(px, _cardLabels[4], 0, 0x3C);
                     Write(px, name, 0, 0x30);
                     // ours, the OPTIONS evolution guide: the square button (glyph 0x81A0) and INFO on a free row of the text page
-                    if (ModSettings.EvolutionGuide) Write(px, ((char)0x81A0) + "INFO", 0, 0x48);
+                    if (ModSettings.EvolutionGuide) Write(px, ((char)0x81A0) + (Tr.Chinese ? "說明 " : "INFO"), 0, 0x48);
                 }
                 else if (Tab == 2)
                 {
@@ -614,7 +611,7 @@ namespace DW1Remake.Game
                 case 4: Words(4, 0, -0x64, 0x3A, 0x41, 0x2F, 0x24, false); break;
                 case 5: Words(4, 0, -0x64, 0x3A, 0x41, 0, 0x3C, false); break;
             }
-            int len = DigimonName(id).Length / 2;
+            int len = Tr.Cells(Tr.Text(DigimonName(id))) / 2;
             Words(4, 0, -0x5C - (len - 4) * 6, 0x4D, 0x78, 0, 0x30, false);
             foreach (var r in _detailInsets) Inset(4, r.x, r.y, r.width, r.height);
         }

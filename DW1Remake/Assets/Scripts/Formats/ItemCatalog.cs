@@ -8,11 +8,14 @@ namespace DW1Remake.Formats
     public sealed class ItemEntry
     {
         public int Id;
-        public string Name;
+        /// <summary>The name in the current language (Tr: OPTIONS > LANGUAGE); NameEn is the disc's.</summary>
+        public string Name { get { return Tr.Text(NameEn, "item name"); } set { NameEn = value; } }
+        public string NameEn;
         public int Price;
         public int Merit;           // record +24 (Item.meritValue): its price in merit points at ShogunGekomon (0 = not offered)
         public int Category;       // from the record: 0 recovery, 1 cure, 2 food, 3 training disk, 4 chip/part, 5 tool/key (guessed from the names)
-        public string Description;
+        public string Description { get { return Tr.Text(DescriptionEn, "item text"); } set { DescriptionEn = value; } }
+        public string DescriptionEn;
         public int TextColour;      // record +28: 0 cyan, 1 pink, 2 green (seen on the PS1 item page)
         public bool Droppable;      // record +29 (Item.droppable): it can be thrown away, sold or handed over (shopFillSellItemList)
     }
@@ -55,7 +58,7 @@ namespace DW1Remake.Formats
             // FIXED ORIGINAL BUG (user's decision 2026-11-08): the US text of DV Chip E (item 31) says "Boost Off. Pwr+Speed +1000", but the chip
             // gives +1000 max HP and +1000 max MP (item.c, chip 0x1F). Our own line, in the style of DV Chip A / D, replaces it only when the disc
             // has that wrong text
-            if (list.Count > 31 && list[31].Description == "Boost Off. Pwr+Speed +1000") list[31].Description = "Boost HP+MP +1000";
+            if (list.Count > 31 && list[31].DescriptionEn == "Boost Off. Pwr+Speed +1000") list[31].Description = "Boost HP+MP +1000";
             return list;
         }
     }

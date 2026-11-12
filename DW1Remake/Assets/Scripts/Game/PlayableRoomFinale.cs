@@ -112,7 +112,7 @@ namespace DW1Remake.Game
                 TimImage tim;
                 if (_disc.Exists("/ETCDAT/SPOT256.TIM") && TimImage.TryParse(_disc.ReadFile("/ETCDAT/SPOT256.TIM"), 0, out tim))
                 {
-                    var t = tim.ToTexture(0); var px = t.GetPixels32(); Destroy(t);
+                    var px = tim.GetPixels(0);
                     Color sum = Color.black;
                     for (int y = 0; y < 3; y++) for (int x = 0; x < 3; x++) sum += (Color)px[(tim.Height - 1 - y) * tim.Width + x];
                     _spotTexel = sum / 9f;

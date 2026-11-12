@@ -126,7 +126,7 @@ namespace DW1Remake.Game
             float waited = 0f;
             while (!_friendIntroDone && _net != null && _net.Now == NetLink.State.Linked && waited < 120f)
             {
-                if (waited > 0.5f) Say("Waiting for your friend to finish the introductions...");
+                if (waited > 0.5f) Say(DW1Remake.Formats.Tr.Text("Waiting for your friend to finish the introductions...", "ours"));
                 waited += Time.deltaTime;
                 yield return null;
             }

@@ -66,7 +66,9 @@ namespace DW1Remake.Game
             if (_page != null && key == _pageKey) return;
             _pageKey = key;
             var px = new Color32[256 * 256];
-            draw(px);
+            _record = new GameFont.PageRecord { Px = px }; _slices.Clear();
+            GameFont.Recording = _record;
+            try { draw(px); } finally { GameFont.Recording = null; }
             if (_page == null) _page = new Texture2D(256, 256, TextureFormat.RGBA32, false) { filterMode = FilterMode.Point, wrapMode = TextureWrapMode.Clamp };
             _page.SetPixels32(px); _page.Apply();
         }
@@ -90,7 +92,7 @@ namespace DW1Remake.Game
         {
             if (tex == null || w <= 0 || h <= 0) return;
             Add(z, () => GUI.DrawTextureWithTexCoords(new Rect(X(x), Y(y), w * 4.42f, h * 4.42f), tex,
-                new Rect(u / (float)tex.width, 1f - (v + h) / (float)tex.height, w / (float)tex.width, h / (float)tex.height)));
+                new Rect(u / TimImage.W(tex), 1f - (v + h) / TimImage.H(tex), w / TimImage.W(tex), h / TimImage.H(tex))));
         }
 
         // the same with the primitive's colour (0x80 = as the picture is, 0x32 = the dimmed one of renderRectPolyFT4 flag 1)
@@ -101,7 +103,7 @@ namespace DW1Remake.Game
             {
                 var o = GUI.color; GUI.color = tint;
                 GUI.DrawTextureWithTexCoords(new Rect(X(x), Y(y), w * 4.42f, h * 4.42f), tex,
-                    new Rect(u / (float)tex.width, 1f - (v + h) / (float)tex.height, w / (float)tex.width, h / (float)tex.height));
+                    new Rect(u / TimImage.W(tex), 1f - (v + h) / TimImage.H(tex), w / TimImage.W(tex), h / TimImage.H(tex)));
                 GUI.color = o;
             });
         }
@@ -119,12 +121,102 @@ namespace DW1Remake.Game
             Color ink = Font != null ? Font.Ink : Color.white, t = TextColor[color & 31];
             Color c = new Color(Mathf.Min(1f, ink.r * t.r), Mathf.Min(1f, ink.g * t.g), Mathf.Min(1f, ink.b * t.b), 1f);
             var tex = _page;
+            Rect uv;
+            Slice(ref tex, ref x, ref w, u, v, h, out uv);
             Add(z, () =>
             {
                 var o = GUI.color; GUI.color = c;
-                GUI.DrawTextureWithTexCoords(new Rect(X(x), Y(y), w * 4.42f, h * 4.42f), tex, new Rect(u / 256f, 1f - (v + h) / 256f, w / 256f, h / 256f));
+                GUI.DrawTextureWithTexCoords(new Rect(X(x), Y(y), w * 4.42f, h * 4.42f), tex, uv);
                 GUI.color = o;
             });
+        }
+
+        // ---- ours (translation): a slice of the text page shown in Chinese
+        // The menus write packed strings into the page and show pieces of them (a label, a column). With LANGUAGE Chinese, the English under a
+        // slice (what GameFont.Recording kept of the page) is looked up on its own (Tr.Text); when it has a translation, that is drawn instead,
+        // from its own small page, at the slice's first letter. Chinese wider than the slice runs past it.
+        GameFont.PageRecord _record;
+        sealed class SliceZh { public Texture2D Tex; public int Dx, W; }
+        readonly Dictionary<long, SliceZh> _slices = new Dictionary<long, SliceZh>();
+        static readonly Dictionary<string, KeyValuePair<Texture2D, int>> _zhTex = new Dictionary<string, KeyValuePair<Texture2D, int>>();
+
+        protected void Slice(ref Texture2D tex, ref int x, ref int w, int u, int v, int h, out Rect uv)
+        {
+            uv = new Rect(u / 256f, 1f - (v + h) / 256f, w / 256f, h / 256f);
+            if (!Tr.Chinese || _record == null || Font == null || tex != _page) return;
+            long key = ((long)(u & 0xFFFF) << 40) | ((long)(v & 0xFFFF) << 24) | ((long)(w & 0xFFFF) << 8) | (long)(h & 0xFF);
+            SliceZh sz;
+            if (!_slices.TryGetValue(key, out sz)) { sz = MakeSlice(u, v, w); _slices[key] = sz; }
+            if (sz == null) return;
+            tex = sz.Tex; x += sz.Dx; w = sz.W;
+            float hh = Mathf.Min(h, 12);
+            uv = new Rect(0f, 1f - hh / 12f, sz.W / (float)sz.Tex.width, hh / 12f);
+        }
+
+        SliceZh MakeSlice(int u, int v, int w)
+        {
+            var row = new List<GameFont.Placed>();
+            foreach (var c in _record.Chars)
+            {
+                int cell = c.X / 4 * 4;
+                if (c.Y > v - 6 && c.Y < v + 6 && cell >= u && cell < u + w) row.Add(c);
+            }
+            if (row.Count == 0) return null;
+            row.Sort((a, b) => a.X.CompareTo(b.X));
+            var sb = new System.Text.StringBuilder();
+            for (int i = 0; i < row.Count; i++)
+            {
+                if (i > 0 && row[i].X - (row[i - 1].X + row[i - 1].W) >= 3) sb.Append(' ');
+                sb.Append(row[i].C);
+            }
+            string en = sb.ToString().Trim(), zh = Tr.Text(en, "menu slice");
+            if (zh == en)
+            {
+                // a button mark at either end ("× Select"): the words between are looked up, the marks kept
+                int a = 0, b = en.Length;
+                while (a < b && (en[a] == ' ' || en[a] >= 0x8140 && en[a] <= 0x84FF)) a++;
+                while (b > a && (en[b - 1] == ' ' || en[b - 1] >= 0x8140 && en[b - 1] <= 0x84FF)) b--;
+                if (b <= a || (a == 0 && b == en.Length)) return null;
+                string core = en.Substring(a, b - a), t = Tr.Text(core, "menu slice");
+                if (t == core) return null;
+                zh = en.Substring(0, a) + t + en.Substring(b);
+            }
+            var made = ZhTexture(zh);
+            return new SliceZh { Tex = made.Key, Dx = Mathf.Max(0, row[0].X / 4 * 4 - u), W = made.Value };
+        }
+
+        // a Chinese text on a small page of its own (white ink, 12 rows), and its width; made once
+        KeyValuePair<Texture2D, int> ZhTexture(string zh)
+        {
+            KeyValuePair<Texture2D, int> made;
+            if (_zhTex.TryGetValue(zh, out made)) return made;
+            int zw = Font.MeasureRaw(zh), tw = Mathf.Max(16, Mathf.NextPowerOfTwo(zw + 4));
+            var px = new Color32[tw * 12];
+            Font.RenderRaw(zh, px, tw, 12, 0, 0, new Color32(255, 255, 255, 255), GameFont.ChineseText(zh));
+            var t = new Texture2D(tw, 12, TextureFormat.RGBA32, false) { filterMode = FilterMode.Point, wrapMode = TextureWrapMode.Clamp };
+            t.SetPixels32(px); t.Apply();
+            made = new KeyValuePair<Texture2D, int>(t, zw);
+            _zhTex[zh] = made;
+            return made;
+        }
+
+        /// <summary>Ours (translation, LANGUAGE Chinese only): a word that is a picture on the disc (PROFILE, SPEED, ITEM...) drawn as Chinese text in
+        /// its place: the picture's background colour over its rectangle (fill, if it has one), the text centred in it in the picture's ink colour,
+        /// with a black copy 1 pixel down and right when the picture's letters have a dark outline.</summary>
+        protected void ZhWord(int z, string zh, int x, int y, int w, int h, Color ink, Color? fill, bool shadow)
+        {
+            if (Font == null || string.IsNullOrEmpty(zh)) return;
+            var made = ZhTexture(zh);
+            var tex = made.Key; int tw = made.Value;
+            // a fill grows to hold the Chinese (11 rows, often wider than the English picture: 年齡 over AGE), centred on the picture's place
+            int fw = fill.HasValue ? Mathf.Max(w, tw + 2) : w, fh = fill.HasValue ? Mathf.Max(h, 13) : h;
+            x += (w - fw) / 2; y += (h - fh) / 2; w = fw; h = fh;
+            int tx = x + (w - tw) / 2, ty = y + (h - 11) / 2;
+            var uv = new Rect(0f, 0f, tw / (float)tex.width, 1f);
+            // in one ordering-table slot the command added last is drawn first: the text, then its black copy, then the fill under both
+            Add(z, () => { var o = GUI.color; GUI.color = ink; GUI.DrawTextureWithTexCoords(new Rect(X(tx), Y(ty), tw * 4.42f, 12 * 4.42f), tex, uv); GUI.color = o; });
+            if (shadow) Add(z, () => { var o = GUI.color; GUI.color = Color.black; GUI.DrawTextureWithTexCoords(new Rect(X(tx + 1), Y(ty + 1), tw * 4.42f, 12 * 4.42f), tex, uv); GUI.color = o; });
+            if (fill.HasValue) { Color f = fill.Value; Add(z, () => UiKit.Fill(new Rect(X(x), Y(y), w * 4.42f, h * 4.42f), f)); }
         }
 
         // renderString(colour, x, y, w, 12, u, v, layer, shadow): the page slice in TEXT_COLORS[colour], with a black copy 1 pixel down and right
@@ -133,7 +225,8 @@ namespace DW1Remake.Game
             PageText(z, colour, x, y, w, 12, u, v);
             var tex = Page;
             if (!shadow || tex == null || w <= 0) return;
-            Rect uv = new Rect(u / 256f, 1f - (v + 12) / 256f, w / 256f, 12 / 256f);
+            Rect uv;
+            Slice(ref tex, ref x, ref w, u, v, 12, out uv);
             Add(z, () => { var o = GUI.color; GUI.color = Color.black; GUI.DrawTextureWithTexCoords(new Rect(X(x + 1), Y(y + 1), w * 4.42f, 12 * 4.42f), tex, uv); GUI.color = o; });
         }
 
@@ -237,6 +330,22 @@ namespace DW1Remake.Game
 
         Texture2D Bar(int row) { return Pal(_barTim, _bar, row); }
 
+        // STATS_VIEW_ELEMENTS that are words (seen in SYSTEM_W with their colour sets): the colours are the pictures' own (ours: the words)
+        sealed class ZhLabel { public string Text; public Color Ink; public Color? Fill; public bool Shadow; }
+        static Color Rgb(int c) { return new Color32((byte)(c >> 16), (byte)(c >> 8), (byte)c, 255); }
+        static ZhLabel Gold(string t) { return new ZhLabel { Text = t, Ink = Rgb(0x080808), Fill = Rgb(0xF0D000) }; }
+        static ZhLabel Cyan(string t) { return new ZhLabel { Text = t, Ink = Rgb(0x4838E0), Fill = Rgb(0x50D8F0) }; }
+        static ZhLabel Ink(string t, int c) { return new ZhLabel { Text = t, Ink = Rgb(c), Shadow = true }; }
+        static readonly ZhLabel[] ZhWords =
+        {
+            Gold("基本資料"), Gold("狀態"), Gold("參數"),                  // 0 PROFILE, 1 CONDITION, 2 PARAMETER
+            Cyan("名字"), Cyan("種類"), Cyan("體重"), Cyan("年齡"),        // 3 NAME, 4 DIGI, 5 WEIGHT, 6 AGE
+            Ink("屬性", 0xF8D800), Ink("專長", 0x18F810), Ink("活躍", 0xF838E0),   // 7 TYPE, 8 SPECIAL, 9 ACTIVE
+            null, null, null, null, null, null, null,                     // 10-16 icons (hearts, stat icons)
+            Ink("快樂度", 0xF8E070), Ink("速度", 0xF8E070), Ink("智力", 0xF8E070),   // 17 HAPPINESS, 18 SPEED, 19 BRAINS
+            null,                                                         // 20 the virus icon
+        };
+
         // renderInsetBox: dark lines left and top, light ones bottom and right, then the fill (all at the same depth)
         void Inset(int x, int y, int w, int h)
         {
@@ -253,7 +362,7 @@ namespace DW1Remake.Game
             {
                 // drawDigimonStatsStrings
                 Write(px, _statNames[2], 0, 0x24);
-                Write(px, _statNames[3], 0x28, 0x24);
+                if (!Tr.Chinese) Write(px, _statNames[3], 0x28, 0x24);      // the US writes "Def" twice, 4 apart; Chinese once (the first copy showed past the second: ours)
                 Write(px, _statNames[3], 0x24, 0x24);
                 Write(px, species, 0x9C, 0x24);
                 Write(px, species, 0, 0x48);
@@ -266,7 +375,13 @@ namespace DW1Remake.Game
             Begin();
             Lines(5, 0x80123F54, 6);
             foreach (var t in _texts) PageText(5, 3, t.X, t.Y + 1, t.W, 12, t.U, t.V);
-            foreach (var i in _icons) SysIcon(5, i.X, i.Y, i.W, i.H, i.U, i.V + 0x80, i.Row);
+            for (int k = 0; k < _icons.Length; k++)
+            {
+                var i = _icons[k];
+                // ours (translation): the word pictures in Chinese, only with LANGUAGE Chinese; the disc's pictures otherwise
+                if (Tr.Chinese && k < ZhWords.Length && ZhWords[k] != null) { var z = ZhWords[k]; ZhWord(5, z.Text, i.X, i.Y, i.W, i.H, z.Ink, z.Fill, z.Shadow); }
+                else SysIcon(5, i.X, i.Y, i.W, i.H, i.U, i.V + 0x80, i.Row);
+            }
             PageText(5, 0, -0x6D, -0x42, 0x48, 12, 0, 0x3C);
             PageText(5, 0, -0x6C, -0x32, Mathf.Min(species.Length * 10, 0x78), 12, 0, 0x48);
             Number(5, 0, -0x6D, -0x22, 2, s.Age);
@@ -311,9 +426,28 @@ namespace DW1Remake.Game
             if (disc >= 0x32) { Picture(5, Bar(14), -0x54, 0x44, (byte)(disc - 0x32), 6, 0x18, 0xF0); Picture(5, Bar(13), -0x54, 0x44, 0x32, 6, 0x4A, 0xF0); }
             else Picture(5, Bar(13), -0x54, 0x44, (byte)disc, 6, 0x4A, 0xF0);
             Box(5, -0x54, 0x52, s.Para.Virus * 3, 6, 0xC8, 0xC8, 0x3C);
+            if (ModSettings.StatusNumbers)
+            {
+                // ours (mod STATUS NUMBERS): the three bars' values in white over their middle, and the hours of life left right of the Brains bar
+                ModNumber(happy.ToString(), -0x22, 0x35 + 3);
+                ModNumber(disc.ToString(), -0x22, 0x44 + 3);
+                ModNumber(s.Para.Virus.ToString(), -0x22, 0x52 + 3);
+                ModText((Tr.Chinese ? "壽命 " : "Life ") + Mathf.Max(0, s.Para.Lifetime) + "h", 0x5E, 0x4C);
+            }
             foreach (var r in _insets) Inset(r.x, r.y, r.width, r.height);
             Flush();
         }
+
+        // ours (mod STATUS NUMBERS): a white text with a black copy 1 pixel down and right; ModNumber centres it on (cx, cy)
+        void ModText(string t, int x, int y)
+        {
+            var f = Font; if (f == null) return;
+            // in one slot the command added last is drawn first: the white, then the black copy under it
+            Add(5, () => f.Draw(t, X(x), Y(y), 4.42f, Color.white));
+            Add(5, () => f.Draw(t, X(x + 1), Y(y + 1), 4.42f, Color.black));
+        }
+
+        void ModNumber(string t, int cx, int cy) { if (Font != null) ModText(t, cx - Font.MeasureRaw(t) / 2, cy - 6); }
 
         void StatBar(int value, int limit, int full, int x, int y) { Box(5, x, y, (byte)(full * value / limit), 2, 0x32, 0xC8, 0xC8); }
 

@@ -47,6 +47,12 @@ namespace DW1Remake.Game
             // the order it follows: the partner always; with the mod Online battle and orders on, also the friend's Digimon on the host's PC
             // (its orders come from the friend's PC). Others are enemies and use the enemy AI (PickEnemy)
             public bool Commanded; public string Order = "Your Call"; public bool WantFinish;
+            // BTL_retargetAfterHit / BTL_selectFighterTarget for an enemy: the other enemy that hit it (targetId + FIGHTER_FLAG_10), kept until its
+            // next technique is over; null = the partner (targetId 0)
+            public Fighter Turned;
+            public int Rec42;                   // NPCEntity.unk1 (map record +42): 1 = never turns on another enemy, no wide-technique weight
+            public bool TargetHeld;             // the partner's FIGHTER_FLAG_10: set by BTL_retargetAfterHit, cleared when its technique is over
+            public Fighter CounteredBy;         // BTL_tickAttackState: frozen (animFlag bit 0 clear) while this fighter's Counter (0x2D) runs at it
         }
 
         static Vector3 FleeOf(MapDigimon d, Transform t) { return new Vector3(d.Flee.x * 0.01f, t.position.y, d.Flee.z * 0.01f); }
@@ -308,7 +314,7 @@ namespace DW1Remake.Game
         {
             NoFlee = noFlee;
             Tamerless = _s.GetFlag(2);      // battle_setup.c: IS_TAMERLESS_BATTLE = isTriggerSet(2)
-            Extras.Clear();
+            Extras.Clear(); _enemySlots.Clear();
             Partner = new Fighter
             {
                 T = partner, A = partnerAnim, Name = partnerName, Info = partnerInfo,
@@ -328,6 +334,8 @@ namespace DW1Remake.Game
             Enemy.FleeTo = FleeOf(enemyData, enemy);
             SetupTechs(Enemy, enemyInfo, enemyData);
             Enemy.Commanded = EnemyCommanded;
+            Enemy.Rec42 = enemyData.Rec42;
+            _enemySlots.Add(Enemy);
             _seen.Clear(); _learned = null; _dropped = null; _dropName = null; DropItem = -1; _endStep = -1; _anyHit = false; _drops.Clear();
             foreach (var f in new[] { Partner, Enemy })
             {
@@ -342,6 +350,13 @@ namespace DW1Remake.Game
             _lifeBarOn = false; _hudAcc = 0f;
             SetupOrders();
             _order = CallOrder; _hover = _orders.Count; _shoutFrame = -1;
+            // BTL_setupBattle: an injured or sick partner (PARTNER_PARA.condition & 0x60) loses a fifth of Offense, Defense, Speed and Brains for
+            // the fight, after its finishing gauge, power-ups and orders were set from the full numbers (the arena does it in StartTournament)
+            if (!Tournament && (_s.Para.Condition & 0x60) != 0)
+            {
+                Partner.Off -= Partner.Off / 5; Partner.Def -= Partner.Def / 5;
+                Partner.Spd -= Partner.Spd / 5; Partner.Brain -= Partner.Brain / 5;
+            }
 
             _route = route; _startTile = startTile; _boyRadius = boyRadius; _boyDone = false; _boyStart = 0f;       // a random fight: the boy goes back to the entrance he came in by
             _player = player; _playerA = playerAnim;
@@ -522,15 +537,15 @@ namespace DW1Remake.Game
                             TickFlee();
                             if (++_runFrames > 40) { Fled = true; Sync(); ClearShots(); SetPhase(Phase.Fled); break; }
                         }
-                        if (finishing == null) { FrameTick(Partner, Enemy); if (Enemy.Hp > 0) FrameTick(Enemy, Partner); foreach (var x in Extras) if (x.Hp > 0) FrameTick(x, Partner); }
+                        if (finishing == null) { FrameTick(Partner, Enemy); if (Enemy.Hp > 0) FrameTick(Enemy, FoeOf(Enemy)); foreach (var x in Extras) if (x.Hp > 0) FrameTick(x, FoeOf(x)); }
                         if (_shoutFrame >= 0 && ++_shoutFrame > 20) _shoutFrame = -1;
                     }
                     if (_phase != Phase.Fight) break;
                     if (finishing != null) HoldOthers(finishing);
-                    else { Move(Partner, Enemy, dt); Move(Enemy, Partner, dt); foreach (var x in Extras) if (x.Hp > 0) Move(x, Partner, dt); }
+                    else { Move(Partner, Enemy, dt); Move(Enemy, FoeOf(Enemy), dt); foreach (var x in Extras) if (x.Hp > 0) Move(x, FoeOf(x), dt); }
                     TickSwings(dt); TickShots(dt);
                     if (Tournament) { TournamentEnd(); break; }
-                    if (Enemy.Hp <= 0) { if (!NextEnemy() && AllFallen()) Finish(true); }
+                    if (Enemy.Hp <= 0) { ChoosePartnerTarget(); if (Enemy.Hp <= 0 && !NextEnemy() && AllFallen()) Finish(true); }
                     else if (TickFaint(dt)) Finish(false);
                     break;
                 case Phase.Win:
@@ -809,11 +824,13 @@ namespace DW1Remake.Game
             f.FinishMax = 3000 - f.Spd; f.Bore = f.Brain / 10 + 5; f.SelfUses = f.Brain < 400 ? f.Brain / 100 + 1 : f.Brain < 600 ? 4 : 5;
             f.ShownHp = f.Hp;
             f.FleeTo = FleeOf(data, t);
+            f.Rec42 = data.Rec42;
             _enemyBits += data.Bits;
             t.rotation = _face(Partner.T.position - t.position);
             Stand(f);
             if (a != null) a.BodyMovesItself = true;
             Extras.Add(f);
+            _enemySlots.Add(f);
         }
 
         // the partner turns to the next living enemy; false when there is none
@@ -822,6 +839,130 @@ namespace DW1Remake.Game
             foreach (var x in Extras)
                 if (x.Hp > 0) { Extras.Remove(x); Extras.Add(Enemy); Enemy = x; return true; }
             return false;
+        }
+
+        // the one an enemy is after: the partner, or the other enemy that hit it (Turned) until its next technique is over.
+        // Ours: one that has gone down sends it back to the partner
+        Fighter FoeOf(Fighter f)
+        {
+            if (f.Turned != null && f.Turned.Hp <= 0) f.Turned = null;
+            return f.Turned ?? Partner;
+        }
+
+        static readonly int[] TargetAttackerChance = { 70, 40, 30, 0 };     // TARGET_ATTACKER_CHANCE (BTL_REL), by charge mode
+
+        // the enemies in their fight slots (1, 2, 3): the order the original's target loops go through. Enemy / Extras change order when the
+        // partner changes target; this list does not
+        readonly List<Fighter> _enemySlots = new List<Fighter>();
+
+        // the partner's target becomes x (fighter->targetId): ours keeps the partner's target in Enemy
+        void SetPartnerTarget(Fighter x)
+        {
+            int k = Extras.IndexOf(x);
+            if (k < 0) return;
+            Extras[k] = Enemy; Enemy = x;
+            if (Partner.Pending != null) Partner.PendingTarget = x;
+        }
+
+        // BTL_calculateTargetScore(partner, other): TYPE_FACTORS of the partner's first type against the other's first type, turned round
+        // (20 -> 2, 15 -> 5, 5 -> 15, 2 -> 20), then partner HP % + that x (partner Defense x 100 / 999) / 10. The HP and Defense are the
+        // partner's own (st = &self->stats), so between enemies only the type match differs; lower = the better one to go after
+        int TargetScore(Fighter self, Fighter other)
+        {
+            int m = DigimonStatsCatalog.Effect(FirstType(self), FirstType(other));
+            m = m == 20 ? 2 : m == 15 ? 5 : m == 5 ? 15 : m == 2 ? 20 : m;
+            return self.Hp * 100 / Mathf.Max(1, self.MaxHp) + m * (self.Def * 100 / 999) / 10;
+        }
+
+        // BTL_getWeakestEnemy: the lowest score among the standing enemies other than the current target (first in slot order on a tie).
+        // Its score out is the last one worked out, not the lowest (as the original writes *outScore for every candidate)
+        Fighter WeakestEnemy(Fighter self, Fighter current, ref int score)
+        {
+            int best = 1000; Fighter pick = null;
+            foreach (var e in _enemySlots)
+            {
+                if (e.Hp <= 0 || e == current) continue;
+                score = TargetScore(self, e);
+                if (score < best) { best = score; pick = e; }
+            }
+            return pick;
+        }
+
+        // BTL_getNearestEnemy: the standing enemy nearest the partner (first in slot order on a tie)
+        Fighter NearestEnemy(Fighter self)
+        {
+            float bestD = float.MaxValue; Fighter pick = null;
+            foreach (var e in _enemySlots)
+            {
+                if (e.Hp <= 0) continue;
+                float d = (Flat(e.T.position) - Flat(self.T.position)).sqrMagnitude;
+                if (d < bestD) { bestD = d; pick = e; }
+            }
+            return pick;
+        }
+
+        // BTL_selectFighterTarget(partner, targetId, 0), run each time the partner picks a technique unless FIGHTER_FLAG_10 holds its target:
+        // - order Change (command 7) with a target still standing: kept
+        // - Brains 300+: enemies under a condition (poison, confusion, stun, flat): one at random of 2+, or the one; else the weakest
+        //   (BTL_getWeakestEnemy) when the target is down, or when the target scores 40+ more than it
+        // - Brains 150+: a standing target is kept, else the weakest
+        // - below: the nearest
+        void ChoosePartnerTarget()
+        {
+            var me = Partner;
+            if (me == null || _enemySlots.Count < 2) return;
+            Fighter cur = Enemy, pick = null;
+            bool curUp = cur != null && cur.Hp > 0;
+            if (_order == ChangeOrder && curUp) return;
+            int score = 0;
+            if (me.Brain >= 300)
+            {
+                var hurt = new List<Fighter>();
+                foreach (var e in _enemySlots) if (e.Hp > 0 && (e.Poisoned || e.Confused || e.Stunned || e.Flattened)) hurt.Add(e);
+                if (hurt.Count >= 2) pick = hurt[_rng.Next(hurt.Count)];
+                else if (hurt.Count == 1) pick = hurt[0];
+                else
+                {
+                    var choice = WeakestEnemy(me, cur, ref score);
+                    if (!curUp) pick = choice;
+                    else if (choice != null && TargetScore(me, cur) - score >= 40) pick = choice;
+                }
+            }
+            else if (me.Brain >= 150) { if (!curUp) pick = WeakestEnemy(me, cur, ref score); }
+            else pick = NearestEnemy(me);
+            if (pick != null && pick != Enemy)
+            {
+                SetPartnerTarget(pick);
+                Debug.Log("[battle] " + me.Name + " picks " + pick.Name + " (Brains " + me.Brain + ")");
+            }
+        }
+
+        // BTL_retargetAfterHit, on every landed blow (before its damage):
+        // - the partner keeps its target when (TARGET_ATTACKER_CHANCE[charge mode] - discipline) <= a roll of 100 and that target still stands;
+        //   else BTL_selectFighterTarget(partner, the attacker's slot, 1): it turns to the attacker unless that one is down
+        // - an enemy: BTL_selectFighterTarget(enemy, the attacker's slot, 1): with record +42 = 1 or a roll of 71+ it goes after the partner;
+        //   else after the attacker (the partner, or an enemy whose whole-area technique hit it) unless that one is down (FIGHTER_FLAG_10:
+        //   kept until its next technique is over, then back to the partner, BTL_tickEnemyAI)
+        void RetargetAfterHit(Fighter d, Fighter a)
+        {
+            if (a == null || a == d) return;
+            if (d == Partner)
+            {
+                if (TargetAttackerChance[Mathf.Clamp(d.Style, 0, 3)] - _s.Discipline <= _rng.Next(100) && Enemy.Hp > 0) return;
+                if (a.Hp <= 0) return;
+                Partner.TargetHeld = true;      // FIGHTER_FLAG_10: its own target choice waits until its next technique is over
+                if (a == Enemy || !Extras.Contains(a)) return;
+                SetPartnerTarget(a);
+                Debug.Log("[battle] " + Partner.Name + " turns to " + a.Name + ", who hit it");
+                return;
+            }
+            if (d.Rec42 == 1 || _rng.Next(100) >= 71) d.Turned = null;
+            else if (a.Hp > 0)
+            {
+                d.Turned = a == Partner ? null : a;
+                if (d.Turned != null) Debug.Log("[battle] " + d.Name + " turns on " + a.Name + ", who hit it");
+            }
+            if (d.Pending != null) d.PendingTarget = FoeOf(d);
         }
 
         void SetPhase(Phase p) { _phase = p; _phaseStart = _time; if (p == Phase.Banner) { Snd(0x11); StartWord(); } }
@@ -867,6 +1008,7 @@ namespace DW1Remake.Game
             if (_phase == Phase.Win || _phase == Phase.Leave) { int[] idx = { 4, 5, 0, 1, 2, 3 }; for (int i = 0; i < 6; i++) _s.SetStat(idx[i], _before[i] + _gain[i]); _s.Money = Math.Min(_s.Money + _bits, 999999); if (Partner.A != null) Partner.A.SetSlot(0); }      // tickBitBox: MONEY >= 1000000 -> 999999
             ClearShots();
             Active = false;
+            foreach (var f in AllFighters()) { f.Turned = null; if (f.CounteredBy != null) { f.CounteredBy = null; if (f.A != null) f.A.Playing = true; } }
             foreach (var f in new[] { Partner, Enemy }) if (f.A != null) f.A.BodyMovesItself = false;
             foreach (var f in Extras) if (f.A != null) f.A.BodyMovesItself = false;
             // BTL_deinitializeCombat: animFlag &= 0xFB (the double-speed run ends)
@@ -893,14 +1035,24 @@ namespace DW1Remake.Game
                 if (_playerA != null) _playerA.SetSlot(PlayerRunSlot);
                 return;
             }
-            if (o == ChangeOrder) { Shout("Change!"); NextEnemy(); return; }
+            // command 7: the order stays Change (techniques picked as Your Call, BTL_SAVED_CHARGE_MODE) and the partner keeps the target it
+            // turned to while that one stands (BTL_selectFighterTarget)
+            if (o == ChangeOrder) { _running = false; _order = ChangeOrder; Shout("Change!"); NextEnemy(); return; }
             _running = false;
             _order = o;
             int k = System.Array.IndexOf(OrderNames, o);
             Shout(k >= 0 ? OrderShouts[k] : o);
         }
 
-        void Shout(string s) { _shout = s; _shoutFrame = 0; }
+        void Shout(string s) { _shout = OrderZh(s); _shoutFrame = 0; }
+
+        // ours (translation): the order names and shouts (our constants; the game draws its own) in the current language
+        static readonly Dictionary<string, string> OrderZhTable = new Dictionary<string, string>
+        {
+            { "Run", "逃跑" }, { "Attack", "攻擊" }, { "Your Call", "你決定" }, { "Moderate", "適度" }, { "Distance", "保持距離" }, { "Defensive", "防守" }, { "Change", "交換" },
+            { "Run!", "逃跑！" }, { "Attack!", "攻擊！" }, { "Your Call!", "你決定！" }, { "Moderate!", "適度！" }, { "Distance!", "保持距離！" }, { "Defense!", "防守！" }, { "Change!", "交換！" },
+        };
+        static string OrderZh(string s) { string z; return s != null && Tr.Chinese && OrderZhTable.TryGetValue(s, out z) ? z : s; }
 
         // a fighter at 0 HP first finishes its hit reaction, then collapses (slot 43, BTL_faintDigimon)
         void Animate(Fighter f) { if (f != null && f.A != null && f.AnimReset > 0f && _time >= f.AnimReset) { f.AnimReset = 0f; if (f.Hp > 0) Stand(f); else if (f.A.HasSlot(DownSlot)) f.A.SetSlot(DownSlot, true); } }
@@ -963,6 +1115,14 @@ namespace DW1Remake.Game
             // mod Online battle: the friend ordered its finishing move (its gauge was checked when the order came)
             if (me != Partner && me.Commanded && me.WantFinish && me.Finisher != null) { me.WantFinish = false; me.Pending = me.Finisher; me.PendingTarget = foe; return; }
             if (me != Partner && !me.Commanded && me.Finish >= me.FinishMax && me.Finisher != null) { me.Pending = me.Finisher; me.PendingTarget = foe; return; }
+            // BTL_tickPartnerAI: before it picks a technique (not confused), BTL_selectFighterTarget unless FIGHTER_FLAG_10 holds the target;
+            // under a technique order (8-10) only when the target is down
+            if (me == Partner && !me.Confused && !me.TargetHeld)
+            {
+                bool techOrder = false;
+                foreach (var mt in me.Moves) if (mt != null && mt.Name == me.Order) techOrder = true;
+                if (!techOrder || Enemy.Hp <= 0) { ChoosePartnerTarget(); foe = Enemy; }
+            }
             me.Blind = me.Confused && _rng.Next(10) < 7;       // a confused fighter mostly fires at nothing, in the way it happens to face
             if (me.Blind) me.T.rotation *= Quaternion.Euler(0f, _rng.Next(-45, 45), 0f);
             Tech t = me.Confused ? PickAny(me) : me.Commanded ? PickPartner(me, foe) : PickEnemy(me);
@@ -997,8 +1157,16 @@ namespace DW1Remake.Game
                 int rank = 0;
                 foreach (var o in me.Moves) if (o != t && Usable(me, o) && o.Power > t.Power) rank++;
                 w[i] = PowerRank[rank];
-                if (t.Self) w[i] += me.Bore + EffectBonus(DigimonStatsCatalog.Effect(t.Element, FirstType(me)));
-                else w[i] += EffectBonus(DigimonStatsCatalog.Effect(t.Element, FirstType(foe)));
+                if (t.Self) { w[i] += me.Bore + EffectBonus(DigimonStatsCatalog.Effect(t.Element, FirstType(me))); continue; }
+                w[i] += EffectBonus(DigimonStatsCatalog.Effect(t.Element, FirstType(foe)));
+                // BTL_selectPartnerMove: a technique that covers the whole area (range 3) with Brains 200+ and two or more enemies standing
+                // (BTL_countLivingEnemies) weighs + enemies x 10 (charge mode 0) or x 15 (1)
+                if (t.Wide && me.Brain >= 200 && (me.Style == 0 || me.Style == 1))
+                {
+                    int count = 0;
+                    foreach (var e in Enemies()) if (e.Hp > 0) count++;
+                    if (count >= 2) w[i] += count * (me.Style == 0 ? 10 : 15);
+                }
             }
             int r = _rng.Next(Mathf.Max(1, w[0] + w[1] + w[2])), sum = 0;
             for (int i = 0; i < 3; i++) { if (w[i] == 0) continue; sum += w[i]; if (r < sum) return me.Moves[i]; }
@@ -1032,13 +1200,20 @@ namespace DW1Remake.Game
         {
             me.Style = _rng.Next(2);        // on screen: 0 or 1 at random
             int[] w = new int[4]; int total = 0; bool any = false;
+            // BTL_selectEnemyMove: another enemy still standing (not this one) and record +42 = 0: a whole-area technique (range 3) weighs + 20
+            bool others = false;
+            foreach (var e in Enemies()) if (e != me && e.Hp > 0) others = true;
             for (int i = 0; i < 4; i++)
             {
                 var t = me.Moves[i];
                 w[i] = me.Weights[i];
                 if (t != null && !Usable(me, t)) w[i] = 0;
-                if (t != null && t.Self) w[i] += me.Bore;
-                if (t != null && Usable(me, t)) any = true;
+                else if (t != null)
+                {
+                    any = true;
+                    if (others && me.Rec42 == 0 && t.Wide) w[i] += 20;
+                    if (t.Self) w[i] += me.Bore;
+                }
                 total += w[i];
             }
             if (!any || total <= 0) return null;
@@ -1051,7 +1226,7 @@ namespace DW1Remake.Game
         // 40 frames of cooldown after every technique; Run, Distance and Defensive take over the partner completely, so with those orders it does not attack.
         void Move(Fighter me, Fighter foe, float dt)
         {
-            if (me.Hp <= 0) return;
+            if (me.Hp <= 0 || me.CounteredBy != null) return;      // BTL_tickAttackState: frozen while countered
             foreach (var sw in _swings) if (sw.From == me) return;
             if (me.AnimReset > 0f || _time < me.NextAct) return;
             if (FlatBusy(me)) { MoveFlat(me, foe, dt); return; }        // BTL_tickFlatState (BattleStatus.cs)
@@ -1256,11 +1431,22 @@ namespace DW1Remake.Game
             if (me.A != null && me.A.Slot != walk) me.A.SetSlot(walk);
         }
 
-        // the partner's MP cost: 5, 10, 15, 20% less at 700, 800, 900, 999 Brains
-        static int Cost(Fighter me, Tech t, bool partner)
+        // the partner's MP cost: 5, 10, 15, 20% less at 700, 800, 900, 999 Brains, and half as much again while it is injured or sick
+        // (PARTNER_PARA.condition & 0x60). The two places do it in their own order and rounding:
+        // paying (BTL_startQueuedMove): + half first, then cost x 19/20, 9/10, 17/20, 4/5;
+        // the "can it pay" test (BTL_isMoveUsable): mp - mp/20, mp/10, mp x 15/100, mp/5 first, then + half
+        int Cost(Fighter me, Tech t, bool partner, bool paying = false)
         {
             int c = t.Mp;
-            if (partner && me.Brain >= 700) c = me.Brain >= 999 ? c * 4 / 5 : me.Brain >= 900 ? c * 17 / 20 : me.Brain >= 800 ? c * 9 / 10 : c * 19 / 20;
+            bool weak = partner && (_s.Para.Condition & 0x60) != 0;
+            if (paying)
+            {
+                if (weak) c += c / 2;
+                if (partner && me.Brain >= 700) c = me.Brain >= 999 ? c * 4 / 5 : me.Brain >= 900 ? c * 17 / 20 : me.Brain >= 800 ? c * 9 / 10 : c * 19 / 20;
+                return c;
+            }
+            if (partner && me.Brain >= 700) c -= me.Brain >= 999 ? c / 5 : me.Brain >= 900 ? c * 15 / 100 : me.Brain >= 800 ? c / 10 : c / 20;
+            if (weak) c += c / 2;
             return c;
         }
 
@@ -1268,7 +1454,7 @@ namespace DW1Remake.Game
         {
             me.Pending = null; me.Collided = false;
             if (!me.Blind) me.T.rotation = _face(target.T.position - me.T.position);
-            if (me == Partner || !NoFlee) me.Mp -= Cost(me, t, me == Partner);     // enemies in scripted fights pay nothing
+            if (me == Partner || !NoFlee) me.Mp -= Cost(me, t, me == Partner, true);     // enemies in scripted fights pay nothing
             if (t.Self) me.SelfUses--;
             me.Energy = Mathf.Max(-155, me.Energy - t.Power);
             if (me != Partner && t.Id < 58 && !_seen.Contains(t.Id) && _seen.Count < 12) _seen.Add(t.Id);
@@ -1432,9 +1618,20 @@ namespace DW1Remake.Game
 
         void TickSwings(float dt)
         {
+            // BTL_tickAttackState: a fighter whose blow was countered stays frozen (animation and technique) while the Counter runs at it
+            foreach (var f in AllFighters())
+            {
+                if (f.CounteredBy == null) continue;
+                if (!CounterRunning(f.CounteredBy, f)) { f.CounteredBy = null; if (f.A != null) f.A.Playing = true; continue; }
+                // its own animation's end and its next action wait as long as it is frozen
+                if (f.AnimReset > 0f) f.AnimReset += dt;
+                if (f.NextAct > _time) f.NextAct += dt;
+            }
             for (int i = _swings.Count - 1; i >= 0; i--)
             {
-                var sw = _swings[i]; sw.T += dt;
+                var sw = _swings[i];
+                if (sw.From.CounteredBy != null) continue;
+                sw.T += dt;
                 bool ranged = !sw.Tech.Melee;
                 if (!sw.Done && sw.T >= sw.Release)
                 {
@@ -1464,6 +1661,7 @@ namespace DW1Remake.Game
                     _swings.RemoveAt(i);
                     sw.From.Blind = false;
                     sw.From.Cool = 40;                                           // BTL_tickFighterAction: 40 frames of cooldown, +4% finishing gauge, one attack counted
+                    sw.From.Turned = null; sw.From.TargetHeld = false;                                       // FIGHTER_FLAG_10 cleared: an enemy goes back to the partner
                     if (sw.From == Partner) _used++;
                     AddFinish(sw.From, sw.From.FinishMax * 2 / 50);
                 }
@@ -1689,6 +1887,47 @@ namespace DW1Remake.Game
 
         void AddFinish(Fighter f, int amount) { if (f.Finisher != null) f.Finish = Mathf.Min(f.FinishMax, f.Finish + amount); }
 
+        const int CounterTech = 0x2D;
+
+        // f's Counter is running (its animation is technique 0x2D's) and, when 'at' is given, aimed at that fighter
+        bool CounterRunning(Fighter f, Fighter at)
+        {
+            if (f == null) return false;
+            foreach (var sw in _swings) if (sw.From == f && sw.Tech.Id == CounterTech && (at == null || sw.To == at)) return true;
+            return false;
+        }
+
+        // BTL_tickAttackHits, a blow whose hit roll failed: a short-range one (range 1) on a fighter that is not already blocking or countering
+        // goes through its techniques in order (stats.base.moves[0-3]), stopping once MP is under 165; at Counter it rolls 100 against
+        // Speed / its level (DIGIMON_DATA). On success the Counter starts at once at the attacker (targetId, BTL_startQueuedMove: it pays its MP
+        // as any technique), the attacker freezes (animFlag bit 0 cleared) and the blow does nothing: no block, no chip damage, no gauges
+        bool TryCounter(Fighter a, Fighter d, Tech tech)
+        {
+            if (!tech.Melee || d.Info == null || d.Info.Level <= 0) return false;
+            if (d.A != null && d.A.Slot == BlockSlot && _time < d.AnimReset) return false;      // FIGHTER_FLAG_BLOCKING
+            if (CounterRunning(d, null)) return false;
+            foreach (var t in d.Moves)
+            {
+                if (d.Mp < 165) break;
+                if (t == null || t.Id != CounterTech) continue;
+                if (_rng.Next(100) >= d.Spd / d.Info.Level) continue;
+                if (d == Partner)
+                {
+                    // fighter->targetId = the attacker
+                    int k = Extras.IndexOf(a);
+                    if (k >= 0) { Extras[k] = Enemy; Enemy = a; }
+                }
+                d.Pending = null;
+                for (int i = _swings.Count - 1; i >= 0; i--) if (_swings[i].From == d) _swings.RemoveAt(i);
+                Begin(d, a, t);
+                a.CounteredBy = d;
+                if (a.A != null) a.A.Playing = false;
+                Debug.Log("[battle] " + d.Name + " counters " + a.Name + "'s " + tech.Name);
+                return true;
+            }
+            return false;
+        }
+
         /// <summary>
         /// handleBuffDisks (main.c), ITEM_FUNCTIONS for items 0x0F-0x15 when the thrown disk reaches the partner: Off. Disk / Def. Disk /
         /// Hispeed dsk +20, S.Off / S.Def / S.speed +50, each held under 130% of that stat at the fight's start (INITIAL_COMBAT_STATS, at most
@@ -1773,6 +2012,8 @@ namespace DW1Remake.Game
         {
             if (d.Hp <= 0 || FleeDropsHits) return;
             if (_time < d.HitUntil) return;       // isHit: it is still in the reaction to the last blow (fall and getting up)
+            // BTL_tickAttackHits: a fighter in its Counter (technique 0x2D) takes nothing from the one it counters
+            if (CounterRunning(d, a)) return;
             Vector3 hitAt = at ?? HitPoint(d);
             // BTL_tickAttackHits: every blow that reaches it, landed or blocked, first stops its own technique's effect (BTL_removeMoveEffect) and
             // clears FIGHTER_FLAG_ATTACKING: a shot of its own still on its way is gone, and a technique that has not let go never lands
@@ -1783,7 +2024,15 @@ namespace DW1Remake.Game
             if (_charging && _chargeBy == d) { _charging = false; ShowRing(false); _chargeBy = null; }
             for (int i = _swings.Count - 1; i >= 0; i--) if (_swings[i].From == d && _swings[i].Tech.Finisher && !_swings[i].Done) _swings.RemoveAt(i);
             float v = Damage(a, d, tech, boost);
-            if (a != d && Blocks(a, d, tech)) { Block(a, d, tech, v, hitAt); return; }
+            if (a != d && Blocks(a, d, tech))
+            {
+                if (TryCounter(a, d, tech)) return;
+                Block(a, d, tech, v, hitAt);
+                return;
+            }
+            RetargetAfterHit(d, a);
+            // a landed blow ends the freeze of a countered fighter: it goes into its hit reaction (BTL_tickHitState, not BTL_tickAttackState)
+            if (d.CounteredBy != null) { d.CounteredBy = null; if (d.A != null) d.A.Playing = true; }
             int dmg = Mathf.Max(1, Mathf.RoundToInt(v));
             _anyHit = true;      // HAS_TAKEN_DAMAGE: any landed technique hit in the fight
             if (Tournament && OnTechHit != null) OnTechHit(d);
@@ -1915,7 +2164,7 @@ namespace DW1Remake.Game
             {
                 GUIUtility.RotateAroundPivot(_cdRot, new Vector2(cx, cy));
                 float s = 16f * 4.42f * _cdDigitScale;
-                GUI.DrawTextureWithTexCoords(new Rect(cx - s / 2f, cy - s / 2f, s, s), digit, new Rect(du / (float)digit.width, 1f - (dv - 0x80 + 16) / (float)digit.height, 16f / digit.width, 16f / digit.height));
+                GUI.DrawTextureWithTexCoords(new Rect(cx - s / 2f, cy - s / 2f, s, s), digit, new Rect(du / TimImage.W(digit), 1f - (dv - 0x80 + 16) / TimImage.H(digit), 16f / TimImage.W(digit), 16f / TimImage.H(digit)));
                 GUI.matrix = old;
             }
         }
@@ -2048,12 +2297,15 @@ namespace DW1Remake.Game
 
         // handleBattleEndBox's text, in its order: every enemy's dropped item, the injury, a new command learned (Brains 100 / 200 / 300 / 400 / 500
         // crossed), the MP bonus (700 / 800 / 900 / 999 crossed), the technique learned (battleMoveLearning)
+        // ours (translation): a piece of the battle end text in the current language (Tr; the pieces keep the game's #C / #R / #W codes)
+        string EndStr(int i) { return Tr.Text(_endStr[i], "battle end text"); }
+
         void BuildEndText(List<int> dropped, List<string> droppedBy)
         {
             var v = EndView; if (v == null) return;
             v.InitText();
             string yellow = _endExtra[0], whiteWait = _endExtra[1];
-            for (int i = 0; i < dropped.Count; i++) v.Append(yellow + droppedBy[i] + _endStr[Dropped] + (ItemName != null ? ItemName(dropped[i]) : "") + whiteWait, 2);
+            for (int i = 0; i < dropped.Count; i++) v.Append(yellow + droppedBy[i] + EndStr(Dropped) + (ItemName != null ? ItemName(dropped[i]) : "") + whiteWait, 2);
             if (Injured != null && !Injured())
             {
                 if (_anyHit && Tiredness != null && SetInjured != null)
@@ -2061,16 +2313,16 @@ namespace DW1Remake.Game
                     int ratio = 100 * _s.Stats[6] / Mathf.Max(1, _s.Stats[4]);
                     if (_rng.Next(100) < Tiredness() - ratio) SetInjured();
                 }
-                if (Injured()) v.Append(yellow + Partner.Name + _endStr[WasInjured], 2);
+                if (Injured()) v.Append(yellow + Partner.Name + EndStr(WasInjured), 2);
             }
             int old = _before[5], total = old + _gain[5];
             if (total >= 100)
             {
-                if (total >= 500) { if (old < 500) v.Append(_endStr[SetTechnique] + _endStr[ListensTo], 2); }
-                else if (total >= 400) { if (old < 400) v.Append(_endStr[PutUpWithIt] + _endStr[ListensTo], 2); }
-                else if (total >= 300) { if (old < 300) v.Append(_endStr[MoveAway] + _endStr[ListensTo], 3); }
-                else if (total >= 200) { if (old < 200) v.Append(_endStr[KeepItDown] + _endStr[ListensTo], 2); }
-                else if (old < 100) v.Append(_endStr[GoAllTheWay] + _endStr[ListensTo], 2);
+                if (total >= 500) { if (old < 500) v.Append(EndStr(SetTechnique) + EndStr(ListensTo), 2); }
+                else if (total >= 400) { if (old < 400) v.Append(EndStr(PutUpWithIt) + EndStr(ListensTo), 2); }
+                else if (total >= 300) { if (old < 300) v.Append(EndStr(MoveAway) + EndStr(ListensTo), 3); }
+                else if (total >= 200) { if (old < 200) v.Append(EndStr(KeepItDown) + EndStr(ListensTo), 2); }
+                else if (old < 100) v.Append(EndStr(GoAllTheWay) + EndStr(ListensTo), 2);
             }
             if (total >= 700)
             {
@@ -2084,19 +2336,19 @@ namespace DW1Remake.Game
                 // same words split into rows that fit, a space between the pieces, and the row count it really has
                 if (pct.Length > 0)
                 {
-                    string colour = "", bonus = _endStr[MpBonus], end = _endExtra[6];
+                    string colour = "", bonus = EndStr(MpBonus), end = _endExtra[6];
                     if (bonus.StartsWith("#C") && bonus.Length >= 3) { colour = bonus.Substring(0, 3); bonus = bonus.Substring(3); }
                     if (end.EndsWith("#W")) end = end.Substring(0, end.Length - 2);
                     var words = new List<string>(bonus.Split(' '));
-                    words.AddRange(_endStr[ReducedBy].Split(' '));
+                    words.AddRange(EndStr(ReducedBy).Split(' '));
                     // the US font has no '%' glyph (drawGlyph falls on a button icon): "percent" instead (user's decision 2026-11-09)
                     words.Add(pct);
-                    words.Add(end.Replace("%", "percent"));
+                    words.Add(end.Replace("%", Tr.Chinese ? "％" : "percent"));
                     int rows;
                     v.Append(colour + v.WrapRows(words.ToArray(), out rows) + "#W", rows);
                 }
             }
-            if (_learned != null) v.Append(yellow + _learned + _endStr[Learned], 2);
+            if (_learned != null) v.Append(yellow + _learned + EndStr(Learned), 2);
         }
 
         // POLLED_INPUT == CONFIRM_BUTTON or CANCEL_BUTTON, newly
@@ -2493,6 +2745,9 @@ namespace DW1Remake.Game
         void Hud()
         {
             if (Art == null) return;
+            // mod 16:9 (ours): the HP / MP and the finishing gauge in the top right corner of the wider view, the orders in the top left
+            var hudMatrix = GUI.matrix;
+            GUI.matrix = hudMatrix * Matrix4x4.Translate(new Vector3(UiKit.EdgeShift(1), 0f, 0f));
             // partner HP and MP, top right (BTL_renderPartnerStatusBars)
             for (int bar = 0; bar < 2; bar++)
             {
@@ -2506,6 +2761,7 @@ namespace DW1Remake.Game
                 }
                 Art.Number(Mathf.RoundToInt(now), x0 + 0x49, y0 - 3);
             }
+            GUI.matrix = hudMatrix * Matrix4x4.Translate(new Vector3(UiKit.EdgeShift(-1), 0f, 0f));
             // the order icons, top left, in the game's zigzag, with the cursor (BTL_renderCommandMenu)
             int n = _orders.Count + 1, count = n - 1, baseX = count * 14 - 140, top = -100, bottom = -68;
             bool blink = (int)(_time * 20f / 8f) % 2 == 1;
@@ -2531,11 +2787,13 @@ namespace DW1Remake.Game
                 Art.Cursor(baseX - _hover * 14 - 3, upper ? -0x64 : -0x5a);
             }
             // BTL_drawHoveredCommandName: the hovered name in the game's font, colour 0, at (-0x8C, -0x42), in a 0x90-wide slice of the text page
-            if (_phase == Phase.Fight) PsText(ClipTo(_orders[_hover - 1], 0x90), -0x8C, -0x42, Tinted(0x80, 0x80, 0x80));
+            if (_phase == Phase.Fight) PsText(ClipTo(OrderZh(_orders[_hover - 1]), 0x90), -0x8C, -0x42, Tinted(0x80, 0x80, 0x80));
+            GUI.matrix = hudMatrix * Matrix4x4.Translate(new Vector3(UiKit.EdgeShift(1), 0f, 0f));
             // the finishing-move gauge: F, FI ... FINISH, then !! and PUSH (BTL_renderFinisherGauge)
             int letters = Mathf.Clamp(Partner.Finish * 6 / Mathf.Max(1, Partner.FinishMax), 0, 6);
             if (letters == 6) { letters = 8; Art.Hud(2, 128, 8, 37, 9, 0x6e, -0x4b); }
             for (int i = 0; i < letters; i++) Art.Hud(12, FinishU[i], 29, FinishW[i], 15, FinishU[i] + 0x37, -0x4f);
+            GUI.matrix = hudMatrix;
             // the charge bar over the partner's head (BTL_renderFinisherChargeup), up to 10 ticks
             if (_charging && _chargeBy == Partner && _view != null)
             {

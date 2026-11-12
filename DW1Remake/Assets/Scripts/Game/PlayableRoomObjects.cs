@@ -317,6 +317,9 @@ namespace DW1Remake.Game
         // the screen (isOffScreen: within 160 x 120 of the picture's middle); model 10's other half goes with it. YAKA26's DOOR16 stands 225
         // units in front of the camera with every corner off the screen: the PS1 never draws it; ours drew it over half the dining room
         // (user's screenshot 2026-11-11). Once a frame, after the camera is placed.
+        // with the mod 16:9 the picture is 240 x 16 / 9 PS1 pixels wide: doors in the new side parts are drawn too
+        static float halfW { get { return ModSettings.Widescreen ? 120f * 16f / 9f : 160f; } }
+
         void CullDoors()
         {
             if (_doors.Count == 0 || _map == null || _h == 0f) return;
@@ -340,7 +343,7 @@ namespace DW1Remake.Game
                 {
                     Vector2 s = RtpsPoint(new Vector3(x + width * DirectionFactors[j, 0], y - i * height, z + width * DirectionFactors[j, 1]));
                     float sx = s.x - viewX, sy = s.y - viewY;
-                    if (!(sx < -160f || sx > 160f || sy < -120f || sy > 120f)) return false;     // isOffScreen(screen, 320, 240) == 0
+                    if (!(sx < -halfW || sx > halfW || sy < -120f || sy > 120f)) return false;     // isOffScreen(screen, 320, 240) == 0 (wider with the mod 16:9: halfW)
                 }
             return true;
         }

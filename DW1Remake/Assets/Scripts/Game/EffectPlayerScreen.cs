@@ -522,7 +522,7 @@ namespace DW1Remake.Game
             int c = Pop();
             var p = ScreenRect(-160, -120, 320, 240, 0xFFE);
             p.Attr = 6; p.Col = Tex128(c, c, c);
-            if (_spot != null) { p.Tex = _spot; p.TexW = _spot.width; p.TexH = _spot.height; p.Uv = new[] { new Vector2(0, 0), new Vector2(3, 0), new Vector2(0, 3), new Vector2(3, 3) }; }
+            if (_spot != null) { p.Tex = _spot; p.TexW = TimImage.W(_spot); p.TexH = TimImage.H(_spot); p.Uv = new[] { new Vector2(0, 0), new Vector2(3, 0), new Vector2(0, 3), new Vector2(3, 3) }; }
         }
 
         // ---------------------------------------------------------------- drawing

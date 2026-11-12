@@ -53,8 +53,8 @@ namespace DW1Remake.Game
         {
             int types = 0, joined = 0;
             foreach (var r in All) foreach (int t in r.Types) { types++; if (s.GetFlag(0xC8 + t)) joined++; }
-            UiKit.Text(new Rect(80, 160, 800, 50), "File City  " + joined + " / " + types + " joined", 34, UiKit.Yellow);
-            UiKit.Text(new Rect(700, 160, 640, 50), "Prosperity  " + s.Vars[1] + " (all recruits: " + Total + ")", 34, UiKit.Yellow, TextAnchor.UpperRight);
+            UiKit.Text(new Rect(80, 160, 800, 50), (Tr.Chinese ? "檔案城  已加入 " + joined + " / " + types : "File City  " + joined + " / " + types + " joined"), 34, UiKit.Yellow);
+            UiKit.Text(new Rect(700, 160, 640, 50), (Tr.Chinese ? "繁榮度  " + s.Vars[1] + "（全部招募：" + Total + "）" : "Prosperity  " + s.Vars[1] + " (all recruits: " + Total + ")"), 34, UiKit.Yellow, TextAnchor.UpperRight);
             const float x0 = 80, y0 = 222, colW = 318, rowH = 49;
             int rows = Mathf.CeilToInt(types / 4f), i = 0;
             bool together = false;
@@ -71,14 +71,14 @@ namespace DW1Remake.Game
                     UiKit.Text(new Rect(x + colW - 80, y, 70, rowH), pts, 26, on ? Joined : NotYet, TextAnchor.UpperRight);
                     i++;
                 }
-            string foot = "Green: joined.  Grey: not yet.  +n: prosperity points it brings.";
+            string foot = Tr.Chinese ? "綠色：已加入。  灰色：尚未加入。  +n：帶來的繁榮度。" : "Green: joined.  Grey: not yet.  +n: prosperity points it brings.";
             if (together)
                 foreach (var r in All)
                     if (r.Types.Length > 1)
                     {
                         string names = "";
-                        for (int k = 0; k < r.Types.Length; k++) { var info = DigimonStatsCatalog.Get(disc, r.Types[k]); names += (k == 0 ? "" : k == r.Types.Length - 1 ? " and " : ", ") + (info != null ? info.Name : "#" + r.Types[k]); }
-                        foot += "  *" + names + " join together in one event for " + r.Points + " points.";
+                        for (int k = 0; k < r.Types.Length; k++) { var info = DigimonStatsCatalog.Get(disc, r.Types[k]); names += (k == 0 ? "" : k == r.Types.Length - 1 ? (Tr.Chinese ? "和" : " and ") : (Tr.Chinese ? "、" : ", ")) + (info != null ? info.Name : "#" + r.Types[k]); }
+                        foot += Tr.Chinese ? "  *" + names + "在同一個事件中一起加入，共 " + r.Points + " 點。" : "  *" + names + " join together in one event for " + r.Points + " points.";
                     }
             UiKit.Text(new Rect(80, y0 + rowH * rows + 6, 1260, 80), foot, 22, NotYet, TextAnchor.UpperLeft, true);
         }

@@ -284,7 +284,7 @@ namespace DW1Remake.Game
             if (addMat == null) return false;
             mesh.Clear();
             mesh.vertices = new[] { ToUnity(g0), ToUnity(g1), ToUnity(g2) };
-            float w = _defEff.width, h = _defEff.height;
+            float w = TimImage.W(_defEff), h = TimImage.H(_defEff);
             mesh.uv = new[] { new Vector2(0x5F / w, 1f - 32f / h), new Vector2(0x5F / w, 1f - 39f / h), new Vector2(0x30 / w, 1f - 32f / h) };
             mesh.triangles = new[] { 0, 1, 2 };
             mesh.RecalculateBounds();
@@ -339,7 +339,7 @@ namespace DW1Remake.Game
         {
             if (!_evoFront || !_front || _frontRt == null) return;
             SyncFrontCamera();
-            if (Event.current.type == EventType.Repaint) GUI.DrawTexture(UiKit.Picture, _frontRt, ScaleMode.StretchToFill, true);
+            if (Event.current.type == EventType.Repaint) GUI.DrawTexture(UiKit.View, _frontRt, ScaleMode.StretchToFill, true);
         }
 
         void SetPartnerTint(Color c)

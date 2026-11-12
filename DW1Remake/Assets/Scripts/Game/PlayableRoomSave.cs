@@ -20,6 +20,7 @@ namespace DW1Remake.Game
             public readonly List<RectInt> Boxes = new List<RectInt>();
             public int CurX, CurY, CurW, CurH, RowH, Rows, Max, Pos, Scroll;
             public bool HasCursor;
+            public bool Sides;      // ours (OPTIONS): left / right end Ask with 3 / 4
             public System.Action<SysScreen> Refresh;      // redraws the texts when the list scrolls (drawRegisteredDigimonSlots)
             public void Text(string s, int x, int y) { Texts.Add(new KeyValuePair<Vector2, string>(new Vector2(x, y), s)); }
             public readonly Dictionary<int, int> Width = new Dictionary<int, int>();   // renderText shows only this many pixels of the text page
@@ -51,6 +52,7 @@ namespace DW1Remake.Game
             while (true)
             {
                 int step = MenuStep();
+                int pos0 = s.Pos, scroll0 = s.Scroll;
                 if (s.HasCursor && step < 0)
                 {
                     if (s.Pos > 0) { s.Pos--; Snd(2); }
@@ -61,6 +63,10 @@ namespace DW1Remake.Game
                     if (s.Pos < s.Rows - 1) { s.Pos++; Snd(2); }
                     else if (s.Scroll < s.Max) { s.Scroll++; Snd(2); if (s.Refresh != null) s.Refresh(s); }
                 }
+                // ours: a page that redraws itself (OPTIONS' help box) is told about every cursor move, not only scrolling
+                if (s.Refresh != null && s.Pos != pos0 && s.Scroll == scroll0) s.Refresh(s);
+                if (s.Sides && Pad.Pressed(PadButton.Left)) { answer(3); break; }
+                if (s.Sides && Pad.Pressed(PadButton.Right)) { answer(4); break; }
                 if (GameMenus.CancelKey()) { Snd(4); answer(2); break; }
                 if (ActionPressed()) { Snd(3); answer(1); break; }
                 yield return null;
@@ -292,7 +298,8 @@ namespace DW1Remake.Game
                 }
                 Color ink = font != null ? font.Ink : Color.white;
                 if (_sys.Dim.Contains(i)) ink = new Color(ink.r * 0.5f, ink.g * 0.5f, ink.b * 0.5f, ink.a);
-                if (font != null) font.Draw(t.Value, SysX(t.Key.x), SysY(t.Key.y), 4.42f, ink);
+                if (HasCjk(t.Value) && (font == null || !font.HasChinese) && CjkFont != null) DrawCjk(t.Value, SysX(t.Key.x), SysY(t.Key.y), ink);      // ours: Traditional Chinese (PlayableRoomOptions)
+                else if (font != null) font.Draw(t.Value, SysX(t.Key.x), SysY(t.Key.y), 4.42f, ink);
                 else UiKit.Text(new Rect(SysX(t.Key.x), SysY(t.Key.y) - 8, 1000, 62), t.Value, 48, Color.white, TextAnchor.UpperLeft);
             }
             if (_sys.HasCursor)

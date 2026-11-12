@@ -21,6 +21,7 @@ namespace DW1Remake.Formats
         public int Type, FollowMode, RotY, Script, Tracking;   // Tracking: record +16, how far it notices the boy, game units
         public int Hp, Mp, Off, Def, Spd, Brain, Bits;      // the fight numbers of this Digimon on this map (record +22 ...)
         public int[] MoveSlots = new int[4], MoveChance = new int[4];   // its techniques as animation slots (255 = none) and how often each is picked
+        public int Rec42;                                     // record +42, NPCEntity.unk1 (overworld.c): 1 = in a fight it never turns on another enemy and gets no wide-technique weight
         public Vector3 Pos;                                   // game units
         public Vector3 Flee;                                  // record +60: where it runs to when it will not join a fight (NPCEntity.flee)
         public System.Collections.Generic.List<Vector3> Waypoints = new System.Collections.Generic.List<Vector3>();
@@ -130,6 +131,7 @@ namespace DW1Remake.Formats
                             Hp = S16(map, q + 22), Mp = S16(map, q + 24), Off = S16(map, q + 30), Def = S16(map, q + 32), Spd = S16(map, q + 34), Brain = S16(map, q + 36), Bits = S16(map, q + 38)
                         };
                         for (int k = 0; k < 4; k++) { d.MoveSlots[k] = S16(map, q + 44 + k * 2); d.MoveChance[k] = S16(map, q + 52 + k * 2); }
+                        d.Rec42 = S16(map, q + 42);
                         d.Flee = new Vector3(S16(map, q + 60), S16(map, q + 62), S16(map, q + 64));
                         for (int k = 0; k < 8; k++) d.AiSections[k] = (short)S16(map, q + 68 + 2 * k);
                         for (int w = 0; w < wc && w < 32 && q + 84 + 6 * w + 6 <= map.Length; w++)

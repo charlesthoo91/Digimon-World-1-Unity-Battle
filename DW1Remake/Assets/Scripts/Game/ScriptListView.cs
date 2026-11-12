@@ -66,7 +66,8 @@ namespace DW1Remake.Game
         }
 
         // padWithSpaces (US): width minus half the name's length in bytes, in full-width spaces
-        static string Pad(string s, int width) { int n = width - s.Length / 2; return n > 0 ? new string(' ', n) : ""; }
+        // ours (translation): a Chinese name is one 12-pixel cell a character (a space after it moves on 12), so it pads by its length
+        static string Pad(string s, int width) { int n = width - (DW1Remake.Formats.Tr.HasCjk(s) ? s.Length : s.Length / 2); return n > 0 ? new string(' ', n) : ""; }
 
         public void Open(Kind mode, RectInt origin)
         {

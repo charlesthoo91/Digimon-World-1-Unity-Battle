@@ -642,7 +642,7 @@ namespace DW1Remake.Game
             }
         }
 
-        static Vector2 Uv(Texture2D t, int u, int v) { return new Vector2(u / (float)t.width, 1f - v / (float)t.height); }
+        static Vector2 Uv(Texture2D t, int u, int v) { return new Vector2(u / TimImage.W(t), 1f - v / TimImage.H(t)); }
 
         readonly Dictionary<Fighter, Mesh> _flatMeshes = new Dictionary<Fighter, Mesh>();
         Mesh FlatQuadFor(Fighter f)

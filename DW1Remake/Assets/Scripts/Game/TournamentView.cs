@@ -204,10 +204,11 @@ namespace DW1Remake.Game
         // STD_addTimeoutWindow: "Gave" at (6, 0), "Damage" at (0, 12), the names centred in 120 pixels at rows 24 and 36
         void DrawTimeUpText(Color32[] px, Color32 white)
         {
-            DrawCoded(px, GaveText, 6, 0, white);
-            DrawCoded(px, DamageText, 0, 12, white);
-            DrawCoded(px, PartnerName, Mathf.Max(0, (120 - PartnerName.Length * 6) / 2), 24, white);
-            DrawCoded(px, EnemyName, Mathf.Max(0, (120 - EnemyName.Length * 6) / 2), 36, white);
+            // ours: the English label (PlayableRoomTournament) centred in the 48 pixels the original's two Japanese rows had
+            DrawCoded(px, GaveText, Font != null ? Mathf.Max(0, (48 - Font.Measure(GaveText)) / 2) : 6, 0, white);
+            DrawCoded(px, DamageText, Font != null ? Mathf.Max(0, (48 - Font.Measure(DamageText)) / 2) : 0, 12, white);
+            DrawCoded(px, PartnerName, Mathf.Max(0, (120 - Tr.Cells(Tr.Text(PartnerName)) * 6) / 2), 24, white);
+            DrawCoded(px, EnemyName, Mathf.Max(0, (120 - Tr.Cells(Tr.Text(EnemyName)) * 6) / 2), 36, white);
         }
 
         // STD_renderTimeoutWindow: the two names, "Gave Damage" (48 x 24) in the middle, each one's damage under its name

@@ -57,7 +57,7 @@ namespace DW1Remake.Formats
 
         static void Draw(Texture2D t, float u, float v, float w, float h, float x, float y, float dw, float dh, float sheet = 256f)
         {
-            var uv = new Rect(u / sheet, 1f - (v + h) / t.height, w / sheet, h / t.height);
+            var uv = new Rect(u / sheet, 1f - (v + h) / TimImage.H(t), w / sheet, h / TimImage.H(t));
             GUI.DrawTextureWithTexCoords(new Rect(MiddleX + x * Scale, MiddleY + y * Scale, dw * Scale, dh * Scale), t, uv);
         }
 
@@ -96,7 +96,7 @@ namespace DW1Remake.Formats
                 _condMat[row, abr & 3] = m;
             }
             var t = _condLayer[row, 2];
-            var uv = new Rect(u / 256f, 1f - (v - 128f + h) / t.height, w / 256f, h / t.height);
+            var uv = new Rect(u / 256f, 1f - (v - 128f + h) / TimImage.H(t), w / 256f, h / TimImage.H(t));
             Graphics.DrawTexture(new Rect(MiddleX + x * Scale, MiddleY + y * Scale, dw * Scale, dh * Scale), t, uv, 0, 0, 0, 0, m);
         }
 
@@ -119,7 +119,7 @@ namespace DW1Remake.Formats
                 _hudMat[row, abr & 3] = m;
             }
             var t = _hudLayer[row, 2];
-            var uv = new Rect(u / 256f, 1f - (v + h) / t.height, w / 256f, h / t.height);
+            var uv = new Rect(u / 256f, 1f - (v + h) / TimImage.H(t), w / 256f, h / TimImage.H(t));
             Graphics.DrawTexture(new Rect(MiddleX + x * Scale, MiddleY + y * Scale, dw * Scale, dh * Scale), t, uv, 0, 0, 0, 0, m);
         }
 
@@ -146,15 +146,17 @@ namespace DW1Remake.Formats
             if (_clock[row] == null) _clock[row] = _clockTim.ToTexture(row);
             var t = _clock[row];
             float top = v0 - 192f, bottom = v1 - 192f;
-            var uv = new Rect(u0 / 256f, 1f - bottom / t.height, (u1 - u0) / 256f, (bottom - top) / t.height);
+            var uv = new Rect(u0 / 256f, 1f - bottom / TimImage.H(t), (u1 - u0) / 256f, (bottom - top) / TimImage.H(t));
             GUI.DrawTextureWithTexCoords(new Rect(MiddleX + x * Scale, MiddleY + y * Scale, w * Scale, h * Scale), t, uv);
         }
 
-        /// <summary>The minute hand (CLOCK_SPRITE): 8 x 16 at 120, 192 of the clock sheet, colour row 3, turning about its point 3, 13 which sits at x, y.</summary>
-        public void ClockHand(float x, float y, float degrees)
+        /// <summary>The minute hand (CLOCK_SPRITE): 8 x 16 at 120, 192 of the clock sheet, colour row 3, turning about its point 3, 13 which sits at x, y.
+        /// groupX: the x offset of a GUI group it is drawn in (the 16:9 corner): the group moves what is drawn, so the turning point moves with it
+        /// (without it the hand swung round its 4:3 place, user's clip 2026-11-12).</summary>
+        public void ClockHand(float x, float y, float degrees, float groupX = 0f)
         {
             if (_clockTim == null) return;
-            var c = new Vector3(MiddleX + x * Scale, MiddleY + y * Scale, 0f);
+            var c = new Vector3(groupX + MiddleX + x * Scale, MiddleY + y * Scale, 0f);
             Matrix4x4 m = GUI.matrix;
             GUI.matrix = m * Matrix4x4.TRS(c, Quaternion.Euler(0, 0, degrees), Vector3.one) * Matrix4x4.Translate(-c);
             Clock(3, 120, 192, 8, 16, x - 3, y - 13);
@@ -186,7 +188,7 @@ namespace DW1Remake.Formats
             }
             var t = _cmdLayer[row, 2];
             _cmdHalf.mainTexture = t;
-            var uv = new Rect(u / 256f, 1f - (v + h) / t.height, w / 256f, h / t.height);
+            var uv = new Rect(u / 256f, 1f - (v + h) / TimImage.H(t), w / 256f, h / TimImage.H(t));
             Graphics.DrawTexture(new Rect(MiddleX + x * Scale, MiddleY + y * Scale, w * Scale, h * Scale), t, uv, 0, 0, 0, 0, _cmdHalf);
         }
 

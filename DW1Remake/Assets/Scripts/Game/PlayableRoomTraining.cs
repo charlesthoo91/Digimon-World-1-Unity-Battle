@@ -49,7 +49,20 @@ namespace DW1Remake.Game
             return slots[kind];
         }
 
+        bool _trainFxOn;     // the gym's sparks and dust are stepped and drawn (LateUpdate) while true
+
         IEnumerator Training(int kind)
+        {
+            _trainFxOn = true;
+            try
+            {
+                var e = TrainingSteps(kind);
+                while (e.MoveNext()) yield return e.Current;
+            }
+            finally { _trainFxOn = false; }
+        }
+
+        IEnumerator TrainingSteps(int kind)
         {
             if (_audio != null) { _audio.Play(8, 9); }
             if (kind < 0 || kind > 5) { _syncBit = true; yield break; }
@@ -395,7 +408,7 @@ namespace DW1Remake.Game
             var p = _slot;
             UiKit.Begin();
             Func<float, float> px = v => 707.5f + v * 4.42f, py = v => 530f + v * 4.42f;
-            float tw = _slotTex.width, th = _slotTex.height;
+            float tw = DW1Remake.Formats.TimImage.W(_slotTex), th = DW1Remake.Formats.TimImage.H(_slotTex);
             for (int i = 0; i < 3; i++)
             {
                 int cx = 41 * i - 41;

@@ -1,0 +1,92 @@
+# Our own texts (not from the disc): English exactly as the C# code has it (\n = a line break, {0} {1} = values), Chinese.
+# tools/text_build.py adds them to the shipped file; the code passes them through Tr.Text / Tr.Format (or the game font does).
+english	chinese
+Return to the title screen?	要回到標題畫面嗎？
+Anything not saved is lost.	沒有存檔的進度都會消失。
+MEMORY CARD 1	記憶卡 1
+MEMORY CARD 2	記憶卡 2
+EXPORT SAVE	匯出存檔
+IMPORT SAVE	匯入存檔
+EXPORT  CARD {0}	匯出  記憶卡 {0}
+IMPORT  CARD {0}	匯入  記憶卡 {0}
+MEMORY CARD FILE	記憶卡檔案
+The save goes to your downloads as {0}. If a file of that name is already there, the browser keeps both or asks you.	存檔會以 {0} 存到你的下載資料夾。如果已有同名檔案，瀏覽器會兩個都保留或詢問你。
+Your Downloads folder already has {0}. It will be replaced by this save. Go on?	你的下載資料夾已經有 {0}。它會被這個存檔取代。要繼續嗎？
+The save goes to your Downloads folder as {0}. A file there with the same name would be replaced. Go on?	存檔會以 {0} 存到你的下載資料夾。同名的檔案會被取代。要繼續嗎？
+The save could not be read.	無法讀取存檔。
+The save could not be written.	無法寫入存檔。
+The save is in your Downloads folder: {0}	存檔已存到你的下載資料夾：{0}
+That file is not a save of this game or a memory card file.	這個檔案不是本遊戲的存檔，也不是記憶卡檔案。
+No Digimon World (USA) save on that memory card.	這張記憶卡上沒有數碼寶貝世界（美版）的存檔。
+That file is not a save of this game.	這個檔案不是本遊戲的存檔。
+Slot {0} of memory card {1} holds {2} and {3}. That save will be replaced by the imported one and cannot be brought back. Go on?	記憶卡 {1} 的欄位 {0} 有 {2} 和 {3} 的存檔。它會被匯入的存檔取代，而且無法復原。要繼續嗎？
+a Digimon	一隻數碼寶貝
+The save is in memory card {0}, slot {1}.	存檔已放進記憶卡 {0} 的欄位 {1}。
+TOUCH BUTTONS	觸控按鈕
+KEYBOARD KEYS	鍵盤按鍵
+CONTROLLER KEYS	手把按鍵
+PRESS A BUTTON	請按一個按鈕
+PRESS A KEY	請按一個按鍵
+OFF	關
+ON	開
+AUTO	自動
+ONLINE BATTLE	線上對戰
+Battle with a friend online,\nor enter a tournament?	要和朋友線上對戰，\n還是參加大賽？
+Online battle	線上對戰
+Tournament	大賽
+Leave	離開
+One of you hosts and the other joins. You swap two codes by chat or e-mail.	一人主持，另一人加入。透過聊天或電子郵件交換兩組代碼。
+Host. I make the first code.	主持。我來產生第一組代碼。
+Join. My friend has a code.	加入。我朋友有代碼。
+Linked.   Ping {0} ms	已連線。   延遲 {0} 毫秒
+Last match   {0}	上一場   {0}
+Waiting for your friend's Digimon...	等待朋友的數碼寶貝……
+Friend   {0}   {1}	朋友   {0}   {1}
+Off {0}  Def {1}  Spd {2}  Brn {3}	攻 {0}  防 {1}  速 {2}  智 {3}
+Orders   {0}	命令   {0}
+Orders ON	命令：開
+The host chooses the orders.	由主持者決定是否下命令。
+Battle!	開戰！
+Starting...	開始中……
+Waiting for your friend's Battle!...	等待朋友按下開戰……
+Try again	再試一次
+Your code	你的代碼
+Your reply code	你的回覆代碼
+Copy my code	複製我的代碼
+Your code is copied.	已複製你的代碼。
+Paste reply code	貼上回覆代碼
+Paste friend's code	貼上朋友的代碼
+Nothing to paste. Copy the code again.	沒有可貼上的內容。請再複製一次代碼。
+Close	關閉
+You won!	你贏了！
+You lost.	你輸了。
+The link was lost.	連線中斷了。
+A draw.	平手。
+Waiting for your friend to finish the introductions...	等待朋友看完出場介紹……
+Finding your internet address...	正在尋找你的網路位址……
+Paste your friend's code. Then send them the reply code you get.	貼上朋友的代碼，然後把你得到的回覆代碼傳給他。
+Your friend has a different version of the game.	你朋友的遊戲版本不同。
+That is not a link code. Copy your friend's code and paste it again.	這不是連線代碼。請重新複製並貼上朋友的代碼。
+Your friend's code has no internet address. They should make a new one.	朋友的代碼沒有網路位址。請他重新產生一組。
+Linking...	連線中……
+Making your reply code...	正在產生你的回覆代碼……
+Your internet address could not be found. Check that the game is allowed through the firewall.	找不到你的網路位址。請確認防火牆允許本遊戲連線。
+Your link code could not be made. Check that the game is allowed through the firewall.	無法產生你的連線代碼。請確認防火牆允許本遊戲連線。
+No internet address was found. Check that the game is allowed through the firewall.	找不到網路位址。請確認防火牆允許本遊戲連線。
+Send your code to your friend, then paste their reply code.	把你的代碼傳給朋友，然後貼上他的回覆代碼。
+Send this reply code to your friend. The link starts when they paste it.	把這組回覆代碼傳給朋友。他貼上後就會開始連線。
+Linked with your friend.	已和朋友連線。
+Your friend's game could not be reached. Check both codes, and that the game is allowed through the firewall.	無法連到朋友的遊戲。請檢查兩組代碼，並確認防火牆允許本遊戲連線。
+Your friend left.	朋友離開了。
+The link was lost. Nothing came from your friend for 10 seconds.	連線中斷了。10 秒內沒有收到朋友的任何訊息。
+Select: close	SELECT：關閉
+Choose your Digimon World disc	選擇你的數碼寶貝世界光碟
+This remake needs your own copy of the USA PlayStation disc (SLUS-01032) as a .bin, .iso or .cue file.\nThe file is only read on this computer. Nothing from it is uploaded.	這個重製版需要你自己的美版 PlayStation 光碟（SLUS-01032），格式為 .bin、.iso 或 .cue 檔。\n檔案只會在這台電腦上讀取，不會上傳任何內容。
+Choose disc file...	選擇光碟檔案……
+Browse...	瀏覽……
+Use this disc	使用這張光碟
+Choose your disc image first.	請先選擇你的光碟映像檔。
+This file is not a PlayStation disc image (.bin or .iso).	這個檔案不是 PlayStation 光碟映像檔（.bin 或 .iso）。
+Looking for the disc you chose before ...	正在尋找你之前選擇的光碟……
+CONTROLLER	手把
+BACK	返回

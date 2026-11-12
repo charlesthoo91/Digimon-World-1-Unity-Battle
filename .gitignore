@@ -61,3 +61,7 @@ reference/
 
 # Python
 __pycache__/
+
+# Translation working files (they pair the disc's English with the Chinese: never in git)
+translation/*.work.tsv
+translation/batches/

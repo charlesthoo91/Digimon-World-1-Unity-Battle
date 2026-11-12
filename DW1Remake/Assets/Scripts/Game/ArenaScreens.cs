@@ -413,7 +413,7 @@ namespace DW1Remake.Game
             foreach (int k in order)
             {
                 GL.Color(col);
-                if (tex != null) GL.TexCoord2(uv[k].x / tex.width, 1f - uv[k].y / tex.height);
+                if (tex != null) GL.TexCoord2(uv[k].x / TimImage.W(tex), 1f - uv[k].y / TimImage.H(tex));
                 Vector2 s = Scr(p[k]);
                 GL.Vertex3(s.x, s.y, 0f);
             }
@@ -474,7 +474,7 @@ namespace DW1Remake.Game
             {
                 var tex = ModelScene;
                 var pts = new[] { new Vector2(-160, -120), new Vector2(160, -120), new Vector2(-160, 120), new Vector2(160, 120) };
-                var uvs = new[] { new Vector2(0, 0), new Vector2(tex.width, 0), new Vector2(0, tex.height), new Vector2(tex.width, tex.height) };
+                var uvs = new[] { new Vector2(0, 0), new Vector2(TimImage.W(tex), 0), new Vector2(0, TimImage.H(tex)), new Vector2(TimImage.W(tex), TimImage.H(tex)) };
                 Add(4, () => GlQuad(tex, pts, uvs, new Color32(128, 128, 128, 255), -1));
             }
             UiKit.Begin();

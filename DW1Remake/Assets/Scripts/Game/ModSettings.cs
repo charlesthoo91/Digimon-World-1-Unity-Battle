@@ -37,6 +37,26 @@ namespace DW1Remake.Game
         /// <summary>After a won wild fight (no flag 1, the enemies run off) the picture glides back to the boy; the original leaves it where the fight left it.</summary>
         public static bool FightRecentre { get { return Get("FightRecentre"); } set { Set("FightRecentre", value); } }
 
+        /// <summary>The map's picture is upscaled by an AI model on this PC's graphics card and kept for next time (PlayableRoomAiUpscale); PC only.</summary>
+        public static bool AiUpscale { get { return Get("AiUpscale"); } set { Set("AiUpscale", value); } }
+
+        /// <summary>The 3D view is 16:9 instead of the original 4:3: more of the map shows at the sides; the HUD and menus stay in the 4:3 middle (UiKit.View).</summary>
+        public static bool Widescreen { get { return Get("Widescreen"); } set { Set("Widescreen", value); } }
+
+        /// <summary>The master volume, 0 to 100 (OPTIONS > VOLUME; 100 = the game's own levels).</summary>
+        /// <summary>Ours (OPTIONS > SCREEN MODE, PC): 0 a window, 1 borderless full screen, 2 full screen.</summary>
+        public static int ScreenMode { get { return Mathf.Clamp(GetInt("ScreenMode", 1), 0, 2); } set { SetInt("ScreenMode", value); } }
+        /// <summary>Ours (OPTIONS > RESOLUTION, PC): 0 the screen's own, 1 1280x720, 2 1920x1080, 3 2560x1440, 4 3840x2160.</summary>
+        public static int Resolution { get { return Mathf.Clamp(GetInt("Resolution", 0), 0, 4); } set { SetInt("Resolution", value); } }
+
+        /// <summary>Ours (OPTIONS > STATUS NUMBERS): the Status page shows happiness, discipline and virus as numbers on their bars, and the life span left.</summary>
+        public static bool StatusNumbers { get { return Get("StatusNumbers"); } set { Set("StatusNumbers", value); } }
+
+        public static int Volume { get { return Mathf.Clamp(GetInt("Volume", 100), 0, 100); } set { SetInt("Volume", value); } }
+
+        /// <summary>The language of the OPTIONS page and the remake's own texts: 0 English, 1 Traditional Chinese (the disc's texts stay English).</summary>
+        public static int Language { get { return GetInt("Language", 0); } set { SetInt("Language", value); } }
+
         // ---- controls (MODS > CONTROLS; Pad, TouchPadView). These change only how the pad is pressed, not the game, so they start usable:
         // a player with only a touch screen or only a controller must be able to reach this page.
 

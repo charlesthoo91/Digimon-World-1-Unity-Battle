@@ -49,6 +49,36 @@ namespace DW1Remake.Game
         public void Remove() { CloseNow(Box); }
 
         /// <summary>Our own digital clock plate (the game has none; the user allowed it): a static UI box with the time in the game's font.</summary>
+        // ours: the game's font has no '%' (its 79 glyphs keep only space ! + , - . : ; = ? \ of the signs; any other falls on the last glyph,
+        // a triangle), so our mods' plates draw this one, in the font's 12 x 11 cell and ink
+        static readonly string[] PercentRows =
+        {
+            "..........",
+            ".##.....#.",
+            "#..#...#..",
+            "#..#..#...",
+            ".##..#....",
+            "....#.....",
+            "...#..##..",
+            "..#..#..#.",
+            ".#...#..#.",
+            "#.....##..",
+            "..........",
+        };
+        const int PercentWidth = 10;
+
+        static void DrawPercent(Color32[] page, int x, Color32 ink)
+        {
+            for (int r = 0; r < PercentRows.Length; r++)
+                for (int c = 0; c < 12; c++)
+                {
+                    int px = x + c;
+                    if (px < 0 || px >= 256) continue;
+                    bool on = c < PercentRows[r].Length && PercentRows[r][c] == '#';
+                    page[(256 - 1 - r) * 256 + px] = on ? ink : new Color32(0, 0, 0, 0);
+                }
+        }
+
         public void ShowText(RectInt rect, string text)
         {
             if (Box.State != 1) { OpenStatic(Box, rect, 2 << 4); Box.Color = 0; Box.Features = 2; }
@@ -57,13 +87,17 @@ namespace DW1Remake.Game
             BuildPage(text, px =>
             {
                 if (Font == null) return;
-                for (int i = 0; i < text.Length; i++) Font.Render(text[i].ToString(), px, 256, 256, i * 12, 0, Font.Colour(1));
+                for (int i = 0; i < text.Length; i++)
+                {
+                    if (text[i] == '%') DrawPercent(px, i * 12, Font.Colour(1));
+                    else Font.Render(text[i].ToString(), px, 256, 256, i * 12, 0, Font.Colour(1));
+                }
             });
             const float k = 0.5f;
             var adv = new float[text.Length]; float tw = 0f;
             for (int i = 0; i < text.Length; i++)
             {
-                int m = Font != null ? Font.Measure(text[i].ToString()) : 8;
+                int m = text[i] == '%' ? PercentWidth : Font != null ? Font.Measure(text[i].ToString()) : 8;
                 adv[i] = Mathf.Clamp(m, 4, 12) * k + 0.5f; tw += adv[i];
             }
             Draw(() =>

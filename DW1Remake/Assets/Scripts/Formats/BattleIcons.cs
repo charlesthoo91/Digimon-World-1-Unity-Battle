@@ -25,7 +25,7 @@ namespace DW1Remake.Formats
         /// <summary>Texture area of the icon in column col (0-15) of row 0 or 1; frame 0 or 1 picks the animation frame.</summary>
         public Rect Uv(int col, int row, int frame = 0)
         {
-            float w = 16f / Sheet.width, h = 16f / Sheet.height;
+            float w = 16f / TimImage.W(Sheet), h = 16f / TimImage.H(Sheet);
             return new Rect((col + frame) * w, 1f - (row + 1) * h, w, h);
         }
     }

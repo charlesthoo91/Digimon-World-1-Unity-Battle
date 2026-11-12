@@ -197,7 +197,7 @@ namespace DW1Remake.Game
                             if (f.Row != row) continue;
                             int k = fv.Count;
                             fv.Add(a); fv.Add(b); fv.Add(c);
-                            for (int q = 0; q < 3; q++) fu.Add(new Vector2((f.U[q] + 0.5f) / _eggTex[0].width, 1f - (f.T[q] + 0.5f) / _eggTex[0].height));
+                            for (int q = 0; q < 3; q++) fu.Add(new Vector2((f.U[q] + 0.5f) / TimImage.W(_eggTex[0]), 1f - (f.T[q] + 0.5f) / TimImage.H(_eggTex[0])));
                             ft.Add(k); ft.Add(k + 2); ft.Add(k + 1);
                         }
                         else if (row == 0 && !f.Second)
@@ -264,7 +264,7 @@ namespace DW1Remake.Game
                     {
                         int vi = f.V[q];
                         v.Add(ToUnity(new Vector3(s.Part.Verts[vi * 3] + s.OffX[j], s.Part.Verts[vi * 3 + 1] + s.OffY[j], s.Part.Verts[vi * 3 + 2] + s.OffZ[j])));
-                        uv.Add(new Vector2((f.U[q] + 0.5f) / _eggTex[0].width, 1f - (f.T[q] + 0.5f) / _eggTex[0].height));
+                        uv.Add(new Vector2((f.U[q] + 0.5f) / TimImage.W(_eggTex[0]), 1f - (f.T[q] + 0.5f) / TimImage.H(_eggTex[0])));
                     }
                     t.Add(k); t.Add(k + 2); t.Add(k + 1);
                 }

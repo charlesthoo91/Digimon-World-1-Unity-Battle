@@ -184,7 +184,20 @@ namespace DW1Remake.Formats
             tex.wrapMode = TextureWrapMode.Clamp;
             tex.SetPixels32(GetPixels(palette));
             tex.Apply();
+            if (Made != null) Made(tex, _layer);        // mod AI UPSCALE (ours): queued to be made sharp in place later
             return tex;
         }
+
+        /// <summary>Mod AI UPSCALE (ours): told about every texture made from a TIM (it may later be upscaled in place, Texture2D.Reinitialize).</summary>
+        public static Action<Texture2D, int> Made;      // the texture and its layer (0 all, 1 solid, 2 the colours the PS1 blends)
+
+        static readonly Dictionary<Texture, Vector2Int> _logical = new Dictionary<Texture, Vector2Int>();
+
+        /// <summary>Marks an upscaled texture with the size of the disc's picture it stands for.</summary>
+        public static void SetLogical(Texture t, int w, int h) { if (t != null) _logical[t] = new Vector2Int(w, h); }
+        /// <summary>The texture's width in the disc's pixels (an upscaled one counts as the picture it replaces). Code that turns disc pixel
+        /// places into texture places must use W / H, never the texture's own width / height.</summary>
+        public static float W(Texture t) { Vector2Int s; return t != null && _logical.TryGetValue(t, out s) ? s.x : t.width; }
+        public static float H(Texture t) { Vector2Int s; return t != null && _logical.TryGetValue(t, out s) ? s.y : t.height; }
     }
 }

@@ -504,7 +504,7 @@ namespace DW1Remake.Game
         {
             _nameFrames = 4; _nameShown = 0; _nameY = 68; _nameOf = e; _introNameOn = true;
             var info = DigimonStatsCatalog.Get(_disc, e.Type);
-            _nameLen = (info != null ? info.Name.Length : 0) / 2;
+            _nameLen = (info != null ? Tr.Cells(info.Name) : 0) / 2;
             if (e.Type == 0x4E || e.Type == 0x3C) _nameLen = 10;
         }
 

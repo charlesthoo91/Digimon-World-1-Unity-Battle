@@ -132,36 +132,36 @@ namespace DW1Remake.Game
             _pickError.normal.textColor = new Color(1f, 0.55f, 0.45f);
 
             float w = Mathf.Min(Screen.width - 40f, 760f * s), x = (Screen.width - w) / 2f, y = Screen.height * 0.18f;
-            GUI.Label(new Rect(x, y, w, 50 * s), "Choose your Digimon World disc", _pickTitle);
+            GUI.Label(new Rect(x, y, w, 50 * s), DW1Remake.Formats.Tr.Text("Choose your Digimon World disc", "ours"), _pickTitle);
             y += 64 * s;
             GUI.Label(new Rect(x, y, w, 90 * s),
-                "This remake needs your own copy of the USA PlayStation disc (SLUS-01032) as a .bin, .iso or .cue file.\n" +
-                "The file is only read on this computer. Nothing from it is uploaded.", _pickText);
+                DW1Remake.Formats.Tr.Text("This remake needs your own copy of the USA PlayStation disc (SLUS-01032) as a .bin, .iso or .cue file.\n" +
+                "The file is only read on this computer. Nothing from it is uploaded.", "ours"), _pickText);
             y += 100 * s;
 
 #if UNITY_WEBGL && !UNITY_EDITOR
             // the browser's own choose-file box (WebFiles.PickDisc); the answer comes back in OnWebDisc
             var button = new GUIStyle(GUI.skin.button) { fontSize = _pickText.fontSize };
             float bh = 36 * s;
-            if (!_webReading && GUI.Button(new Rect(x + w / 2f - 130 * s, y, 260 * s, bh), "Choose disc file...", button))
+            if (!_webReading && GUI.Button(new Rect(x + w / 2f - 130 * s, y, 260 * s, bh), DW1Remake.Formats.Tr.Text("Choose disc file...", "ours"), button))
                 WebFiles.PickDisc(gameObject.name, "OnWebDisc");
             y += bh + 24 * s;
-            if (_webNote.Length > 0) { GUI.Label(new Rect(x, y, w, 40 * s), _webNote, _pickText); y += 44 * s; }
-            if (_picker != null && p.Error.Length > 0) GUI.Label(new Rect(x, y, w, 120 * s), p.Error, _pickError);
+            if (_webNote.Length > 0) { GUI.Label(new Rect(x, y, w, 40 * s), DW1Remake.Formats.Tr.Text(_webNote, "ours"), _pickText); y += 44 * s; }
+            if (_picker != null && p.Error.Length > 0) GUI.Label(new Rect(x, y, w, 120 * s), DW1Remake.Formats.Tr.Text(p.Error, "ours"), _pickError);
 #else
             var field = new GUIStyle(GUI.skin.textField) { fontSize = _pickText.fontSize };
             var button = new GUIStyle(GUI.skin.button) { fontSize = _pickText.fontSize };
             float bh = 36 * s;
             p.Path = GUI.TextField(new Rect(x, y, w - 150 * s, bh), p.Path, field);
-            if (GUI.Button(new Rect(x + w - 140 * s, y, 140 * s, bh), "Browse...", button))
+            if (GUI.Button(new Rect(x + w - 140 * s, y, 140 * s, bh), DW1Remake.Formats.Tr.Text("Browse...", "ours"), button))
             {
                 string got = BrowseForDisc();
                 if (!string.IsNullOrEmpty(got)) { p.Path = got; UsePickedDisc(); }
             }
             y += bh + 14 * s;
-            if (GUI.Button(new Rect(x + w / 2f - 110 * s, y, 220 * s, bh), "Use this disc", button)) UsePickedDisc();
+            if (GUI.Button(new Rect(x + w / 2f - 110 * s, y, 220 * s, bh), DW1Remake.Formats.Tr.Text("Use this disc", "ours"), button)) UsePickedDisc();
             y += bh + 24 * s;
-            if (_picker != null && p.Error.Length > 0) GUI.Label(new Rect(x, y, w, 120 * s), p.Error, _pickError);
+            if (_picker != null && p.Error.Length > 0) GUI.Label(new Rect(x, y, w, 120 * s), DW1Remake.Formats.Tr.Text(p.Error, "ours"), _pickError);
 #endif
         }
 

@@ -535,7 +535,9 @@ namespace DW1Remake.Game
             if (v != null)
             {
                 v.PartnerName = _menus != null ? _menus.PartnerName : _partnerName; v.EnemyName = foe.Name;
-                v.GaveText = Exe(StdStrDealt); v.DamageText = StdString(StdStrDamage);
+                // STD_addTimeoutWindow's label is still Japanese in the US build (exe 0x80134878, STD_REL 0x8007A658: "damage dealt"), which the US
+                // font cannot draw (every letter falls on its last glyph); ours, the user's choice 2026-11-12: an English label in its place
+                v.GaveText = "Damage"; v.DamageText = "dealt";
             }
             _fightFrames = 0;
             _battle.Start(_player, _anim, _partner, _partnerAnim, _menus != null ? _menus.PartnerName : _partnerName, DigimonStatsCatalog.Get(_disc, PartnerType),

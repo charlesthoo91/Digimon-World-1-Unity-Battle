@@ -79,7 +79,7 @@ namespace DW1Remake.Game
             if (_layer[row, 0] == null) { _layer[row, 0] = _tama.ToTextureLayer(row, 1); _layer[row, 1] = _tama.ToTextureLayer(row, 2); }
             var solid = _layer[row, 0]; var stp = _layer[row, 1];
             var r = new Rect(X(x), Y(y), w * 4.42f, h * 4.42f);
-            var uv = new Rect(u / (float)solid.width, 1f - (v + h) / (float)solid.height, w / (float)solid.width, h / (float)solid.height);
+            var uv = new Rect(u / TimImage.W(solid), 1f - (v + h) / TimImage.H(solid), w / TimImage.W(solid), h / TimImage.H(solid));
             GUI.DrawTextureWithTexCoords(r, solid, uv);
             if (Event.current.type != EventType.Repaint) return;
             if (_add[row] == null)

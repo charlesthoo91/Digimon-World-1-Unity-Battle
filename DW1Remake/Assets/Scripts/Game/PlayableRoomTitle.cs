@@ -111,8 +111,8 @@ namespace DW1Remake.Game
                     if (got == 1) pick = 1;
                 }
                 else if (s.Pos == 2) { int got = 0; yield return CardFlow(2, r => got = r); }     // DELETE GAME: menus 0x1E, 0x21, 0x22
-                // BATTLE MODE (pos 3): the VS mode is not ported
-                else if (s.Pos == 4) yield return ModsPage();    // ours: the optional mods (ModSettings)
+                // ours: BATTLE MODE (the VS mode) is left out of the menu (user's decision 2026-11-13: the online battle is the two-player mode)
+                else if (s.Pos == 3) yield return ModsPage();    // ours: the optional mods (ModSettings)
             }
             yield return TitleFade(true);
 
@@ -143,18 +143,18 @@ namespace DW1Remake.Game
             uint load = System.BitConverter.ToUInt32(exe, 0x18);
             System.Func<uint, int> at = a => (int)(a - load + 0x800);
             var s = new SysScreen();
-            for (int i = 0; i < 4; i++)
+            for (int i = 0; i < 3; i++)      // NEW GAME, CONTINUE GAME, DELETE GAME; the fourth, BATTLE MODE, is left out (ours)
             {
                 string label = Exe(System.BitConverter.ToUInt32(exe, at(0x80131868) + 4 * i));
                 if ((i == 1 || i == 2) && !hasSave) s.DimText(label, 0x52, 0x37 + 12 * i);
                 else s.Text(label, 0x52, 0x37 + 12 * i);
             }
-            // ours: a fifth row, MODS, under the game's four; the box and the cursor's range grow by one row
-            s.Text(ModsLabel, 0x52, 0x37 + 12 * 4);
-            s.Box(0x48, 0x32, 0xB0, 0x3A + 12);
+            // ours: OPTIONS in BATTLE MODE's row, so the box and the cursor keep the game's four rows
+            s.Text(L(ModsLabel, "設定"), 0x52, 0x37 + 12 * 3);      // ours: OPTIONS in the current language
+            s.Box(0x48, 0x32, 0xB0, 0x3A);
             int h = at(0x801316B8);
             s.Cursor(System.BitConverter.ToInt16(exe, h + 8), System.BitConverter.ToInt16(exe, h + 10), System.BitConverter.ToInt16(exe, h + 12),
-                     System.BitConverter.ToInt16(exe, h + 14), System.BitConverter.ToInt16(exe, h + 6), (sbyte)exe[h + 1] + 1);
+                     System.BitConverter.ToInt16(exe, h + 14), System.BitConverter.ToInt16(exe, h + 6), (sbyte)exe[h + 1]);
             return s;
         }
 
@@ -331,6 +331,7 @@ namespace DW1Remake.Game
 
         IEnumerator Notice(string text)
         {
+            text = DW1Remake.Formats.Tr.Text(text, "ours");      // ours: in the current language (translation/ours.tsv)
             var s = new SysScreen();
             var lines = Wrap(text, 0x110 - 0x14);
             for (int i = 0; i < lines.Count; i++) s.Text(lines[i], 0x22, 0x37 + 12 * i);
@@ -340,6 +341,7 @@ namespace DW1Remake.Game
 
         IEnumerator Confirm(string text, System.Action<bool> result)
         {
+            text = DW1Remake.Formats.Tr.Text(text, "ours");
             var s = new SysScreen();
             var lines = Wrap(text, 0x110 - 0x14);
             for (int i = 0; i < lines.Count; i++) s.Text(lines[i], 0x22, 0x37 + 12 * i);
@@ -360,21 +362,21 @@ namespace DW1Remake.Game
             yield return PickCard("EXPORT SAVE", r => card = r);
             if (card < 0) yield break;
             int slot = -1;
-            yield return SlotList(1, card, r => slot = r, "EXPORT  CARD " + (card + 1));       // used slots only
+            yield return SlotList(1, card, r => slot = r, DW1Remake.Formats.Tr.Format("EXPORT  CARD {0}", card + 1));       // used slots only
             if (slot < 0) yield break;
             string name = "DW1Remake_card" + (card + 1) + "_slot" + (slot + 1).ToString("00") + ".json", text = null, err = null;
             bool go = false;
 #if UNITY_WEBGL && !UNITY_EDITOR
-            yield return Confirm("The save goes to your downloads as " + name + ". If a file of that name is already there, the browser keeps both or asks you.", r => go = r);
+            yield return Confirm(DW1Remake.Formats.Tr.Format("The save goes to your downloads as {0}. If a file of that name is already there, the browser keeps both or asks you.", name), r => go = r);
 #else
             string target = Path.Combine(Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile), "Downloads"), name);
             yield return Confirm(File.Exists(target)
-                ? "Your Downloads folder already has " + name + ". It will be replaced by this save. Go on?"
-                : "The save goes to your Downloads folder as " + name + ". A file there with the same name would be replaced. Go on?", r => go = r);
+                ? DW1Remake.Formats.Tr.Format("Your Downloads folder already has {0}. It will be replaced by this save. Go on?", name)
+                : DW1Remake.Formats.Tr.Format("The save goes to your Downloads folder as {0}. A file there with the same name would be replaced. Go on?", name), r => go = r);
 #endif
             if (!go) yield break;
             try { text = File.ReadAllText(SlotPath(card, slot)); }
-            catch (System.Exception e) { err = "The save could not be read. " + e.Message; }
+            catch (System.Exception e) { err = DW1Remake.Formats.Tr.Text("The save could not be read.", "ours") + " " + e.Message; }
 #if UNITY_WEBGL && !UNITY_EDITOR
             if (err == null) WebFiles.DownloadText(name, text);
 #else
@@ -386,10 +388,10 @@ namespace DW1Remake.Game
                     Directory.CreateDirectory(dir);
                     File.WriteAllText(Path.Combine(dir, name), text);
                 }
-                catch (System.Exception e) { err = "The save could not be written. " + e.Message; }
+                catch (System.Exception e) { err = DW1Remake.Formats.Tr.Text("The save could not be written.", "ours") + " " + e.Message; }
             }
 #endif
-            yield return Notice(err ?? "The save is in your Downloads folder: " + name);
+            yield return Notice(err ?? DW1Remake.Formats.Tr.Format("The save is in your Downloads folder: {0}", name));
         }
 
         string _importText; bool _importWaiting;
@@ -448,72 +450,28 @@ namespace DW1Remake.Game
             yield return PickCard("IMPORT SAVE", r => card = r);
             if (card < 0) yield break;
             int slot = -1;
-            yield return SlotList(0, card, r => slot = r, "IMPORT  CARD " + (card + 1), true);       // any slot; a used one asks first
+            yield return SlotList(0, card, r => slot = r, DW1Remake.Formats.Tr.Format("IMPORT  CARD {0}", card + 1), true);       // any slot; a used one asks first
             if (slot < 0) yield break;
             var old = ReadSlot(card, slot);
             if (old != null)
             {
                 var sp = DigimonStatsCatalog.Get(_disc, old.PartnerType);
                 bool go = false;
-                yield return Confirm("Slot " + (slot + 1) + " of memory card " + (card + 1) + " holds " + (old.PlayerName ?? "") + " and " + (sp != null ? sp.Name : "a Digimon") +
-                                     ". That save will be replaced by the imported one and cannot be brought back. Go on?", r => go = r);
+                yield return Confirm(DW1Remake.Formats.Tr.Format("Slot {0} of memory card {1} holds {2} and {3}. That save will be replaced by the imported one and cannot be brought back. Go on?",
+                                     slot + 1, card + 1, old.PlayerName ?? "", sp != null ? sp.Name : DW1Remake.Formats.Tr.Text("a Digimon", "ours")), r => go = r);
                 if (!go) yield break;
             }
             bool ok = true;
             try { File.WriteAllText(SlotPath(card, slot), _importText); WebFiles.Sync(); }
             catch (System.Exception e) { ok = false; Debug.LogWarning("[title] " + e.Message); }
-            yield return Notice(ok ? "The save is in memory card " + (card + 1) + ", slot " + (slot + 1) + "." : "The save could not be written.");
+            yield return Notice(ok ? DW1Remake.Formats.Tr.Format("The save is in memory card {0}, slot {1}.", card + 1, slot + 1) : "The save could not be written.");
         }
 
         // ------------------------------------------------------------------ ours: the MODS page (not in the original game)
         const string ModsLabel = "OPTIONS";
 
         // one row per mod (Cross switches it), then BACK; Triangle / Circle also go back. Same box and cursor as the title menu
-        IEnumerator ModsPage()
-        {
-            byte[] exe = _disc.ReadFile("/SLUS_010.32");
-            uint load = System.BitConverter.ToUInt32(exe, 0x18);
-            int h = (int)(0x801316B8 - load + 0x800);
-            int pos = 0;
-            while (true)
-            {
-                var s = new SysScreen();
-                // the game's letters are about 11 pixels wide: the names start at 0x1C and ON / OFF at 0xF4, in a box 0x110 wide (FISHING INDICATOR ran into 0xD8)
-                s.Text("DIGITAL CLOCK", 0x1C, 0x37); s.Text(ModSettings.DigitalClock ? "ON" : "OFF", 0xF4, 0x37);
-                s.Text("ONLINE BATTLE", 0x1C, 0x37 + 12); s.Text(ModSettings.OnlineBattle ? "ON" : "OFF", 0xF4, 0x37 + 12);
-                s.Text("SMOOTH 60 FPS", 0x1C, 0x37 + 24); s.Text(ModSettings.Smooth60 ? "ON" : "OFF", 0xF4, 0x37 + 24);
-                s.Text("EVOLUTION GUIDE", 0x1C, 0x37 + 36); s.Text(ModSettings.EvolutionGuide ? "ON" : "OFF", 0xF4, 0x37 + 36);
-                s.Text("RECRUIT TAB", 0x1C, 0x37 + 48); s.Text(ModSettings.RecruitTab ? "ON" : "OFF", 0xF4, 0x37 + 48);
-                s.Text("TENSION VALUE", 0x1C, 0x37 + 60); s.Text(ModSettings.TensionValue ? "ON" : "OFF", 0xF4, 0x37 + 60);
-                s.Text("FISHING INDICATOR", 0x1C, 0x37 + 72); s.Text(ModSettings.FishingIndicator ? "ON" : "OFF", 0xF4, 0x37 + 72);
-                s.Text("MAP", 0x1C, 0x37 + 84); s.Text(ModSettings.MapView ? "ON" : "OFF", 0xF4, 0x37 + 84);
-                s.Text("RECENTRE CAMERA", 0x1C, 0x37 + 96); s.Text(ModSettings.FightRecentre ? "ON" : "OFF", 0xF4, 0x37 + 96);
-                s.Text("CONTROLS", 0x1C, 0x37 + 108);
-                s.Text("EXPORT SAVE", 0x1C, 0x37 + 120);
-                s.Text("IMPORT SAVE", 0x1C, 0x37 + 132);
-                s.Text("BACK", 0x1C, 0x37 + 144);
-                s.Box(0x12, 0x32, 0x110, 0x2E + 120);
-                s.Cursor(System.BitConverter.ToInt16(exe, h + 8) - (0x52 - 0x1C), System.BitConverter.ToInt16(exe, h + 10), 0x106,
-                         System.BitConverter.ToInt16(exe, h + 14), System.BitConverter.ToInt16(exe, h + 6), 13);
-                s.Pos = pos;
-                int answer = 0;
-                yield return Ask(s, a => answer = a);
-                pos = s.Pos;
-                if (answer != 1 || pos == 12) yield break;
-                if (pos == 5) ModSettings.TensionValue = !ModSettings.TensionValue;
-                else if (pos == 6) ModSettings.FishingIndicator = !ModSettings.FishingIndicator;
-                else if (pos == 7) ModSettings.MapView = !ModSettings.MapView;
-                else if (pos == 8) ModSettings.FightRecentre = !ModSettings.FightRecentre;
-                else if (pos == 9) yield return ControlsPage();
-                else if (pos == 10) yield return ExportSave();
-                else if (pos == 11) yield return ImportSave();
-                else if (pos == 0) ModSettings.DigitalClock = !ModSettings.DigitalClock;
-                else if (pos == 1) ModSettings.OnlineBattle = !ModSettings.OnlineBattle;
-                else if (pos == 2) ModSettings.Smooth60 = !ModSettings.Smooth60;
-                else if (pos == 3) ModSettings.EvolutionGuide = !ModSettings.EvolutionGuide;
-                else ModSettings.RecruitTab = !ModSettings.RecruitTab;
-            }
-        }
+        // the OPTIONS page itself: PlayableRoomOptions
 
         // ours: MODS > CONTROLS (Pad, TouchPadView): the touch buttons, the controller and the keyboard keys
         IEnumerator ControlsPage()
@@ -619,7 +577,7 @@ namespace DW1Remake.Game
                 {
                     var o = GUI.color; GUI.color = new Color(0f, 1f, 0f, 1f);
                     GUI.DrawTextureWithTexCoords(new Rect(SysX(160 - 0x36), SysY(120 + 0x32), 121 * 4.42f, 10 * 4.42f), t.Picture,
-                                                 new Rect(0f, (H - 0xF1 - 10) / H, 121f / t.Picture.width, 10f / H));
+                                                 new Rect(0f, (H - 0xF1 - 10) / H, 121f / TimImage.W(t.Picture), 10f / H));
                     GUI.color = o;
                 }
             }

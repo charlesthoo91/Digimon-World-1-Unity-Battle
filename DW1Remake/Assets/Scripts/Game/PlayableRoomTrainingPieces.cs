@@ -7,7 +7,8 @@ namespace DW1Remake.Game
     /// <summary>
     /// The map pieces the training moves and shakes (rocks, dirt, boxes, TRN_tick*Training and TRN2_tick*Training: setMapObjectsFlag, moveMapObjects,
     /// moveMapObjectsWithLimit, storeMapObjectPosition / loadMapObjectPosition, resetMapObjectAnimation). Each routine below follows one tick function
-    /// once a game frame (20 a second): `yield return null` = one frame. The particles and dust clouds the same functions start are not ported.
+    /// once a game frame (20 a second): `yield return null` = one frame. The sparks (createParticleFX(0, 0, TRN_D_8008F340[n], NULL, 0)) and dust
+    /// (createCloudFX, TRN_createCloudFXLine) the same functions start are made at the same frames (EffectPlayer.AddSparksAt / AddCloudAt).
     /// </summary>
     public sealed partial class PlayableRoom
     {
@@ -78,6 +79,49 @@ namespace DW1Remake.Game
         }
 
         void TrainSound(int id) { if (_audio != null) _audio.Play(8, id); }
+
+        // ---------------------------------------------------------------- sparks and dust (game units)
+        EffectPlayer TrainFx { get { return _battle != null ? _battle.Effects : null; } }
+
+        // TRN_D_8008F340 / TRN2_D_8008DC3C as each setup function fills them: map, kind, then x, y, z of each point (y up is negative;
+        // int.MinValue = minus the partner's height, DIGIMON_DATA[type].height)
+        const int MinusHeight = int.MinValue;
+        static readonly int[][] SparkPoints =
+        {
+            new[] { 0x70, 1, -0x44C, -0x258, -0xB22, -0x44C, -0x1F4, -0xB22, -0x44C, -0x190, -0xB22 },     // TRN_setupOffenseTraining 0x70
+            new[] { 0x4E, 1, -0x4B0, -0xC8, 0xDAC, -0x514, -0xC8, 0xDAC, -0x578, -0xC8, 0xDAC },           // TRN_setupOffenseTraining 0x4E
+            new[] { 0x6B, 1, -0x640, -0xC8, 0, -0x640, -0xC8, 0x64, -0x640, -0xC8, -0x64 },               // TRN2_setupOffenseTraining 0x6B
+            new[] { 0x70, 3, -0x384, -0x1F4, -0x7D0, -0x3B6, -0x1F4, -0x76C, -0x3B6, -0x1F4, -0x834 },     // TRN_setupDefenseTraining 0x70
+            new[] { 0x6C, 3, -0x3C6, MinusHeight, 0x3F8, -0x3B6, MinusHeight, 0x3E8, -0x3A2, MinusHeight, 0x3D4 },   // TRN2_setupDefenseTraining 0x6C
+            new[] { 0x63, 3, 0x63E, MinusHeight, -0x3BF },                                                 // TRN2_setupDefenseTraining 0x63 (one point)
+        };
+
+        // createParticleFX(0, 0, &points[n], NULL, 0) for each point of this map and training
+        void TrainSparks(TrainRun r)
+        {
+            var fx = TrainFx; if (fx == null || r == null) return;
+            foreach (var p in SparkPoints)
+            {
+                if (p[0] != r.Map || p[1] != r.Kind) continue;
+                int h = _menus != null && _menus.PartnerInfo != null ? _menus.PartnerInfo.Height : 100;
+                for (int i = 2; i + 2 < p.Length; i += 3) fx.AddSparksAt(p[i], p[i + 1] == MinusHeight ? -h : p[i + 1], p[i + 2]);
+            }
+        }
+
+        // TRN_createCloudFXLine(a, b, x, z, dx, dz, n): every b frames, n puffs along a line that moves on with the counter (a / 120 x b), each
+        // pulled back by a random 0-99 on both axes
+        void CloudLine(int a, int b, int x, int z, int dx, int dz, int n)
+        {
+            var fx = TrainFx; if (fx == null || a % b != 0) return;
+            if (a >= 1200) a = 1200;
+            int d = (a / 120) * b;
+            for (int i = 0; i < n; i++)
+            {
+                int rnd = fx.RandomBelow(100);
+                fx.AddCloudAt(x + d - rnd, 0, z + d - rnd);
+                x += dx; z += dz;
+            }
+        }
 
         // ---------------------------------------------------------------- one routine per training and map
 
@@ -195,6 +239,12 @@ namespace DW1Remake.Game
                 if (n % 0x78 == 0 && n < 0x4B1) PiecesShift(r.A, r.B, r.StepX, r.StepY);
                 if (n % 2 == 0) PiecesShift(r.A, r.B, 2, 0); else PiecesShift(r.A, r.B, -2, 0);
                 if (n % 10 == 0) TrainSound(0);
+                if (r.Map == 0x70)
+                {
+                    CloudLine(n, 0xF, 0x550, -0x604, 0x64, -0x32, 8);
+                    CloudLine(n, 0x14, 0x5B5, -0x667, 0x32, -0x32, 6);
+                    CloudLine(n, 0x12, 0x514, -0x525, 0x14, -0x32, 4);
+                }
                 n++;
                 r.Count = (n % 0x4B0) / 120;
                 yield return null;
@@ -213,6 +263,7 @@ namespace DW1Remake.Game
                 c++; n++;
                 if (c == hit)
                 {
+                    TrainSparks(r);
                     c = 0; TrainSound(5);
                     for (;;)
                     {
@@ -243,6 +294,7 @@ namespace DW1Remake.Game
                 c++;
                 if (c == hit)
                 {
+                    TrainSparks(r);
                     if (r.Map == 0x4E) { PieceFlags(groupA, groupB, 1); PieceFlags(r.A, r.B, 0); TrainSound(0x10); }
                     else { TrainSound(0xF); PieceFlags(r.A, r.B, 0); PieceFlags(otherA, otherB, 1); }
                     ResetPieceAnimation(r.A, r.A);
@@ -284,12 +336,15 @@ namespace DW1Remake.Game
                             // loc->vx += 0x64: the partner is shoved 100 game units a frame
                             _partner.position += new Vector3(0x64 * Unit, 0f, 0f);
                             _partner.rotation = Quaternion.Euler(0, 0x400 * 360f / 4096f, 0) * Quaternion.Euler(0, FacingOffset, 0);
+                            // createCloudFX at (loc.vx, 0, loc.vz - 100)
+                            var fx = TrainFx; Vector3 g = EffectPlayer.ToGame(_partner.position);
+                            if (fx != null) fx.AddCloudAt((int)g.x, 0, (int)g.z - 0x64);
                         }
                         bool done = PiecesShiftLimit(r.A, r.B, dx, 0, lim, 0);
                         if (done) break;
                         yield return null;
                     }
-                    if (s == 0) TrainSound(4);
+                    if (s == 0) { TrainSparks(r); TrainSound(4); }
                     yield return null;
                 }
                 PieceLoad(r);
@@ -309,6 +364,7 @@ namespace DW1Remake.Game
             for (;;)
             {
                 for (int cc = 0; cc < 4; cc++) yield return null;
+                TrainSparks(r);
                 TrainSound(4);
                 for (int cc = 0; cc < 0x1E; cc++) yield return null;
                 ResetPieceAnimation(7, 0x31);
@@ -322,6 +378,7 @@ namespace DW1Remake.Game
             for (;;)
             {
                 while (!PiecesShiftLimit(r.A, r.B, 0, 0x28, 0, 0xC8)) yield return null;
+                TrainSparks(r);
                 PieceFlags(0xE, 1, 1); PieceFlags(0x21, 1, 0); ResetPieceAnimation(0x21, 1); TrainSound(0x10);
                 for (int cc = 0; cc < 0x1E; cc++) yield return null;
                 PieceLoad(r);

@@ -96,7 +96,10 @@ namespace DW1Remake.Formats
         public int Age, Weight = 15, Life = 3;        // Life = the partner's lives
         public float PlayMinutes;                    // time played
         // names and numbers the game's text boxes insert (text codes 4-12)
-        public string PlayerName = "A", PartnerName = "B";
+        string _player = "A", _partner = "B";
+        // the names typed by the player are never translated (Tr), even when they spell a word of the game
+        public string PlayerName { get { return _player; } set { _player = value; Tr.PlayerName = value; } }
+        public string PartnerName { get { return _partner; } set { _partner = value; Tr.PartnerName = value; } }
         public System.Func<int, string> TournamentNameOf, BgmNameOf;      // TOURNAMENT_NAMES (text code 0x12), read from the exe by the room
         public System.Func<int, string> SpeciesNameOf, ItemNameOf, TechNameOf;   // Digimon / item / technique names, read from the disc by the room
         public string CodeText(int code, int arg, int speaker = 255)
@@ -308,7 +311,16 @@ namespace DW1Remake.Formats
         static bool HasMark(string s) { foreach (char ch in s) if (ch >= ColourMark && ch <= ColourMark + 15) return true; return false; }
 
         // the text of a 0x1A command starting at j; 'end' = just after it; colours: keep the 01 n codes (ColourMark + n)
-        static string Decode(byte[] d, int j, ScriptState st, int speaker, out int end, bool colours = false)
+        // Ours (translation): the text is first read into a template with its codes as tokens ({cN} colour, {XX:YY} a value the game fills in),
+        // Tr.Template swaps in the Chinese template when LANGUAGE is Chinese, then the tokens are filled in (tools/tr_common.decode makes the same template)
+        static string Decode(byte[] d, int j, ScriptState st, int speaker, out int end, bool colours = false, string where = null)
+        {
+            string t = Template(d, j, out end);
+            t = Tr.Template(t, where);
+            return Tr.Expand(t, colours, (c, a) => st.CodeText(c, a, speaker)).Trim('\n', ' ');
+        }
+
+        static string Template(byte[] d, int j, out int end)
         {
             var sb = new StringBuilder();
             // showTextbox (US 0x80101688, machine code): the text ends only where a line break (0D 00) is followed by 00 00. A 00 00 anywhere
@@ -323,8 +335,8 @@ namespace DW1Remake.Formats
                 else if (c == 0x0D) { sb.Append('\n'); j += 2; afterBreak = true; hidden = false; }
                 else if (c == 0x00) { j += 2; if (wasBreak) break; hidden = true; }
                 else if (hidden) j += c < 0x20 ? 2 : 1;
-                else if (c == 0x01) { if (colours) sb.Append((char)(ColourMark + (d[j + 1] & 15))); j += 2; }      // setTextColor
-                else if (c < 0x20) { sb.Append(st.CodeText(c, d[j + 1], speaker)); j += 2; } // a value the game fills in (names, numbers, time...)
+                else if (c == 0x01) { sb.Append("{c").Append(d[j + 1] & 15).Append('}'); j += 2; }      // setTextColor
+                else if (c < 0x20) { sb.Append('{').Append(c.ToString("X2")).Append(':').Append(d[j + 1].ToString("X2")).Append('}'); j += 2; } // a value the game fills in (names, numbers, time...)
                 else j++;
             }
             end = j;
@@ -335,7 +347,7 @@ namespace DW1Remake.Formats
         public static string TextAt(byte[] d, int j, ScriptState st, int speaker, bool colours = false)
         {
             int end;
-            return d != null && j >= 0 && j < d.Length ? Decode(d, j, st, speaker, out end, colours) : null;
+            return d != null && j >= 0 && j < d.Length ? Decode(d, j, st, speaker, out end, colours, "text at " + j.ToString("X4")) : null;
         }
 
         /// <summary>Whether script 'scriptId' has a section with that number.</summary>
@@ -351,7 +363,7 @@ namespace DW1Remake.Formats
             int at = SectionStart(s, section);
             if (at < 0) return null;
             int off = U16(s, at + idx * 4 + 2), end;
-            return off + 2 < s.Length ? Decode(s, off + 2, st, speaker, out end, colours) : null;
+            return off + 2 < s.Length ? Decode(s, off + 2, st, speaker, out end, colours, "DG 0 sec " + section.ToString("X2") + " text " + idx) : null;
         }
 
         byte[] Get(int id) { byte[] b; if (!cache.TryGetValue(id, out b)) { b = _scripts.GetScriptBytes(id); cache[id] = b; } return b; }
@@ -477,7 +489,7 @@ namespace DW1Remake.Formats
                     case 0x1A:
                     {
                         int j;
-                        string text = Decode(d, p + 2, st, speaker, out j, true);
+                        string text = Decode(d, p + 2, st, speaker, out j, true, "DG " + curId + " @" + p.ToString("X4"));
                         p = j;
                         // scriptShowSelection (command 0x10): the text right after the offsets is the list of options, shown at once as the selection box.
                         // Circle (when flag 0x31 is off) goes on 2 bytes after it (endPointer: past the 12 00 most selections have there)

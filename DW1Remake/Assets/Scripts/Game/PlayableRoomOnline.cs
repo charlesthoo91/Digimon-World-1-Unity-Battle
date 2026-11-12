@@ -87,6 +87,10 @@ namespace DW1Remake.Game
         // fresh box (the box has three rows: a two-line question and three answers do not fit together)
         IEnumerator ModAsk(string question, string[] options, int speaker, System.Action<int> answer)
         {
+            question = DW1Remake.Formats.Tr.Text(question, "ours");      // ours: in the current language
+            var tr = new string[options.Length];
+            for (int i = 0; i < options.Length; i++) tr[i] = DW1Remake.Formats.Tr.Text(options[i], "ours");
+            options = tr;
             _line = question; _choiceOpts = null; _speaker = speaker;
             yield return null;
             while (!ActionPressed()) yield return null;
@@ -165,6 +169,20 @@ namespace DW1Remake.Game
             var lines = new List<string>(); var font = Battle.StatFont;
             foreach (var para in (text ?? "").Split('\n'))
             {
+                // ours: Chinese has no spaces between words; it breaks between any two characters (a Chinese character is about 12 pixels)
+                if (HasCjk(para) && font != null && font.HasChinese) { lines.AddRange(DW1Remake.Formats.Tr.Wrap(para, width, font.MeasureRaw)); continue; }
+                if (HasCjk(para))
+                {
+                    string line = ""; int lw = 0;
+                    foreach (char ch in para)
+                    {
+                        int cw = ch >= 0x2E80 ? 12 : 6;
+                        if (lw + cw > width && line.Length > 0) { lines.Add(line); line = ""; lw = 0; }
+                        line += ch; lw += cw;
+                    }
+                    lines.Add(line);
+                    continue;
+                }
                 string cur = "";
                 foreach (var w in para.Split(' '))
                 {
@@ -212,24 +230,24 @@ namespace DW1Remake.Game
             System.Action close = () => { _onlineOn = false; };
             if (_net == null)
             {
-                lines.AddRange(Wrap("One of you hosts and the other joins. You swap two codes by chat or e-mail.", wrap));
+                lines.AddRange(Wrap(DW1Remake.Formats.Tr.Text("One of you hosts and the other joins. You swap two codes by chat or e-mail.", "ours"), wrap));
                 opts.Add("Host. I make the first code."); acts.Add(() => { _onlineRole = 1; _net = new NetLink(true); _onPos = 0; });
                 opts.Add("Join. My friend has a code."); acts.Add(() => { _onlineRole = 0; _net = new NetLink(false); _onPos = 0; });
             }
             else if (_net.Now == NetLink.State.Linked)
             {
-                lines.Add("Linked.   Ping " + _net.PingMs + " ms");
-                if (_onlineResult != null) lines.Add("Last match   " + _onlineResult);
+                lines.Add(DW1Remake.Formats.Tr.Format("Linked.   Ping {0} ms", _net.PingMs));
+                if (_onlineResult != null) lines.Add(DW1Remake.Formats.Tr.Format("Last match   {0}", DW1Remake.Formats.Tr.Text(_onlineResult, "ours")));
                 if (_friend == null) lines.Add("Waiting for your friend's Digimon...");
                 else
                 {
                     var info = DigimonStatsCatalog.Get(_disc, _friend.Type);
-                    lines.Add("Friend   " + _friend.Name + "   " + (info != null ? info.Name : ""));
+                    lines.Add(DW1Remake.Formats.Tr.Format("Friend   {0}   {1}", _friend.Name, info != null ? info.Name : ""));
                     lines.Add("HP " + _friend.Hp + "   MP " + _friend.Mp);
-                    lines.Add("Off " + _friend.Off + "  Def " + _friend.Def + "  Spd " + _friend.Spd + "  Brn " + _friend.Brain);
+                    lines.Add(DW1Remake.Formats.Tr.Format("Off {0}  Def {1}  Spd {2}  Brn {3}", _friend.Off, _friend.Def, _friend.Spd, _friend.Brain));
                     if (_onlineRole == 1)
                     {
-                        opts.Add("Orders   " + (_onlineOrders ? "ON" : "OFF")); acts.Add(() => { _onlineOrders = !_onlineOrders; });
+                        opts.Add(DW1Remake.Formats.Tr.Format("Orders   {0}", DW1Remake.Formats.Tr.Text(_onlineOrders ? "ON" : "OFF", "ours"))); acts.Add(() => { _onlineOrders = !_onlineOrders; });
                     }
                     else lines.Add(_onlineOrders ? "Orders ON" : "The host chooses the orders.");
                     if (!_meReady) { opts.Add("Battle!"); acts.Add(() => { _meReady = true; _net.SendSure(new[] { MsgReady }); }); }
@@ -238,13 +256,13 @@ namespace DW1Remake.Game
             }
             else if (_net.Now == NetLink.State.Failed || _net.Now == NetLink.State.Closed)
             {
-                lines.AddRange(Wrap(_net.Status, wrap));
+                lines.AddRange(Wrap(DW1Remake.Formats.Tr.Text(_net.Status, "online status"), wrap));
                 opts.Add("Try again");
                 acts.Add(() => { _net.Dispose(); _net = null; _onlineRole = -1; _friendCode = ""; _friend = null; _profileSent = false; _meReady = _friendReady = false; _onPos = 0; });
             }
             else
             {
-                lines.AddRange(Wrap(_net.Status, wrap));
+                lines.AddRange(Wrap(DW1Remake.Formats.Tr.Text(_net.Status, "online status"), wrap));
                 if (_net.MyCode != null)
                 {
                     lines.Add(_onlineRole == 1 ? "Your code" : "Your reply code");

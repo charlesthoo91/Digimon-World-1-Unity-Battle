@@ -178,7 +178,7 @@ namespace DW1Remake.Game
             System.Func<float, float> uAt = px => u + (px - x) / w * uw;
             System.Func<float, float> vAt = py => v + (py - y) / h * vh;
             float ua = uAt(x0), ub = uAt(x1), va = vAt(y0), vb = vAt(y1);
-            var src = new Rect(ua / tex.width, 1f - vb / tex.height, (ub - ua) / tex.width, (vb - va) / tex.height);
+            var src = new Rect(ua / TimImage.W(tex), 1f - vb / TimImage.H(tex), (ub - ua) / TimImage.W(tex), (vb - va) / TimImage.H(tex));
             Rect p = UiKit.Picture;
             var dst = new Rect(p.x + (x0 / 320f + 0.5f) * p.width, p.y + (y0 / 240f + 0.5f) * p.height, (x1 - x0) / 320f * p.width, (y1 - y0) / 240f * p.height);
             if (mat == null) GUI.DrawTextureWithTexCoords(dst, tex, src);

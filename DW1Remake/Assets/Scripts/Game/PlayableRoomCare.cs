@@ -661,7 +661,7 @@ namespace DW1Remake.Game
                 var all = TimImage.ParseAll(_disc.ReadFile("/ETCDAT/ETCTIM.BIN"));
                 if (all.Count > 7)
                 {
-                    var src = all[7].ToTexture(0).GetPixels32();
+                    var src = all[7].GetPixels(0);
                     int w = all[7].Width, hh = all[7].Height;
                     var px = new Color32[64 * 64];
                     for (int y = 0; y < 64; y++)
@@ -692,7 +692,7 @@ namespace DW1Remake.Game
                 GUI.DrawTextureWithTexCoords(new Rect(cx * k, cy * k, s, s), _irisTex, new Rect(1, 1, -1, -1));
             }
             UiKit.End();
-            if (_front && _frontRt != null && Event.current.type == EventType.Repaint) GUI.DrawTexture(UiKit.Picture, _frontRt, ScaleMode.StretchToFill, true);
+            if (_front && _frontRt != null && Event.current.type == EventType.Repaint) GUI.DrawTexture(UiKit.View, _frontRt, ScaleMode.StretchToFill, true);
         }
 
         // ---------------------------------------------------------------- on the map
@@ -815,7 +815,9 @@ namespace DW1Remake.Game
             while (_statusAcc >= 0.05f) { _statusAcc -= 0.05f; _statusX = Mathf.Clamp(_statusX + (GameTimeRuns ? -50 : 50), 75, 240); }
             int x = _statusX, happy = _state.Happiness, disc = _state.Discipline;
             UiKit.Begin();
-            GUI.BeginGroup(new Rect(0f, 0f, UiKit.W, UiKit.H));      // clipped to the PlayStation picture, so it can slide out of sight on a wide window
+            // clipped to the PlayStation picture, so it can slide out of sight on a wide window; with the mod 16:9 the picture's right edge
+            // is the view's (the bars sit in the bottom right corner)
+            GUI.BeginGroup(new Rect(UiKit.EdgeShift(1), 0f, UiKit.W, UiKit.H));
             art.Sys(12, 0, 236, 75, 8, x, 85);
             art.Sys(12, 0, 236, 75, 8, x, 97);
             int hu = happy >= 0 ? 64 : 97;
@@ -851,12 +853,13 @@ namespace DW1Remake.Game
             int hour = _care.Hour, x = _clockX;
             int night = hour >= 6 && hour < 17 ? 0 : 1, frame = (_care.Frame % 16) / 4;
             UiKit.Begin();
-            GUI.BeginGroup(new Rect(0f, 0f, UiKit.W, UiKit.H));
+            float shift = UiKit.EdgeShift(-1);      // mod 16:9: in the top left corner of the wider view
+            GUI.BeginGroup(new Rect(shift, 0f, UiKit.W, UiKit.H));
             art.Clock(1, 192, 224, 16, 16, x - 2, -90);
             art.Clock(1, 192, 240, 16, 16, x + 34, -90);
             art.Clock(2, ClockU[night * 4 + frame], ClockV[night * 4 + frame], 32, 16, x + 8, -100);
             art.Clock(0, 208, 215, 48, 40, x, -88);
-            art.ClockHand(x + 23, -66, _care.Minute * 6f);
+            art.ClockHand(x + 23, -66, _care.Minute * 6f, shift);
             art.Clock(1, 203, 216, 6, 6, x + HourX[hour], HourY[hour] - 88);
             GUI.EndGroup();
             UiKit.End();
@@ -866,7 +869,7 @@ namespace DW1Remake.Game
             // ours and not in the original: shown only with the mod Digital clock (title > MODS)
             if (x + 9 < -160 || !ModSettings.DigitalClock) { if (_clockPlate != null) _clockPlate.Remove(); return; }
             if (_clockPlate == null) _clockPlate = FrameBox.Load(_disc, Battle.StatFont, 5);
-            if (_clockPlate != null) _clockPlate.ShowText(new RectInt(x + 9, -46, 30, 10), hour.ToString("00") + ":" + _care.Minute.ToString("00"));
+            if (_clockPlate != null) _clockPlate.ShowText(new RectInt(x + 9 + Mathf.RoundToInt(shift * 320f / UiKit.W), -46, 30, 10), hour.ToString("00") + ":" + _care.Minute.ToString("00"));
         }
 
         void DrawCareOverlay()
@@ -924,7 +927,7 @@ namespace DW1Remake.Game
                 System.Func<float, float> px = v => 707.5f + v * 4.42f, py = v => 530f + v * 4.42f;
                 if (_lifeTex != null)
                 {
-                    float tw = _lifeTex.width, th = _lifeTex.height;
+                    float tw = TimImage.W(_lifeTex), th = TimImage.H(_lifeTex);
                     System.Action<float, float, float, float> spr = (u, w, x, y) => GUI.DrawTextureWithTexCoords(new Rect(px(x), py(y), w * 4.42f, 24 * 4.42f), _lifeTex, new Rect(u / tw, 0f, w / tw, 24f / th));
                     spr(48, 64, -85, -40);
                     int frame = (int)((Time.time - _lifeShowAt) * 20f);

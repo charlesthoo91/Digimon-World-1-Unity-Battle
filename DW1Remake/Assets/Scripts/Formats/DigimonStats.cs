@@ -10,7 +10,9 @@ namespace DW1Remake.Formats
     public sealed class DigimonStats
     {
         public int Type;
-        public string Name;
+        /// <summary>The name in the current language (Tr: OPTIONS > LANGUAGE); NameEn is the disc's.</summary>
+        public string Name { get { return Tr.Text(NameEn, "Digimon name"); } set { NameEn = value; } }
+        public string NameEn;
         public int Level;            // record byte +29: 1 Baby I, 2 Baby II, 3 Rookie, 4 Champion, 5 Ultimate, 6 Mega
         public int Attribute;        // record byte +28: 1 Data, 2 Vaccine, 3 Virus (matches "is a Data Type Digimon" in the scripts)
         public string SignatureTech; // the Digimon's own finishing move (Agumon: Pepper Breath); null for babies
@@ -35,7 +37,9 @@ namespace DW1Remake.Formats
     /// <summary>One row of the game's technique table (exe 0x8012623C, 16 bytes each). Numbers 0-57 are the Tech page techniques, 58-112 the finishing moves.</summary>
     public sealed class TechData
     {
-        public int Id; public string Name;
+        public int Id;
+        public string Name { get { return Tr.Text(NameEn, "technique name"); } set { NameEn = value; } }
+        public string NameEn;
         public float Reach;          // metres; the game keeps it squared in game units (Spit Fire 400 units)
         public int Power, Mp;        // MP is stored divided by 3
         public int HitFx;            // +7: goes to the game's hit-effect call (plus 16); what it selects is not decoded
@@ -166,7 +170,7 @@ namespace DW1Remake.Formats
         {
             Init(disc);
             int p = (int)(addr - _load + 0x800), j = p; while (_exe[j] != 0) j++;
-            return Encoding.ASCII.GetString(_exe, p, j - p);
+            return Tr.Text(Encoding.ASCII.GetString(_exe, p, j - p), "exe 0x" + addr.ToString("X8"));
         }
 
         public static SleepPattern SleepOf(DiscImage disc, int cycle)

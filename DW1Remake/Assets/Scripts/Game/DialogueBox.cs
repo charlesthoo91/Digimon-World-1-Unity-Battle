@@ -67,7 +67,7 @@ namespace DW1Remake.Game
             CloseNow(Box);
             int w = cols * 12 + 10, h = rows * 13 + 7;
             var rect = new RectInt((0x140 - w) / 2 - 0xA0, (0xF0 - h) / 2 - 0x78, w, h);
-            Owner = 0xFF; Custom = true; _rowsShown = rows;
+            Owner = 0xFF; Custom = true; _rowsShown = rows; _customCols = cols;
             if (origin.HasValue) Open(Box, rect, origin.Value, Flags | 0x80);
             else OpenStatic(Box, rect, Flags);
             Clear();
@@ -75,6 +75,8 @@ namespace DW1Remake.Game
 
         /// <summary>closeAllTextboxes / closeBox at the end of a script: gone at once.</summary>
         public void Shut() { CloseNow(Box); Owner = -1; Custom = false; _rowsShown = 4; Clear(); }
+
+        int _customCols;
 
         public void Clear() { _rows.Clear(); _name = null; _choiceRow = -1; _choices = 0; Waiting = false; }
 
@@ -87,7 +89,17 @@ namespace DW1Remake.Game
                 _name = name;
                 _nameColour = speaker == 0xFD ? 6 : speaker == 0xFC ? 0x0A : speaker >= 0xC8 ? 5 : 7;
             }
-            if (!string.IsNullOrEmpty(text)) _rows.AddRange(text.Split('\n'));
+            if (!string.IsNullOrEmpty(text))
+            {
+                var rows = text.Split('\n');
+                // ours (translation): a Chinese row wider than the box is broken between characters (Tr.Wrap); English rows stay as the disc has them
+                int maxW = Custom ? _customCols * 12 : 0xFC;
+                for (int i = 0; i < rows.Length; i++)
+                {
+                    if (i >= rows.Length - choices || Font == null || !Tr.HasCjk(rows[i])) _rows.Add(rows[i]);
+                    else _rows.AddRange(Tr.Wrap(rows[i], maxW, r => Font.MeasureRaw(ScriptRunner.Plain(r))));
+                }
+            }
             _choices = choices;
             if (choices > 0)
             {

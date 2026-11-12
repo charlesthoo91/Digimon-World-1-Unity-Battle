@@ -215,11 +215,8 @@ namespace DW1Remake.Game
         // renderString(colour, x, y, w, 12, u, v, layer, 1): the page slice in TEXT_COLORS[colour] over a black copy 1 pixel down and right
         void Text(int z, int colour, int x, int y, int w, int u, int v)
         {
-            PageText(z, colour, x, y, w, 12, u, v);
-            var tex = Page;
-            if (tex == null || w <= 0) return;
-            Rect uv = new Rect(u / 256f, 1f - (v + 12) / 256f, w / 256f, 12 / 256f);
-            Add(z, () => { var o = GUI.color; GUI.color = Color.black; GUI.DrawTextureWithTexCoords(new Rect(X(x + 1), Y(y + 1), w * 4.42f, 12 * 4.42f), tex, uv); GUI.color = o; });
+            // the same as PsPage.Words (slice, then its black copy), so a Chinese slice replaces the English in both (ours, translation)
+            Words(z, colour, x, y, w, u, v);
         }
 
         // renderInventoryTop

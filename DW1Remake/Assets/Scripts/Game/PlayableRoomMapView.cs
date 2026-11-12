@@ -133,7 +133,7 @@ namespace DW1Remake.Game
             var panel = new Rect(85, 64, 1245, 932);
             UiKit.Fill(panel, new Color(0f, 0f, 0f, 0.55f));
             UiKit.Text(new Rect(panel.x, panel.y + 14, panel.width, 60), AreaName(_mapId).Trim(), 46, UiKit.Yellow, TextAnchor.MiddleCenter);
-            UiKit.Text(new Rect(panel.x, panel.yMax - 50, panel.width - 20, 40), "Select: close", 26, new Color(1f, 1f, 1f, 0.7f), TextAnchor.MiddleRight);
+            UiKit.Text(new Rect(panel.x, panel.yMax - 50, panel.width - 20, 40), DW1Remake.Formats.Tr.Text("Select: close", "ours"), 26, new Color(1f, 1f, 1f, 0.7f), TextAnchor.MiddleRight);
 
             // the whole painted map fitted in the panel
             float W = _map.PixelWidth, H = _map.PixelHeight;

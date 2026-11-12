@@ -1,0 +1,351 @@
+kind	english	chinese	notes
+item	sm.recovery	小回復碟	item 0 (recovery floppies: 碟 = floppy)
+item	med.recovery	中回復碟	item 1
+item	lrg.recovery	大回復碟	item 2
+item	sup.recovery	超回復碟	item 3
+item	MP Floppy	MP碟	item 4
+item	Medium MP	中MP碟	item 5
+item	Large MP	大MP碟	item 6
+item	Double flop	雙重碟	item 7
+item	Various	萬能藥	item 8
+item	Omnipotent	全能碟	item 9
+item	Protection	防護碟	item 10
+item	Restore	復活碟	item 11
+item	Sup.restore	超復活碟	item 12
+item	Bandage	繃帶	item 13
+item	Medicine	藥	item 14
+item	Off. Disk	攻擊碟	item 15
+item	Def. Disk	防禦碟	item 16
+item	Hispeed dsk	速度碟	item 17
+item	Omni Disk	全能力碟	item 18
+item	S.Off.disk	超攻擊碟	item 19
+item	S.Def.disk	超防禦碟	item 20
+item	S.speed.disk	超速度碟	item 21
+item	Auto Pilot	自動導航	item 22
+item	Off. Chip	攻擊晶片	item 23
+item	Def. Chip	防禦晶片	item 24
+item	Brain Chip	智力晶片	item 25
+item	Quick Chip	速度晶片	item 26
+item	HP Chip	HP晶片	item 27
+item	MP Chip	MP晶片	item 28
+item	DV Chip A	DV晶片A	item 29
+item	DV Chip D	DV晶片D	item 30
+item	DV Chip E	DV晶片E	item 31
+item	Port. potty	攜帶馬桶	item 32
+item	Trn. manual	訓練手冊	item 33
+item	Rest pillow	休息枕	item 34
+item	Enemy repel	驅敵噴霧	item 35
+item	Enemy bell	引敵鈴	item 36
+item	Health shoe	健康鞋	item 37
+item	Meat	肉	item 38
+item	Giant Meat	巨大肉	item 39
+item	Sirloin	沙朗牛排	item 40
+item	Supercarrot	超級蘿蔔	item 41
+item	Hawk radish	鷹爪蘿蔔	item 42
+item	Spiny green	多刺青菜	item 43
+item	Digimushrm	數碼蘑菇	item 44
+item	Ice mushrm	冰蘑菇	item 45
+item	Deluxmushrm	豪華蘑菇	item 46
+item	Digipine	數碼鳳梨	item 47
+item	Blue apple	藍蘋果	item 48
+item	Red Berry	紅莓	item 49
+item	Gold Acorn	黃金橡實	item 50
+item	Big Berry	大莓果	item 51
+item	Sweet Nut	甜堅果	item 52
+item	Super veggy	超級蔬菜	item 53
+item	Pricklypear	仙人掌果	item 54
+item	Orange bana	橘子香蕉	item 55
+item	Power fruit	力量果	item 56
+item	Power Ice	力量冰	item 57
+item	Speed Leaf	速度葉	item 58
+item	Sage Fruit	賢者果	item 59
+item	Muscle Yam	肌肉山藥	item 60
+item	Calm berry	鎮靜莓	item 61
+item	Digianchovy	數碼鯷魚	item 62
+item	Digisnapper	數碼鯛魚	item 63
+item	DigiTrout	數碼鱒魚	item 64
+item	Black trout	黑鱒魚	item 65
+item	Digicatfish	數碼鯰魚	item 66
+item	Digiseabass	數碼鱸魚	item 67
+item	Moldy Meat	發霉肉	item 68
+item	Happymushrm	快樂蘑菇	item 69
+item	Chain melon	連鎖瓜	item 70
+item	Grey Claws	暴龍之爪	item 71 (evolution item: Greymon)
+item	Fireball	火球	item 72
+item	Flamingwing	火焰之翼	item 73
+item	Iron Hoof	鋼鐵之蹄	item 74
+item	Mono Stone	角龍石	item 75
+item	Steel drill	鋼鐵鑽頭	item 76
+item	White Fang	白牙	item 77
+item	Black Wing	黑翼	item 78
+item	Spike Club	狼牙棒	item 79
+item	Flamingmane	火焰鬃毛	item 80
+item	White Wing	白翼	item 81
+item	Torn tatter	破布	item 82
+item	Electo ring	電之環	item 83
+item	Rainbowhorn	彩虹角	item 84
+item	Rooster	雄雞冠	item 85
+item	Unihorn	獨角	item 86
+item	Horn helmet	角盔	item 87
+item	Scissor jaw	剪刀顎	item 88
+item	Fertilizer	肥料	item 89
+item	Koga laws	甲賀秘卷	item 90
+item	Waterbottle	水瓶	item 91
+item	North Star	北極星	item 92
+item	Red Shell	紅貝殼	item 93
+item	Hard Scale	硬鱗	item 94
+item	Bluecrystal	藍水晶	item 95
+item	Ice crystal	冰水晶	item 96
+item	Hair grower	生髮劑	item 97
+item	Sunglasses	太陽眼鏡	item 98
+item	Metal part	金屬零件	item 99
+item	Fatal Bone	致命之骨	item 100
+item	Cyber part	電子零件	item 101
+item	Mega Hand	巨大之手	item 102
+item	Silver ball	銀球	item 103
+item	Metal armor	金屬盔甲	item 104
+item	Chainsaw	鏈鋸	item 105
+item	Small spear	小矛	item 106
+item	X Bandage	X繃帶	item 107
+item	Ray Gun	光線槍	item 108
+item	Gold banana	黃金香蕉	item 109
+item	Mysty Egg	神秘蛋	item 110
+item	Red Ruby	紅寶石	item 111
+item	Beetlepearl	甲蟲珍珠	item 112
+item	Coral charm	珊瑚護符	item 113
+item	Moon mirror	月之鏡	item 114
+item	Blue Flute	藍笛	item 115 (Seadramon's)
+item	old fishrod	舊釣竿	item 116
+item	Amazing rod	神奇釣竿	item 117
+item	Leomonstone	獅子獸石板	item 118
+item	Mansion key	洋館鑰匙	item 119
+item	Gear	齒輪	item 120
+item	Rain Plant	雨之草	item 121
+item	Steak	牛排	item 122
+item	Frig Key	冰箱鑰匙	item 123
+item	AS Decoder	古文解讀器	item 124 (Ancient Script)
+item	Giga Hand	千兆之手	item 125
+item	Noble Mane	高貴鬃毛	item 126
+item	Metalbanana	金屬香蕉	item 127
+tech	Fire Tower	火焰塔	0
+tech	Prominence Beam	日珥光束	1
+tech	Spit Fire	噴火	2
+tech	Red Inferno	赤紅煉獄	3
+tech	Magma Bomb	岩漿炸彈	4
+tech	Heat Laser	熱能雷射	5
+tech	Inifinity Burn	無限燃燒	6 (the disc's spelling)
+tech	Meltdown	熔毀	7
+tech	Thunder Justice	正義雷擊	8
+tech	Spinning Shot	迴旋射擊	9
+tech	Electric Cloud	電雲	10
+tech	Megalo Spark	巨型火花	11
+tech	Static Elect	靜電	12
+tech	Wind Cutter	風之刃	13
+tech	Confused Storm	混亂風暴	14
+tech	Hurricane	颶風	15
+tech	Giga Freeze	千兆冰凍	16
+tech	Ice Statue	冰之雕像	17
+tech	Winter Blast	寒冬衝擊	18
+tech	Ice Needle	冰針	19
+tech	Water Blit	水之閃擊	20
+tech	Aqua Magic	水之魔法	21
+tech	Aurora Freeze	極光凍結	22
+tech	Tear Drop	淚滴	23
+tech	Power Crane	力量起重機	24
+tech	All Range Beam	全方位光束	25
+tech	Metal Sprinter	金屬衝刺	26
+tech	Pulse Laser	脈衝雷射	27
+tech	Delete Program	刪除程式	28
+tech	DG Dimension	DG次元	29
+tech	Full Potential	全力發揮	30
+tech	Reverse Prog	逆向程式	31
+tech	Poison Powder	毒粉	32
+tech	Bug	病毒	33
+tech	Mass Morph	群體變形	34
+tech	Insect Plague	蟲群災害	35
+tech	Charm Perfume	魅惑香氣	36
+tech	Poison Claw	毒爪	37
+tech	Danger Sting	危險毒刺	38
+tech	Green Trap	綠色陷阱	39
+tech	Tremar	震動	40 (the disc's spelling)
+tech	Muscle Charge	肌肉充能	41
+tech	War Cry	戰吼	42
+tech	Sonic Jab	音速刺拳	43
+tech	Dynamite Kick	炸裂踢	44, 48
+tech	Counter	反擊	45
+tech	Megaton Punch	百萬噸拳	46
+tech	Buster Dive	破壞俯衝	47
+tech	Odor Spray	臭氣噴霧	49
+tech	Poop Spd Toss	大便速投	50
+tech	Big Poop Toss	大便巨投	51
+tech	Big Rnd Toss	巨型連投	52
+tech	Poop Rnd Toss	大便連投	53
+tech	Rnd Spd Toss	連續速投	54
+tech	Horizontal Kick	水平踢	55, 57
+tech	Ult Poop Hell	終極大便地獄	56
+tech	Blaze Blast	烈焰衝擊	58
+tech	Pepper Breath	小火球	59 (Agumon)
+tech	Lovely Attack	愛心攻擊	60
+tech	Fireball	火球	61
+tech	Death Claw	死亡之爪	62
+tech	Mega Flame	超級火焰	63 (Greymon)
+tech	Howling Blaster	狼嚎衝擊波	64 (Garurumon)
+tech	Party time	派對時間	65, 107, 108
+tech	Electric Shock	電擊	66
+tech	Abduction Beam	綁架光線	67
+tech	Smiley Bomb	笑臉炸彈	68
+tech	Spnning Needle	迴旋針	69 (the disc's spelling)
+tech	Spiral Twister	螺旋旋風	70
+tech	Boom Bubble	空氣砲	71 (Patamon)
+tech	Sweet Breath	甜蜜氣息	72
+tech	Bit Bomb	位元炸彈	73
+tech	Deadly Bomb	致命炸彈	74
+tech	Drill Spin	鑽頭旋轉	75
+tech	Electric Thread	電之絲	76
+tech	Energy Bomb	能量炸彈	77
+tech	Genoside Attack	滅絕攻擊	78
+tech	Giga Scissor Claw	千兆剪刀爪	79
+tech	Dark Shot	黑暗射擊	80
+tech	Pummel Whack	重擊棒	81
+tech	Hand of Fate	命運之手	82 (Angemon)
+tech	Dark Claw	黑暗之爪	83
+tech	Aerial Attack	空中攻擊	84
+tech	Bone Boomerang	骨頭迴力鏢	85
+tech	Solar Ray	太陽光線	86
+tech	Hydro Pressure	水壓砲	87
+tech	Ice Blast	冰之衝擊	88
+tech	Iga School Knife Throw	伊賀流飛刀	89
+tech	Blasting Spout	噴射水柱	90
+tech	Fist of the Beast King	獸王拳	91 (Leomon)
+tech	Dark Network & Concert Crush	黑暗網路演唱會	92
+tech	Electro Shocker	電擊衝擊	93
+tech	Meteor Wing	流星之翼	94 (Birdramon)
+tech	Super Slap	超級巴掌	95
+tech	Nightmare Syndromer	夢魘症候群	96
+tech	Frozen Fire Shot	冰凍火焰彈	97
+tech	Poison Ivy	毒藤	98
+tech	Blue Blaster	藍色衝擊波	99
+tech	Scissor Claw	剪刀爪	100
+tech	Super Thunder Strike	超級雷擊	101
+tech	Spiral Sword	螺旋劍	102
+tech	Variable Darts	變化飛鏢	103
+tech	Volcanic Strike	火山衝擊	104
+tech	Subzero Ice Punch	零下冰拳	105
+tech	Infinity Cannon	無限大砲	106
+tech	Crimson Flare	深紅閃焰	109
+tech	Glacial Blast	冰河衝擊	110
+tech	Mail Strome	大漩渦	111
+tech	High Electro Shocker	高壓電擊衝擊	112
+tech	Bubble	泡泡	113-120
+area	Amida Forest	阿彌陀森林
+area	Ancient Dino Region	古代恐龍區
+area	Ancient Glacial Region	古代冰河區
+area	Ancient Speedy Region	古代高速區
+area	Arena Lobby	競技場大廳
+area	Back Dimension	裏次元
+area	Beetle Land	甲蟲之國
+area	Birdra Transport	巴多拉運輸
+area	Centar Clinic	人馬診所
+area	Coela Point	西拉岬
+area	Costume House	玩偶之家
+area	Digimon Bridge	數碼寶貝橋
+area	Digimon Curling	數碼冰壺
+area	Dragon Eye Lake	龍眼湖
+area	Drill Tunnel	鑽地隧道
+area	Drill Tunnel 2nd floor	鑽地隧道 二樓
+area	Drill Tunnel 3rd floor	鑽地隧道 三樓
+area	Drill Tunnel Entrance	鑽地隧道入口
+area	Factorial Town	工廠鎮
+area	File City	檔案城
+area	Foot of Mt. Panorama	全景山山腳
+area	Fortress Entrance	要塞入口
+area	Freezeland	冰凍之地
+area	Gear Savanna	齒輪草原
+area	Geko Swamp	怪蛙沼澤
+area	Great Canyon	大峽谷
+area	Great Canyon Bot. Area	大峽谷底部
+area	Great Canyon Bridge	大峽谷之橋
+area	Great Canyon Entrance	大峽谷入口
+area	Great Canyon Top Area	大峽谷頂部
+area	Green Gym	綠色訓練場
+area	Grey Lord's Mansion	灰色領主洋館
+area	Ice Sanctuary	冰之聖域
+area	Item Keeper	道具保管處
+area	Item Shop	道具店
+area	Jijimon's house	公公獸之家
+area	Kunemon's Bed	古尼獸之床
+area	Lava Cave	熔岩洞窟
+area	Leomon Ancestor's Cave	獅子獸祖先洞窟
+area	Mangrove Region	紅樹林區
+area	Mansion Basement	洋館地下室
+area	Misty Trees	迷霧樹林
+area	Monochrome Shop	角龍商店
+area	Mt. Infinity	無限山
+area	Mt. Panorama Plains	全景山平原
+area	Mt. Panorama Spore Area	全景山孢子區
+area	Native Forest	原生森林
+area	Ogre Fortress	奧加要塞
+area	Overdell	奧佛戴爾
+area	Overdell Cemetery	奧佛戴爾墓地
+area	Path Thru Mt. Panorama	全景山山路
+area	Residential Area	住宅區
+area	Restaurant	餐廳
+area	Robot House	機器人之家
+area	Secret Beach Cave	秘密海灘洞窟
+area	Secret Item Shop	秘密道具店
+area	Sewer	下水道
+area	Toy Mansion	玩具洋館
+area	Toy Town	玩具鎮
+area	Trash Mountain	垃圾山
+area	Treasure Hunt	尋寶
+area	Tropical Jungle	熱帶叢林
+area	Underground Lab	地下研究所
+area	Underground Pond	地下水池
+area	Volume Villa	音量村
+place	Tropical Jungle	熱帶叢林
+place	Great Canyon	大峽谷
+place	Gecko Swamp	怪蛙沼澤	dialogue spelling of Geko Swamp
+place	Gray Lord Mansion	灰色領主洋館	dialogue spelling
+place	Beetleland	甲蟲之國	dialogue spelling
+place	Factorial	工廠鎮
+place	Digimon World	數碼世界
+place	Infinity Mountain	無限山
+place	Mt. Infinity	無限山
+place	Freezeland	冰凍之地
+place	Misty Trees	迷霧樹林
+place	Toy Town	玩具鎮
+place	Overdell	奧佛戴爾
+place	Gear Savanna	齒輪草原
+place	File Island	檔案島
+term	Digimon	數碼寶貝
+term	Tamer	馴獸師
+term	Bits	位元	currency
+term	Digivolve	進化
+term	Digivice	數碼暴龍機
+term	Prosperity	繁榮度
+term	Offense	攻擊力
+term	Defense	防禦力
+term	Speed	速度
+term	Brains	智力
+term	HP	HP
+term	MP	MP
+term	Happiness	快樂度
+term	Discipline	紀律
+term	Weight	體重
+term	Tiredness	疲勞
+term	Merit points	功績點數
+term	finisher	必殺技
+term	technique	招式
+term	Tournament	大賽
+term	Cup	盃
+term	Arena	競技場
+term	poop	大便
+term	toilet	廁所
+term	Medal	獎牌
+term	Item	道具
+term	Floppy	碟	recovery items
+term	Gym	訓練場
+term	Tamer Level	馴獸師等級
+character	Jijimon	公公獸	from digimon-names.tsv
+character	the boy	主角	the player; his name stays as typed (Latin letters)
+song	Non Bewildering Forest Theme	不迷之森主題曲	song names: <place>主題曲, night = 夜晚主題曲

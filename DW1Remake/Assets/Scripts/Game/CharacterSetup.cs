@@ -152,6 +152,13 @@ namespace DW1Remake.Game
             string t = ScriptRunner.MapHeadText(_scripts, _st, Section, text, 0xFF, true) ?? "";
             var lines = new List<string>(t.Split('\n'));
             int q = Mathf.Max(0, lines.Count - 2);
+            // ours (translation): the Digivice, friends and name questions share one "Yes / No" text (有 / 沒有 in Chinese); the name
+            // confirmations (entry 0x1C, the boy's and the partner's name) answer 是 / 不是 (user's request 2026-11-12)
+            if (text == 0x1C && DW1Remake.Formats.Tr.Chinese && lines.Count >= 2)
+            {
+                lines[lines.Count - 2] = "是"; lines[lines.Count - 1] = "不是";
+                t = string.Join("\n", lines.ToArray());
+            }
             _opts = lines.GetRange(q, lines.Count - q); _sel = 0; _talking = true;
             if (Box() != null) { _dlg.Show(0xFF, null, t, 2); _dlg.Current = 0; }
             _state = 1; _next = next; _mode = 2;

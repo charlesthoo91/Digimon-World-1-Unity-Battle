@@ -116,7 +116,8 @@ namespace DW1Remake.Game
             var tex = Page;
             if (tex == null || w <= 0) return;
             Color t = TextColor[0];
-            Rect uv = new Rect(u / 256f, 1f - (v + 12) / 256f, w / 256f, 12 / 256f);
+            Rect uv;
+            Slice(ref tex, ref x, ref w, u, v, 12, out uv);
             Add(z, () => { var o = GUI.color; GUI.color = t; GUI.DrawTextureWithTexCoords(new Rect(X(x), Y(y), w * 4.42f, 12 * 4.42f), tex, uv); GUI.color = o; });
             if (shadow) Add(z, () => { var o = GUI.color; GUI.color = Color.black; GUI.DrawTextureWithTexCoords(new Rect(X(x + 1), Y(y + 1), w * 4.42f, 12 * 4.42f), tex, uv); GUI.color = o; });
         }
@@ -159,7 +160,9 @@ namespace DW1Remake.Game
         protected void DrawCoded(Color32[] px, string s, int x, int y, Color32 ink)
         {
             if (Font == null || s == null) return;
+            s = DW1Remake.Formats.Tr.Text(s);      // ours: a disc text drawn whole in the current language (a composed row is left as it is)
             int pos = 0, adv = 0;
+            bool zh = DW1Remake.Formats.GameFont.ChineseText(s);      // ours: drawn one character at a time, so the whole text says whether it is Chinese
             foreach (char ch in s)
             {
                 if (ch >= Mark && ch <= Mark + 15) { ink = Font.Colour(ch - Mark); continue; }
@@ -177,8 +180,8 @@ namespace DW1Remake.Game
                     case ' ': case '　': Clear(px, x + pos, y, 12); pos += adv; continue;
                 }
                 string one = ch.ToString();
-                Font.Render(one, px, 256, 256, x + pos, y, ink);
-                adv = Font.Measure(one);
+                Font.RenderRaw(one, px, 256, 256, x + pos, y, ink, zh);
+                adv = Font.MeasureRaw(one, zh);
                 pos += adv;
             }
         }
