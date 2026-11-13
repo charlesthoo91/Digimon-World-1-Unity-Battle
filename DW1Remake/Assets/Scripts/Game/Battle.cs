@@ -157,6 +157,12 @@ namespace DW1Remake.Game
         public int Timer;                       // STD_TIMER (STD_addFighterCounter(0x63))
         public int TimerStart = 99;             // ours (online battle's time option): the counter's start, 99 as the arena
         public bool NoTimeLimit;                // ours (online battle's time option): the counter never runs down
+        public bool SuddenDeath;                // ours (online tournament; the user's rule 2026-11-13): when the counter reaches 0 the fight goes on as
+                                                // sudden death until a knock-out: damage x SuddenDeathDamage and no blocking
+        public const float SuddenDeathDamage = 2f;
+        bool _sdOn;
+        /// <summary>Sudden death is running (the "SUDDEN DEATH" word is shown when it starts).</summary>
+        public bool SuddenDeathOn { get { return _sdOn; } }
         public static bool InputLocked;         // ours (online battle's surrender question): the fight's own buttons (Square, L1 / R1) are not read
         public int Result;                      // STD_combatMain: 1 won, -1 lost (a draw is lost too: STD_deinitializeCombat(1, 1) returns -1)
         public int WinnerSide = -1;             // STD_deinitializeCombat's a: 0 the partner, 1 the enemy, 2 nobody (a draw)
@@ -381,7 +387,7 @@ namespace DW1Remake.Game
         {
             NoFlee = true; _boyDone = true;
             _puppetEnd = false;
-            Timer = TimerStart; _tFrames = 1; _tTimerAcc = 0f; Result = 0; WinnerSide = -1; TimeUpWord = TimeUpBox = false; TourDamage[0] = TourDamage[1] = 0;
+            Timer = TimerStart; _tFrames = 1; _tTimerAcc = 0f; Result = 0; WinnerSide = -1; TimeUpWord = TimeUpBox = false; TourDamage[0] = TourDamage[1] = 0; _sdOn = false;
             _tCount = 0; _tLoser = -1; _tCheer = 0; _tAcc = 0f; _tPress = false;
             _tStartHp0 = Partner.Hp; _tStartHp1 = Enemy.Hp;
             _tVersus = false; _tKo.Clear(); TournamentStartDone = false;
@@ -724,7 +730,9 @@ namespace DW1Remake.Game
                 if (Partner.Hp > 0) StartCheer(0);                 // 1: STD_deinitializeCombat(0, 1); else wait for the partner's 0x2B
                 return;
             }
-            if (Timer != 0 || Partner.Hp <= 0 || Enemy.Hp <= 0) return;
+            if (Timer != 0 || Partner.Hp <= 0 || Enemy.Hp <= 0 || _sdOn) return;
+            // ours (SuddenDeath): no time-up; the fight goes on until a knock-out
+            if (SuddenDeath) { _sdOn = true; return; }
             // time up: the side that lost more HP than it took off the other loses; the same amount is a draw
             TourDamage[0] = _tStartHp0 - Partner.Hp;
             TourDamage[1] = _tStartHp1 - Enemy.Hp;
@@ -2028,7 +2036,8 @@ namespace DW1Remake.Game
             if (_charging && _chargeBy == d) { _charging = false; ShowRing(false); _chargeBy = null; }
             for (int i = _swings.Count - 1; i >= 0; i--) if (_swings[i].From == d && _swings[i].Tech.Finisher && !_swings[i].Done) _swings.RemoveAt(i);
             float v = Damage(a, d, tech, boost);
-            if (a != d && Blocks(a, d, tech))
+            if (_sdOn) v *= SuddenDeathDamage;          // ours: sudden death
+            if (a != d && !_sdOn && Blocks(a, d, tech))
             {
                 if (TryCounter(a, d, tech)) return;
                 Block(a, d, tech, v, hitAt);

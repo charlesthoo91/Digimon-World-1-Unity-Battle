@@ -30,6 +30,27 @@ namespace DW1Remake.Game
 
         /// <summary>BTL_disableMapLayer: the map picture is switched off while the effect runs (the room hides its background).</summary>
         public Action<bool> OnMapLayer;
+
+        /// <summary>The arena (STD_REL's own copy of the interpreter, std_effect.c): its ring is drawn into ordering tables at the very back
+        /// (0xFFF / 0xFFE), so effect screen primitives at the back places (DG Dimension's grid, 0xFFD) are drawn over it. Ours: they are drawn
+        /// right after the ring's back objects, not depth-tested against it.</summary>
+        public bool ArenaBack;
+        /// <summary>The arena's sub 92 (STD_renderScreenFade, US): no fade quad; modifySomeImage(c) darkens the colour sets at VRAM (512, 248) instead.</summary>
+        public Action<int> OnArenaDim;
+        readonly Material[] _arenaBackMats = new Material[8];
+        Material ArenaBackMaterial(int attr, Material front)
+        {
+            var m = _arenaBackMats[attr & 7];
+            if (m == null)
+            {
+                m = new Material(front);
+                m.renderQueue = 1950;                                                           // after the ring's back objects (1900 / 1910)
+                m.SetFloat("_ZTest", (float)UnityEngine.Rendering.CompareFunction.Always);
+                m.SetFloat("_ZWrite", 0f);
+                _arenaBackMats[attr & 7] = m;
+            }
+            return m;
+        }
         Camera _viewCam;
         readonly List<Mesh> _meshPool = new List<Mesh>();
         int _meshUsed;
@@ -553,6 +574,7 @@ namespace DW1Remake.Game
                 // meshes by their distance, and the full-screen quad's middle is near the camera, so it came last and wiped out
                 // DG Dimension's grid (0xFFD). Such primitives now go in a queue drawn before the other effects
                 if (p.Screen && p.Ot >= 0xFFE) mat = BackMaterial(p.Attr, mat);
+                if (ArenaBack && p.Screen && p.Ot >= 0xFFD) mat = ArenaBackMaterial(p.Attr, mat);
                 if (p.Line)
                 {
                     Vector3 a = p.Screen ? Ps1ToWorld(cam, p.P[0], p.Ot) : ToUnity((int)p.P[0].x, (int)p.P[0].y, (int)p.P[0].z);

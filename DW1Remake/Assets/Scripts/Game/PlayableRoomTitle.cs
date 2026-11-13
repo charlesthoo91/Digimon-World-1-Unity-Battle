@@ -152,6 +152,10 @@ namespace DW1Remake.Game
             // ours: OPTIONS in BATTLE MODE's row, so the box and the cursor keep the game's four rows
             s.Text(L(ModsLabel, "設定"), 0x52, 0x37 + 12 * 3);      // ours: OPTIONS in the current language
             s.Box(0x48, 0x32, 0xB0, 0x3A);
+            // ours (the user's decision 2026-11-13): the fan-project disclaimer in its own box under the options, in a small font (DrawTitle)
+            // so it fits between the options and the picture's DIGIMON logo
+            s.Box(DiscBoxX, DiscBoxY, DiscBoxW, DiscBoxH);
+            _initialMenu = s;
             int h = at(0x801316B8);
             s.Cursor(System.BitConverter.ToInt16(exe, h + 8), System.BitConverter.ToInt16(exe, h + 10), System.BitConverter.ToInt16(exe, h + 12),
                      System.BitConverter.ToInt16(exe, h + 14), System.BitConverter.ToInt16(exe, h + 6), (sbyte)exe[h + 1]);
@@ -298,12 +302,13 @@ namespace DW1Remake.Game
         {
             _routineOn = true;
             // laid out like the game's own Do you want to save? (YesNoScreen), wider for two lines of our words
-            var s = YesNoScreen("Return to the title screen?", 0x3A, 0x37, 0x57, 0x63, 0x37, 87);
+            // ours: No on top and chosen first, Yes under it, so a slip does not end the game
+            var s = YesNoScreen("Return to the title screen?", 0x3A, 0x37, 0x63, 0x57, 0x37, 87);
             s.Text("Anything not saved is lost.", 0x3A, 0x37 + 12);
             s.Box(0x30, 0x32, 0xE0, 0x20); s.Box(0x30, 0x52, 0x38, 0x22);
             int answer = 0;
             yield return Ask(s, a => answer = a);
-            if (answer == 1 && s.Pos == 0)
+            if (answer == 1 && s.Pos == 1)
             {
                 // the same way the game's own end goes back to the title (PlayableRoomFinale): the whole scene starts again
                 s_toTitle = true;
@@ -356,6 +361,24 @@ namespace DW1Remake.Game
             result(answer == 1 && s.Pos == 0);
         }
 
+        // ours: a question with No on top (chosen first) and Yes under it; true = Yes
+        IEnumerator ConfirmNoFirst(string text, System.Action<bool> result)
+        {
+            text = DW1Remake.Formats.Tr.Text(text, "ours");
+            var s = new SysScreen();
+            var lines = Wrap(text, 0x110 - 0x14);
+            for (int i = 0; i < lines.Count; i++) s.Text(lines[i], 0x22, 0x37 + 12 * i);
+            s.Box(0x18, 0x32, 0x110, 12 * lines.Count + 10);
+            int y = 0x37 + 12 * lines.Count + 0x12;
+            s.Text(Exe(0x801346B0), 0x22, y); s.Text(Exe(0x801346AC), 0x22, y + 12);     // No / Yes
+            s.Box(0x18, y - 5, 0x38, 0x22);
+            s.Cursor(0x22 - 3, y, 33, 12, 12, 2);
+            s.Pos = 0;
+            int answer = 0;
+            yield return Ask(s, a => answer = a);
+            result(answer == 1 && s.Pos == 1);
+        }
+
         IEnumerator ExportSave()
         {
             int card = -1;
@@ -364,15 +387,15 @@ namespace DW1Remake.Game
             int slot = -1;
             yield return SlotList(1, card, r => slot = r, DW1Remake.Formats.Tr.Format("EXPORT  CARD {0}", card + 1));       // used slots only
             if (slot < 0) yield break;
-            string name = "DW1Remake_card" + (card + 1) + "_slot" + (slot + 1).ToString("00") + ".json", text = null, err = null;
+            string name = "DW1UnityBattle_card" + (card + 1) + "_slot" + (slot + 1).ToString("00") + ".json", text = null, err = null;
             bool go = false;
 #if UNITY_WEBGL && !UNITY_EDITOR
             yield return Confirm(DW1Remake.Formats.Tr.Format("The save goes to your downloads as {0}. If a file of that name is already there, the browser keeps both or asks you.", name), r => go = r);
 #else
-            string target = Path.Combine(Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile), "Downloads"), name);
+            string target = Path.Combine(ExportFolder, name);
             yield return Confirm(File.Exists(target)
-                ? DW1Remake.Formats.Tr.Format("Your Downloads folder already has {0}. It will be replaced by this save. Go on?", name)
-                : DW1Remake.Formats.Tr.Format("The save goes to your Downloads folder as {0}. A file there with the same name would be replaced. Go on?", name), r => go = r);
+                ? DW1Remake.Formats.Tr.Format("Documents/DW1UnityBattle already has {0}. It will be replaced by this save. Go on?", name)
+                : DW1Remake.Formats.Tr.Format("The save goes to Documents/DW1UnityBattle as {0}. A file there with the same name would be replaced. Go on?", name), r => go = r);
 #endif
             if (!go) yield break;
             try { text = File.ReadAllText(SlotPath(card, slot)); }
@@ -384,14 +407,24 @@ namespace DW1Remake.Game
             {
                 try
                 {
-                    string dir = Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile), "Downloads");
+                    string dir = ExportFolder;
                     Directory.CreateDirectory(dir);
                     File.WriteAllText(Path.Combine(dir, name), text);
                 }
                 catch (System.Exception e) { err = DW1Remake.Formats.Tr.Text("The save could not be written.", "ours") + " " + e.Message; }
             }
 #endif
+#if UNITY_WEBGL && !UNITY_EDITOR
             yield return Notice(err ?? DW1Remake.Formats.Tr.Format("The save is in your Downloads folder: {0}", name));
+#else
+            yield return Notice(err ?? DW1Remake.Formats.Tr.Format("The save is in Documents/DW1UnityBattle: {0}", name));
+#endif
+        }
+
+        /// <summary>Where EXPORT SAVE writes on a PC (and where IMPORT SAVE's file box opens): Documents\DW1UnityBattle.</summary>
+        public static string ExportFolder
+        {
+            get { return Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.MyDocuments), "DW1UnityBattle"); }
         }
 
         string _importText; bool _importWaiting;
@@ -562,6 +595,40 @@ namespace DW1Remake.Game
             }
         }
 
+        SysScreen _initialMenu;
+        const int DiscBoxX = 0x18, DiscBoxY = 0x72, DiscBoxW = 0x110, DiscBoxH = 0x1E;
+
+        // ours: the disclaimer (the user's own words; CT and BANDAI are not translated)
+        static string Disclaimer
+        {
+            get
+            {
+                return L("Disclaimer: This is an unofficial, non-commercial fanmade project by CT via Unity. All characters, names, and related assets belong to BANDAI. This build is not affiliated with, endorsed, or sponsored by BANDAI.",
+                         "免責聲明：本作品是 CT 以 Unity 製作的非官方、非商業粉絲自製專案。所有角色、名稱及相關素材均屬 BANDAI 所有。本版本與 BANDAI 無任何關聯，亦未獲 BANDAI 認可或贊助。");
+            }
+        }
+
+        // ours: "UNITY BATTLE" in the manner of the picture's DIGIMON WORLD (heavy slanted capitals, a dark rim and drop shadow, a light upper
+        // half over a darker lower half), in red. Drawn with the font; no picture of ours is shipped
+        static void DrawUnityBattle(Rect r, int size)
+        {
+            const string word = "UNITY BATTLE";
+            var st = new GUIStyle(GUI.skin.label) { fontSize = size, fontStyle = FontStyle.BoldAndItalic, alignment = TextAnchor.MiddleCenter, clipping = TextClipping.Overflow, wordWrap = false };
+            float o = Mathf.Max(2f, size / 22f);
+            st.normal.textColor = new Color(0f, 0f, 0f, 0.85f);
+            GUI.Label(new Rect(r.x + o * 2f, r.y + o * 2f, r.width, r.height), word, st);           // drop shadow
+            st.normal.textColor = new Color(0.16f, 0.02f, 0.02f);
+            for (int dx = -1; dx <= 1; dx++)
+                for (int dy = -1; dy <= 1; dy++)
+                    if (dx != 0 || dy != 0) GUI.Label(new Rect(r.x + dx * o, r.y + dy * o, r.width, r.height), word, st);     // the dark rim
+            st.normal.textColor = new Color(0.62f, 0.03f, 0.03f);
+            GUI.Label(r, word, st);                                                                     // the darker lower half
+            GUI.BeginGroup(new Rect(r.x, r.y, r.width, r.height * 0.53f));
+            st.normal.textColor = new Color(1f, 0.28f, 0.18f);
+            GUI.Label(new Rect(0f, 0f, r.width, r.height), word, st);                                   // the light upper half
+            GUI.EndGroup();
+        }
+
         // renderPressStartToContinue / renderMainMenuBackground: the 320 x 240 picture (two quads, 256 + 64 wide) and, on the landing screen,
         // "PRESS START" from the picture's rows 0xF1-0xFA (121 x 10) at (-0x36, 0x32), tinted (0, 0x80, 0), shown 30 frames of every 60
         void DrawTitle()
@@ -580,9 +647,28 @@ namespace DW1Remake.Game
                                                  new Rect(0f, (H - 0xF1 - 10) / H, 121f / TimImage.W(t.Picture), 10f / H));
                     GUI.color = o;
                 }
+                // ours (the user's decision 2026-11-13; not in the original): "UNITY BATTLE" under the picture's DIGIMON WORLD, and on the
+                // landing screen the disclaimer under PRESS START
+                if (t.Landing)
+                {
+                    DrawUnityBattle(new Rect(SysX(40), SysY(150), 240 * 4.42f, 19 * 4.42f), 78);
+                    var st = new GUIStyle(GUI.skin.label) { fontSize = 19, alignment = TextAnchor.UpperCenter, wordWrap = true, clipping = TextClipping.Overflow };
+                    st.normal.textColor = new Color(0.82f, 0.82f, 0.82f);
+                    GUI.Label(new Rect(SysX(12), SysY(184), 296 * 4.42f, 24 * 4.42f), Disclaimer, st);
+                }
+                else DrawUnityBattle(new Rect(SysX(170), SysY(229), 128 * 4.42f, 11 * 4.42f), 44);
             }
             UiKit.End();
             DrawSysScreen();
+            if (_sys != null && _sys == _initialMenu)
+            {
+                // the disclaimer's words in the box InitialMenu drew
+                UiKit.Begin();
+                var st = new GUIStyle(GUI.skin.label) { fontSize = 21, alignment = TextAnchor.MiddleLeft, wordWrap = true, clipping = TextClipping.Overflow };
+                st.normal.textColor = Color.white;
+                GUI.Label(new Rect(SysX(DiscBoxX + 6), SysY(DiscBoxY + 2), (DiscBoxW - 12) * 4.42f, (DiscBoxH - 4) * 4.42f), Disclaimer, st);
+                UiKit.End();
+            }
             if (t.Black > 0.001f)
             {
                 var o = GUI.color; GUI.color = new Color(0, 0, 0, t.Black);

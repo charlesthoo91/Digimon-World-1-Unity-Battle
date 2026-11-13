@@ -58,6 +58,9 @@ namespace DW1Remake.Formats
                 }
         }
 
+        /// <summary>LoadImage of words already written into Px: the pages made from them are made again.</summary>
+        public void Changed() { _version++; }
+
         /// <summary>MoveImage: copies a w x h block of 16-bit words.</summary>
         public void Move(int sx, int sy, int w, int h, int dx, int dy)
         {

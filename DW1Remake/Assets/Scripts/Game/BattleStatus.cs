@@ -83,6 +83,26 @@ namespace DW1Remake.Game
             }
         }
 
+        /// <summary>Ours (online copy): a fighter's conditions as the host's fight has them (flags 1 poison, 2 confusion, 4 stun, 8 flat; the effect
+        /// shown over it; the stun's frames; the flat timer and picture). The effects and the flat picture then show as on the host.</summary>
+        public void PuppetConditions(Fighter f, int flags, int fx, int stunFrames, int flatTimer, int flatSprite)
+        {
+            if (f == null || f.T == null) return;
+            f.Poisoned = (flags & 1) != 0; f.Confused = (flags & 2) != 0; f.Stunned = (flags & 4) != 0; f.Flattened = (flags & 8) != 0;
+            f.StunFrames = stunFrames;
+            if (f.FxKind != fx)
+            {
+                foreach (var c in _condFx) if (c.Owner == f) c.Gone = true;
+                _condFx.RemoveAll(c => c.Gone);
+                f.FxKind = 0;
+                if (fx >= 1 && fx <= 3) AddCondVisual(f, fx);
+            }
+            int was = f.FlatTimer;
+            f.FlatTimer = flatTimer; f.FlatSprite = flatSprite;
+            if (flatTimer > 0 && flatTimer < 0x40) ApplyFlattenScale(f, flatTimer);
+            else if (flatTimer == 0 && was != 0 && !f.Flattened) f.T.localScale = f.Scale;
+        }
+
         // BTL_resetFighterAction: cooldown, senile timer and the charge / cooldown / senile flags cleared
         void ResetFighterAction(Fighter f) { f.Cool = 0; f.Stall = 0; }
 
@@ -125,7 +145,7 @@ namespace DW1Remake.Game
             while (_condAcc >= Frame)
             {
                 _condAcc -= Frame;
-                bool fight = _phase == Phase.Fight;
+                bool fight = _phase == Phase.Fight && !Puppet;       // the online copy: the host's conditions come with its state (PuppetConditions)
                 bool noAi = _charging || FinishingFighter() != null;        // NO_AI_FLAG
                 if (fight)
                     foreach (var f in Fighters())

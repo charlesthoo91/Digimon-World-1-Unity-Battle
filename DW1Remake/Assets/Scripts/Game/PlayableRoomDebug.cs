@@ -113,6 +113,15 @@ namespace DW1Remake.Game
             // getCardAmount: the count (0-9) of each of the 66 cards
             if (ModSettings.CheatCards) for (int i = 0; i < 66; i++) { if (_state.CardCount[i] == 0) _state.CardCount[i] = 1; _state.Cards[i] = true; }
             if (ModSettings.CheatBits) _state.Money = 999999;
+            // as the debug menu's "Learn every technique"
+            // the game's tops (Battle.StatCap): HP / MP 9999, the others 999; full HP and MP
+            if (ModSettings.CheatStats)
+            {
+                _state.Stats[4] = 9999; _state.Stats[5] = 9999;
+                for (int i = 0; i < 4; i++) _state.Stats[i] = 999;
+                _state.Stats[6] = 9999; _state.Stats[7] = 9999;
+            }
+            if (ModSettings.CheatTechs) for (int i = 0; i < 58 && i < _state.Techs.Length; i++) _state.Techs[i] = true;
         }
 
         // L1 + R1 held and Circle pressed while the game clock runs: one hour on (as the dev key T)

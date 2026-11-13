@@ -51,8 +51,12 @@ namespace DW1Remake.Game
             _routineOn = true;
             if (_anim != null) _anim.SetSlot(IdleSlot);
             int pick = 0;
-            yield return ModAsk("Battle with a friend online,\nor enter a tournament?", new[] { "Online battle", "Tournament", "Leave" }, GreymonScript, a => pick = a);
+            yield return ModAsk("Battle with a friend online,\nor enter a tournament?", new[] { "Online", "Tournament", "Leave" }, GreymonScript, a => pick = a);
             if (pick == 1) { _routineOn = false; original(); yield break; }
+            if (pick != 0) { _routineOn = false; yield break; }
+            // ours: the box holds three answers, so "Online" asks which (the online tournament: PlayableRoomOnlineTournament)
+            yield return ModAsk("A battle with one friend,\nor a tournament of up to 8 players?", new[] { "Online battle", "Online tournament", "Back" }, GreymonScript, a => pick = a);
+            if (pick == 1) { yield return OnlineTournament(); _routineOn = false; yield break; }
             if (pick != 0) { _routineOn = false; yield break; }
 
             _onPos = 0; _onNote = null;
@@ -147,12 +151,20 @@ namespace DW1Remake.Game
             if (m.Length < 1) return;
             if (m[0] == MsgProfile && m.Length >= 19)
             {
-                System.Func<int, int> u16 = i => (m[1 + 2 * i] << 8) | m[2 + 2 * i];
-                _friend = new FriendProfile { Type = u16(0), Hp = u16(1), Mp = u16(2), Off = u16(3), Def = u16(4), Spd = u16(5), Brain = u16(6), Name = Encoding.UTF8.GetString(m, 19, m.Length - 19) };
-                for (int i = 0; i < 4; i++) _friend.Techs[i] = m[15 + i];
+                _friend = ParseProfile(m);
                 Debug.Log("[online] friend's partner: " + _friend.Name + " (type " + _friend.Type + ")");
             }
             else ReadMatch(m);
+        }
+
+        // a profile message (MyProfile) back into its numbers; null when it is too short
+        static FriendProfile ParseProfile(byte[] m)
+        {
+            if (m == null || m.Length < 19 || m[0] != MsgProfile) return null;
+            System.Func<int, int> u16 = i => (m[1 + 2 * i] << 8) | m[2 + 2 * i];
+            var p = new FriendProfile { Type = u16(0), Hp = u16(1), Mp = u16(2), Off = u16(3), Def = u16(4), Spd = u16(5), Brain = u16(6), Name = Encoding.UTF8.GetString(m, 19, m.Length - 19) };
+            for (int i = 0; i < 4; i++) p.Techs[i] = m[15 + i];
+            return p;
         }
 
         // ---------------------------------------------------------------- the link screen, in the game's own boxes, font and cursor (SysScreen,

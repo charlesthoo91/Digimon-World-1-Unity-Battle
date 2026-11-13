@@ -810,7 +810,7 @@ namespace DW1Remake.Game
         void DrawStatusBars()
         {
             var art = _battle != null ? _battle.Art : null;
-            if (art == null || _partner == null || _setup != null && _setup.Active || Event.current.type != EventType.Repaint || _arenaOn || _onlineOn) return;      // (not under the online battle screen, ours)
+            if (art == null || _partner == null || _setup != null && _setup.Active || Event.current.type != EventType.Repaint || _arenaOn || _onlineOn || _otOn) return;      // (not under the online battle screen, ours)
             _statusAcc += Time.deltaTime;
             while (_statusAcc >= 0.05f) { _statusAcc -= 0.05f; _statusX = Mathf.Clamp(_statusX + (GameTimeRuns ? -50 : 50), 75, 240); }
             int x = _statusX, happy = _state.Happiness, disc = _state.Discipline;
@@ -845,7 +845,7 @@ namespace DW1Remake.Game
         void DrawClock()
         {
             var art = _battle != null ? _battle.Art : null;
-            if (art == null || _care == null || _partner == null || _setup != null && _setup.Active || _arenaOn || _onlineOn) { if (_clockPlate != null) _clockPlate.Remove(); return; }
+            if (art == null || _care == null || _partner == null || _setup != null && _setup.Active || _arenaOn || _onlineOn || _otOn) { if (_clockPlate != null) _clockPlate.Remove(); return; }
             if (Event.current.type != EventType.Repaint) return;
             _clockAcc += Time.deltaTime;
             while (_clockAcc >= 0.05f) { _clockAcc -= 0.05f; _clockX = Mathf.Clamp(_clockX + (GameTimeRuns ? 50 : -50), -220, -135); }
@@ -875,7 +875,8 @@ namespace DW1Remake.Game
         void DrawCareOverlay()
         {
             var art = _battle != null ? _battle.Art : null;
-            if (_cam != null && art != null && !(_menus != null && _menus.Active) && !(_battle != null && _battle.Active) && _partner != null && _partner.gameObject.activeInHierarchy)
+            // (ours: not over the online battle / tournament screens, which stop the world as the Triangle menu does)
+            if (_cam != null && art != null && !(_menus != null && _menus.Active) && !(_battle != null && _battle.Active) && _partner != null && _partner.gameObject.activeInHierarchy && !OnlineScreenOpen && !_tourOn && !_arenaOn)
             {
                 UiKit.Begin();
                 if (Time.time - _bubbleStart >= 3f)

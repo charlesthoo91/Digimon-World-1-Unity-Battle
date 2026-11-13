@@ -44,9 +44,9 @@ namespace DW1Remake.Game
             if (_ai != null) return true;
             if (_aiTried) return false;
             _aiTried = true;
-            if (!SystemInfo.supportsComputeShaders) { _aiError = "this graphics card cannot run compute shaders"; return false; }
+            if (!SystemInfo.supportsComputeShaders) { _aiError = L("this graphics card cannot run compute shaders", "這張顯示卡無法執行運算著色器"); return false; }
             string path = FindUpscaylModel("remacri-4x");
-            if (path == null) { _aiError = "Upscayl's remacri-4x model was not found (Program Files\\Upscayl\\resources\\models)"; return false; }
+            if (path == null) { _aiError = L("Upscayl was not found. Install Upscayl in C:\\Program Files\\Upscayl\\ and try again", "找不到 Upscayl。請將 Upscayl 安裝在 C:\\Program Files\\Upscayl\\ 後再試一次"); return false; }
             float t0 = Time.realtimeSinceStartup;
             _ai = NcnnUpscaler.Load(path, out _aiError);
             if (_ai != null) Debug.Log("[aiupscale] " + _ai.Name + " ready (x" + _ai.Scale + ") in " + (Time.realtimeSinceStartup - t0).ToString("0.0") + " s");

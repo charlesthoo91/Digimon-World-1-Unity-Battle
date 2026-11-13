@@ -53,7 +53,12 @@ namespace DW1Remake.Game
             for (int i = 0; i < 3; i++) _textM[9 + i] = BitConverter.ToInt32(Std, (int)(0x8007A718 + 0x14 + 4 * (uint)i - StdBase));
         }
 
-        void Snd(int bank, int n) { if (Sound != null) Sound(bank, n); }
+        void Snd(int bank, int n) { if (Sound != null && !Silent) Sound(bank, n); }
+        /// <summary>Ours (online tournament): the bracket is moved on without sounds (the rounds already shown, run through at once).</summary>
+        public bool Silent;
+        /// <summary>Ours (online tournament): the bracket stops (Finished) when STD_BRACKET_MATCH reaches this (5 = after the first round,
+        /// 7 = after the second); 0 = the original's stop at the player's own match. With PlayerSlot -1 every match is played out as the others.</summary>
+        public int StopAt;
 
         // ================================================================ the bracket
 
@@ -108,6 +113,7 @@ namespace DW1Remake.Game
         /// <summary>STD_updateBracket, one frame (it runs from the bracket's render function), then the punches and hit flashes (their own objects).</summary>
         public void TickBracket()
         {
+            if (StopAt > 0 && Match >= StopAt) { Finished = true; return; }
             int a, b;
             if (Match < 5) { a = (Match - 1) * 2; b = (Match - 1) * 2 + 1; }
             else if (Match < 7) { a = Round1[(Match - 5) * 2]; b = Round1[(Match - 5) * 2 + 1]; }
@@ -218,7 +224,7 @@ namespace DW1Remake.Game
                         break;
                 }
             }
-            if (match && Fade == 0x80 && _slots[PlayerSlot].State == 2)
+            if (match && PlayerSlot >= 0 && Fade == 0x80 && _slots[PlayerSlot].State == 2)
             {
                 int st = Match != 7 ? 6 : 7;
                 _slots[PlayerSlot].State = st;

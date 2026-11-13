@@ -1103,7 +1103,7 @@ namespace DW1Remake.Game
                 case 85: RibbonStrip(); break;
                 case 86: RingTube(); break;
                 case 87: ScreenOverlay(); break;
-                case 92: ScreenFade(); break;
+                case 92: if (OnArenaDim != null) OnArenaDim(Pop()); else ScreenFade(); break;      // the arena's own (STD_renderScreenFade, US)
                 case 93: if (!_r.MapOff) { _r.MapOff = true; _mapOff = true; if (OnMapLayer != null) OnMapLayer(false); } break;   // BTL_disableMapLayer
                 case 96: Put(m, Pop(), _r.Hit ? 0 : 1); break;                                           // BTL_isTargetUnhit
                 default:

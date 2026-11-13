@@ -104,3 +104,67 @@ CIRCLE	圈
 TRIANGLE	三角
 SQUARE	方塊
 RESET	重設
+Online	線上
+Online tournament	線上大賽
+Back	返回
+A battle with one friend,\nor a tournament of up to 8 players?	要和一位朋友對戰，\n還是參加最多 8 人的大賽？
+ONLINE TOURNAMENT	線上大賽
+A tournament for up to 8 players. Empty places become computer Digimon. Anyone can host; the host fights too.	最多 8 人參加的大賽。空位由電腦數碼寶貝補上。任何人都可以主持，主持者也要出賽。
+Host	主持
+Join	加入
+Choose the cup.	請選擇盃賽。
+Your partner cannot enter any cup that is open on your game.	你的夥伴無法參加你遊戲中開放的任何盃賽。
+Opening the tournament...	正在開設大賽……
+Code {0}   {1}	代碼 {0}   {1}
+{0} joining...	{0} 人加入中……
+Full. Starting in {0} s	已滿。{0} 秒後開始
+Start	開始
+Open tournaments	開放中的大賽
+Looking...	搜尋中……
+No open tournaments. Anyone can host one.	目前沒有開放中的大賽。任何人都可以主持一場。
+Refresh	重新整理
+{0}'s {1}	{0} 的{1}
+Waiting for the host to start.	等待主持者開始。
+Champion: {0}	冠軍：{0}
+Your match is starting...	你的比賽即將開始……
+Waiting for the other matches...	等待其他比賽結束……
+You are out. You can watch the results here.	你已被淘汰。可以在這裡查看結果。
+Close the tournament	結束大賽
+Linking with the host...	正在與主持者連線……
+That tournament is full.	這場大賽已經額滿。
+That tournament has already started.	這場大賽已經開始了。
+The host is not there right now.	主持者目前不在。
+The host closed the tournament.	主持者結束了大賽。
+The host did not answer.	主持者沒有回應。
+The link to the host was lost. The tournament is over for you.	與主持者的連線中斷了。你的大賽已結束。
+Your partner cannot enter this cup.	你的夥伴無法參加這個盃賽。
+That is not a game of this version.	這不是相同版本的遊戲。
+The tournament service could not be reached. Check the internet connection and try again.	無法連到大賽服務。請檢查網路連線後再試一次。
+This internet connection has played 20 tournaments in the last hour. Try again later.	這個網路連線在一小時內已進行 20 場大賽。請稍後再試。
+This internet connection already has 3 tournaments open. Close one first.	這個網路連線已有 3 場開放中的大賽。請先結束其中一場。
+SUDDEN DEATH	驟死戰
+Too many tournaments are open right now. Try again later.	目前開放中的大賽太多了。請稍後再試。
+WIN	勝
+LOSE	敗
+{0} of 8	{0} 人加入
+Free for all	自由參加
+Open the tournament	開設大賽
+Computer strength   {0}	電腦強度   {0}
+Free for all: any Digimon may enter. Computer Digimon come from those recruited in your game.	自由參加：任何數碼寶貝都能參加。電腦數碼寶貝來自你遊戲中已招募的數碼寶貝。
+Watch   {0} - {1}	觀看   {0} - {1}
+Waiting for the match's picture...	等待比賽畫面……
+You are out. You can watch the other matches.	你已被淘汰。可以觀看其他比賽。
+You are leaving the tournament. Leave?	你即將離開大賽。要離開嗎？
+You are leaving the tournament. It ends for everyone. Leave?	你即將離開大賽。大賽將對所有人結束。要離開嗎？
+ALL TECHNIQUES	全部招式
+On loading a game: every technique is learned.	載入存檔時：學會全部招式。
+Password   {0}	密碼   {0}
+Password	密碼
+Wrong password.	密碼錯誤。
+This tournament has a password. Ask the host for it.	這場大賽需要密碼。請向主持者索取。
+Digit {0}   {1}	第 {0} 位   {1}
+Documents/DW1UnityBattle already has {0}. It will be replaced by this save. Go on?	「文件/DW1UnityBattle」資料夾已經有 {0}。它會被這個存檔取代。要繼續嗎？
+The save goes to Documents/DW1UnityBattle as {0}. A file there with the same name would be replaced. Go on?	存檔會以 {0} 存到「文件/DW1UnityBattle」資料夾。同名的檔案會被取代。要繼續嗎？
+The save is in Documents/DW1UnityBattle: {0}	存檔已存到「文件/DW1UnityBattle」：{0}
+MAX STATS	能力全滿
+On loading a game: HP and MP 9999, Offense, Defense, Speed and Brains 999.	載入存檔時：HP 與 MP 9999，攻擊、防禦、速度與智力 999。

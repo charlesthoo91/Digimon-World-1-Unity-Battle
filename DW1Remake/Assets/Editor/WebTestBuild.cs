@@ -15,7 +15,7 @@ namespace DW1Remake.EditorTools
     /// </summary>
     public static class WebTestBuild
     {
-        const string Company = "DW1RemakeFan", Product = "DW1 Remake Test";
+        const string Company = "DW1UnityBattle", Product = "DW1UnityBattle";
 
         [MenuItem("Build/Web test build")]
         public static void Build()
@@ -27,7 +27,7 @@ namespace DW1Remake.EditorTools
 
             string[] scenes = EditorBuildSettings.scenes.Where(s => s.enabled).Select(s => s.path).ToArray();
             if (scenes.Length == 0) { EditorUtility.DisplayDialog("Web test build", "No scene is ticked in Build Settings.", "OK"); return; }
-            string outDir = Path.GetFullPath(Path.Combine(Application.dataPath, "../../Builds/DW1Remake-Web"));
+            string outDir = Path.GetFullPath(Path.Combine(Application.dataPath, "../../Builds/DW1UnityBattle-Web"));
             if (Directory.Exists(outDir)) Directory.Delete(outDir, true);
             Directory.CreateDirectory(outDir);
 

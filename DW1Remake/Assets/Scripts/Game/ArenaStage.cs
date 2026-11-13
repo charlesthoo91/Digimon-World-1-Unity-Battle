@@ -167,6 +167,31 @@ namespace DW1Remake.Game
             m.renderQueue += 1000;
         }
 
+        // modifySomeImage (main/efe.c), called by the arena's effect sub 92 (STD_renderScreenFade, US): the 256 x 7 colour sets at VRAM (512, 248),
+        // as they were saved (SOME_IMAGE_DATA), each of red, green and blue x (255 - dim) / 255, the STP bit kept; LoadImage
+        ushort[] _dimSaved; int _dimNow;
+        public void Dim(int dim)
+        {
+            dim = Mathf.Clamp(dim, 0, 255);
+            if (_dimSaved == null)
+            {
+                if (dim == 0) return;
+                _dimSaved = new ushort[256 * 7];
+                for (int r = 0; r < 7; r++) for (int c = 0; c < 256; c++) _dimSaved[r * 256 + c] = Vram.Px[(248 + r) * PsxVram.W + 512 + c];
+            }
+            if (dim == _dimNow) return;
+            _dimNow = dim;
+            for (int r = 0; r < 7; r++)
+                for (int c = 0; c < 256; c++)
+                {
+                    int s = _dimSaved[r * 256 + c];
+                    int red = (s & 31) * (255 - dim) / 255, green = ((s >> 5) & 31) * (255 - dim) / 255, blue = ((s >> 10) & 31) * (255 - dim) / 255;
+                    Vram.Px[(248 + r) * PsxVram.W + 512 + c] = (ushort)(red | (green << 5) | (blue << 10) | (s & 0x8000));
+                }
+            Vram.Changed();
+            foreach (var kv in _texMats) { var k = kv.Value; if (k[3] >= 512 && k[3] < 768 && k[4] >= 248 && k[4] < 255) kv.Key.SetTexture("_MainTex", Vram.Page(k[0], k[1], k[2], k[3], k[4], k[5])); }
+        }
+
         /// <summary>After MoveImage (the champion letters' shine): the materials on the page at (px, py) read their picture again.</summary>
         public void RefreshTextures(int px, int py)
         {

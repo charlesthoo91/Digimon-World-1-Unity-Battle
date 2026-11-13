@@ -66,10 +66,14 @@ namespace DW1Remake.Game
         public static bool CheatBits;
         /// <summary>L1 + R1 + Circle while the clock runs moves time on one hour (from the next loaded game).</summary>
         public static bool CheatHour;
+        /// <summary>Every technique learned (as the debug menu's "Learn every technique").</summary>
+        public static bool CheatTechs;
+        /// <summary>The six stats at the game's top (HP / MP 9999, Offense / Defense / Speed / Brains 999).</summary>
+        public static bool CheatStats;
 
         // all cheats off at each start of the game (also in the editor when Play starts without reloading the scripts)
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
-        static void CheatsOff() { CheatBank = CheatChart = CheatMedals = CheatCards = CheatBits = CheatHour = false; }
+        static void CheatsOff() { CheatBank = CheatChart = CheatMedals = CheatCards = CheatBits = CheatHour = CheatTechs = CheatStats = false; }
 
         public static int Volume { get { return Mathf.Clamp(GetInt("Volume", 100), 0, 100); } set { SetInt("Volume", value); } }
 

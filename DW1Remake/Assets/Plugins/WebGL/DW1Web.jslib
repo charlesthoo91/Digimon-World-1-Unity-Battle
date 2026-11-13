@@ -120,6 +120,47 @@ mergeInto(LibraryManager.library, {
     delete R.peers[id];
   },
 
+  // ---------------------------------------------------------------- online tournament: a text WebSocket to the tournament service (TournamentClient.cs)
+
+  DW1_WsOpen: function (urlPtr) {
+    var W = Module.dw1ws || (Module.dw1ws = { next: 1, socks: {} });
+    var id = W.next++;
+    var s = { ws: null, inbox: [], state: 0 };
+    W.socks[id] = s;
+    try {
+      s.ws = new WebSocket(UTF8ToString(urlPtr));
+      s.ws.onopen = function () { s.state = 1; };
+      s.ws.onmessage = function (e) { if (typeof e.data === 'string') s.inbox.push(e.data); };
+      s.ws.onclose = function () { s.state = 3; };
+      s.ws.onerror = function () { s.state = 3; };
+    } catch (e) { s.state = 3; console.log('[tournament] ' + e); }
+    return id;
+  },
+
+  // 0 opening, 1 open, 3 closed
+  DW1_WsState: function (id) { var s = Module.dw1ws && Module.dw1ws.socks[id]; return s ? s.state : 3; },
+
+  DW1_WsSend: function (id, textPtr) {
+    var s = Module.dw1ws && Module.dw1ws.socks[id];
+    if (s && s.ws && s.state === 1) { try { s.ws.send(UTF8ToString(textPtr)); } catch (e) { } }
+  },
+
+  // the next message, or "" when there is none
+  DW1_WsNext: function (id) {
+    var s = Module.dw1ws && Module.dw1ws.socks[id];
+    var text = s && s.inbox.length ? s.inbox.shift() : '';
+    var n = lengthBytesUTF8(text) + 1, buf = _malloc(n);
+    stringToUTF8(text, buf, n);
+    return buf;
+  },
+
+  DW1_WsClose: function (id) {
+    var W = Module.dw1ws, s = W && W.socks[id];
+    if (!s) return;
+    try { if (s.ws) s.ws.close(); } catch (e) { }
+    delete W.socks[id];
+  },
+
   // ---------------------------------------------------------------- the clipboard (online codes)
 
   DW1_CopyText: function (textPtr) {

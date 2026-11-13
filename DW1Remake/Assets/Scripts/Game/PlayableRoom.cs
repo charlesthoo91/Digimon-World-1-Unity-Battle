@@ -2576,7 +2576,7 @@ namespace DW1Remake.Game
                 if (!AutoClock || _care == null || _changing || _intro || _runner != null || _partner == null || _pFrozen) return false;
                 if (_setup != null && _setup.Active) return false;
                 if (FishIsFishing) return false;      // tickGameClock: no time passes while the boy fishes (isFishing)
-                return (_menus == null || !_menus.Active) && (_battle == null || !_battle.Active) && !(_onlineOn && !_onlineMatch);
+                return (_menus == null || !_menus.Active) && (_battle == null || !_battle.Active) && !OnlineScreenOpen;
             }
         }
 
@@ -2664,7 +2664,7 @@ namespace DW1Remake.Game
             _state.PlayMinutes += Time.deltaTime / 60f;
             bool fighting = _battle != null && _battle.Active;
             // the online battle screen (ours) stops the world as the Triangle menu does; its match does not
-            bool onlineScreen = _onlineOn && !_onlineMatch;
+            bool onlineScreen = OnlineScreenOpen;
             DigimonAnimator.Paused = (_menus != null && _menus.Active || onlineScreen) && !fighting;      // the Triangle menu stops everyone at once; the item page in a fight does not
             HideActors(_menus != null && _menus.HidesActors);
             if (onlineScreen) return;
@@ -3349,7 +3349,7 @@ namespace DW1Remake.Game
             bool has = (_runner != null || _routineOn) && (_line != null || _choiceOpts != null);
             // startBattle: the fight takes the screen over; the box comes back only when the script talks again
             // the arena (STD_initializeTournament) has no dialogue box: the script's box went with the map
-            if ((_runner == null && !_routineOn) || (_battle != null && _battle.Active) || _arenaOn || _onlineOn) { if (_dlg.Showing) _dlg.Shut(); _dlgKey = null; return true; }
+            if ((_runner == null && !_routineOn) || (_battle != null && _battle.Active) || _arenaOn || _onlineOn || _otOn) { if (_dlg.Showing) _dlg.Shut(); _dlgKey = null; return true; }
             if (!has) { if (_dlgKey != null) { _dlg.Clear(); _dlgKey = null; } return true; }
             if (_lineCustom && _choiceOpts == null) { if (!_dlg.Showing || !_dlg.Custom) { _dlg.SetupCustom(_customBox.x, _customBox.y, DialogueOrigin(_customBox.z)); _dlgKey = null; } }
             else if (!_dlg.Showing || _dlg.Custom || _dlg.Owner != _speaker) { _dlg.Setup(_speaker, DialogueOrigin(_speaker)); _dlgKey = null; }

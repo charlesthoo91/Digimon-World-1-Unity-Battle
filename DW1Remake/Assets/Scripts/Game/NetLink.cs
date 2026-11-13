@@ -17,7 +17,10 @@ namespace DW1Remake.Game
     {
         public enum State { Starting, Ready, Linking, Linked, Failed, Closed }
 
-        const int Version = 5;            // 5: the time option, a 2-byte counter and surrender; 4: WebRTC (PC and browser); 3 was the PC-only UDP link
+        /// <summary>6: the online tournament (its messages, sudden death); 5: the time option, a 2-byte counter and surrender; 4: WebRTC (PC and
+        /// browser); 3 was the PC-only UDP link. Only games of the same version link (and see each other's tournaments).</summary>
+        public const int LinkVersion = 6;
+        const int Version = LinkVersion;
         const byte MsgData = 1, MsgPing = 2, MsgPong = 3, MsgBye = 4;
 
         public State Now { get; private set; }

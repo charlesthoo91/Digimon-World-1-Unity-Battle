@@ -49,7 +49,7 @@ namespace DW1Remake.Game
             r.Add(new OptionRow { En = "RECENTRE CAMERA", Zh = "鏡頭回正", Value = () => OnOff(ModSettings.FightRecentre), Act = just(() => ModSettings.FightRecentre = !ModSettings.FightRecentre),
                 HelpEn = "After winning a wild battle, the camera glides back to the boy.", HelpZh = "贏得野外戰鬥後，鏡頭會移回主角身上。" });
             r.Add(new OptionRow { En = "AI UPSCALE", Zh = "AI 高畫質", Value = () => OnOff(ModSettings.AiUpscale), Act = ToggleAiUpscale,
-                HelpEn = "Sharpens the maps, Digimon and screen pictures with AI on your graphics card. PC only.", HelpZh = "以顯示卡上的 AI 讓地圖、數碼寶貝與畫面圖片更清晰。僅限電腦版。" });
+                HelpEn = "AI sharpens maps, Digimon and pictures on your graphics card. PC only. Needs Upscayl installed in C:\\Program Files\\Upscayl\\", HelpZh = "以顯示卡上的 AI 讓地圖、數碼寶貝與圖片更清晰。僅限電腦版。必須將 Upscayl 安裝在 C:\\Program Files\\Upscayl\\" });
             r.Add(new OptionRow { En = "ASPECT RATIO", Zh = "畫面比例", Value = () => ModSettings.Widescreen ? "16:9" : "4:3", Act = just(() => ModSettings.Widescreen = !ModSettings.Widescreen),
                 HelpEn = "4:3 as the original, or 16:9 to see more of the map at the sides.", HelpZh = "4:3 為原版比例；16:9 可看到地圖兩側更多範圍。" });
             r.Add(new OptionRow { En = "SCREEN MODE", Zh = "顯示模式", Value = () => ScreenModeName(ModSettings.ScreenMode),
@@ -65,8 +65,8 @@ namespace DW1Remake.Game
                 HelpEn = "Left and right turn the sound down or up, 0 to 100.", HelpZh = "按左右鍵調整音量，0 到 100。" });
             r.Add(new OptionRow { En = "LANGUAGE", Zh = "語言", Value = () => Zh ? "繁體中文" : "ENGLISH", Act = ToggleLanguage, Side = d => { ToggleLanguageNow(); },
                 HelpEn = "English or Traditional Chinese, for the whole game: texts, menus and names. The player and partner names stay as typed.", HelpZh = "英文或繁體中文，套用到整個遊戲：對話、選單與名稱。主角與夥伴的名字維持輸入時的樣子。" });
-            r.Add(new OptionRow { En = "CHEATS", Zh = "作弊", Act = () => ModsPage(CheatRows),
-                HelpEn = "Cheats that act when a saved game is loaded, and a quick way to pass the time.", HelpZh = "載入存檔時生效的作弊，以及快速推進時間的方法。" });
+            r.Add(new OptionRow { En = "CHEATS", Zh = "金手指", Act = () => ModsPage(CheatRows),
+                HelpEn = "Cheats that act when a saved game is loaded, and a quick way to pass the time.", HelpZh = "載入存檔時生效的金手指，以及快速推進時間的方法。" });
             r.Add(new OptionRow { En = "CONTROLS", Zh = "操作設定", Act = ControlsPage,
                 HelpEn = "Keyboard keys, controller buttons and the touch buttons.", HelpZh = "鍵盤、手把與觸控按鈕的設定。" });
             r.Add(new OptionRow { En = "EXPORT SAVE", Zh = "匯出存檔", Act = ExportSave,
@@ -93,6 +93,10 @@ namespace DW1Remake.Game
                 HelpEn = "On loading a game: at least 1 of each card.", HelpZh = "載入存檔時：每種卡片至少有 1 張。" });
             r.Add(new OptionRow { En = "MAX BITS", Zh = "最多位元", Value = () => OnOff(ModSettings.CheatBits), Act = just(() => ModSettings.CheatBits = !ModSettings.CheatBits),
                 HelpEn = "On loading a game: 999,999 Bits.", HelpZh = "載入存檔時：擁有 999,999 位元。" });
+            r.Add(new OptionRow { En = "ALL TECHNIQUES", Zh = "全部招式", Value = () => OnOff(ModSettings.CheatTechs), Act = just(() => ModSettings.CheatTechs = !ModSettings.CheatTechs),
+                HelpEn = "On loading a game: every technique is learned.", HelpZh = "載入存檔時：學會全部招式。" });
+            r.Add(new OptionRow { En = "MAX STATS", Zh = "能力全滿", Value = () => OnOff(ModSettings.CheatStats), Act = just(() => ModSettings.CheatStats = !ModSettings.CheatStats),
+                HelpEn = "On loading a game: HP and MP 9999, Offense, Defense, Speed and Brains 999.", HelpZh = "載入存檔時：HP 與 MP 9999，攻擊、防禦、速度與智力 999。" });
             r.Add(new OptionRow { En = "PASS AN HOUR", Zh = "快轉一小時", Value = () => OnOff(ModSettings.CheatHour), Act = just(() => ModSettings.CheatHour = !ModSettings.CheatHour),
                 HelpEn = "From the next loaded game: L1 + R1 + Circle while the clock runs moves time on by one hour.", HelpZh = "從下次載入存檔起：時鐘走動時按 L1 + R1 + 圈，時間前進一小時。" });
             r.Add(new OptionRow { En = "BACK", Zh = "返回", Act = null,
@@ -165,8 +169,8 @@ namespace DW1Remake.Game
 #else
             if (ModSettings.AiUpscale) { ModSettings.AiUpscale = false; yield break; }
             bool go = false;
-            yield return Confirm(L("AI UPSCALE makes the game sharper with AI on your graphics card. The first time a map, a Digimon or a picture shows, it is upscaled while you play, so the game may stutter for a few seconds. The results are kept as cache files on this PC, so later visits are instant. Turn it on?",
-                                   "AI 高畫質會用顯示卡上的 AI 讓遊戲畫面更清晰。每張地圖、每隻數碼寶貝或每張圖片第一次出現時，會在遊玩中進行放大，遊戲可能會卡頓幾秒。結果會以快取檔案存在這台電腦上，之後再看到就會立即顯示。要開啟嗎？"), r => go = r);
+            yield return Confirm(L("AI UPSCALE makes the game sharper with AI on your graphics card. The first time a map, a Digimon or a picture shows, it is upscaled while you play, so the game may stutter for a few seconds. The results are kept as cache files on this PC, so later visits are instant. Upscayl must be installed in C:\\Program Files\\Upscayl\\ for it to work. Turn it on?",
+                                   "AI 高畫質會用顯示卡上的 AI 讓遊戲畫面更清晰。每張地圖、每隻數碼寶貝或每張圖片第一次出現時，會在遊玩中進行放大，遊戲可能會卡頓幾秒。結果會以快取檔案存在這台電腦上，之後再看到就會立即顯示。必須將 Upscayl 安裝在 C:\\Program Files\\Upscayl\\ 才能使用。要開啟嗎？"), r => go = r);
             if (!go) yield break;
             ModSettings.AiUpscale = true;
             if (!AiReady()) { ModSettings.AiUpscale = false; yield return Notice(L("AI upscaling cannot run: ", "無法使用 AI 高畫質：") + _aiError + "."); }

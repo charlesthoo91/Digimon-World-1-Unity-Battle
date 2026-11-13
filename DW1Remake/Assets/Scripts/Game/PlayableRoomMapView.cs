@@ -91,7 +91,7 @@ namespace DW1Remake.Game
         void MapViewAutoOff()
         {
             if (!_mapViewOn) return;
-            if (!ModSettings.MapView || _runner != null || _pBusy || _routineOn || _fishTamer || _arenaOn || _onlineOn
+            if (!ModSettings.MapView || _runner != null || _pBusy || _routineOn || _fishTamer || _arenaOn || _onlineOn || _otOn
                 || (_battle != null && _battle.Active) || (_menus != null && _menus.Active) || (_setup != null && _setup.Active))
                 _mapViewOn = false;
         }

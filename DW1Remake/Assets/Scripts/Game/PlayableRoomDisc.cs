@@ -91,9 +91,10 @@ namespace DW1Remake.Game
         string BrowseForSave()
         {
 #if UNITY_EDITOR
-            return UnityEditor.EditorUtility.OpenFilePanelWithFilters("Choose a save file", "", new[] { "Save or memory card file", "json,mcd,mcr,mc,srm,gme,vmp,mcs", "All files", "*" });
+            return UnityEditor.EditorUtility.OpenFilePanelWithFilters("Choose a save file", Directory.Exists(ExportFolder) ? ExportFolder : "", new[] { "Save or memory card file", "json,mcd,mcr,mc,srm,gme,vmp,mcs", "All files", "*" });
 #elif UNITY_STANDALONE_WIN
-            return WinOpenFile.Show("Choose a save file", "Save or memory card file\0*.json;*.mcd;*.mcr;*.mc;*.srm;*.gme;*.vmp;*.mcs\0All files\0*.*\0\0");
+            return WinOpenFile.Show("Choose a save file", "Save or memory card file\0*.json;*.mcd;*.mcr;*.mc;*.srm;*.gme;*.vmp;*.mcs\0All files\0*.*\0\0",
+                                    Directory.Exists(ExportFolder) ? ExportFolder : null);
 #else
             return null;
 #endif
@@ -189,22 +190,23 @@ namespace DW1Remake.Game
             [DllImport("comdlg32.dll", CharSet = CharSet.Unicode)] static extern bool GetOpenFileNameW(ref OpenFileName ofn);
             [DllImport("user32.dll")] static extern IntPtr GetActiveWindow();
 
-            public static string Show(string titleText, string filterText)
+            public static string Show(string titleText, string filterText, string initialDir = null)
             {
                 const int Max = 4096;
-                IntPtr file = Marshal.AllocHGlobal(Max * 2), filter = IntPtr.Zero, title = IntPtr.Zero;
+                IntPtr file = Marshal.AllocHGlobal(Max * 2), filter = IntPtr.Zero, title = IntPtr.Zero, dir = IntPtr.Zero;
                 try
                 {
                     Marshal.WriteInt16(file, 0);
                     filter = Marshal.StringToHGlobalUni(filterText);
                     title = Marshal.StringToHGlobalUni(titleText);
+                    if (!string.IsNullOrEmpty(initialDir)) dir = Marshal.StringToHGlobalUni(initialDir);
                     var o = new OpenFileName
                     {
                         lStructSize = Marshal.SizeOf(typeof(OpenFileName)),
                         hwndOwner = GetActiveWindow(),
                         lpstrFilter = filter, nFilterIndex = 1,
                         lpstrFile = file, nMaxFile = Max,
-                        lpstrTitle = title,
+                        lpstrTitle = title, lpstrInitialDir = dir,
                         Flags = 0x00080000 | 0x00001000 | 0x00000800 | 0x00000008,      // OFN_EXPLORER | FILEMUSTEXIST | PATHMUSTEXIST | NOCHANGEDIR
                     };
                     return GetOpenFileNameW(ref o) ? Marshal.PtrToStringUni(file) : null;
@@ -213,7 +215,7 @@ namespace DW1Remake.Game
                 {
                     Marshal.FreeHGlobal(file);
                     if (filter != IntPtr.Zero) Marshal.FreeHGlobal(filter);
-                    if (title != IntPtr.Zero) Marshal.FreeHGlobal(title);
+                    if (title != IntPtr.Zero) Marshal.FreeHGlobal(title); if (dir != IntPtr.Zero) Marshal.FreeHGlobal(dir);
                 }
             }
         }

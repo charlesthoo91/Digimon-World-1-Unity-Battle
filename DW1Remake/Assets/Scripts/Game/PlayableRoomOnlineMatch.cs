@@ -38,20 +38,28 @@ namespace DW1Remake.Game
         readonly Quaternion[] _netRot = new Quaternion[2];
         readonly bool[] _netHave = new bool[2];
         string _onlineResult;
+        int _onlineLastResult;                     // the last match: 1 won, -1 lost, 0 a draw or the link was lost (_onlineLinkLost)
+        bool _onlineLinkLost, _onlineSudden;       // _onlineSudden: the online tournament's player vs player rule (Battle.SuddenDeath)
 
         // ---------------------------------------------------------------- the match (both PCs)
 
-        IEnumerator OnlineMatch(bool host)
+        // cpuType >= 0 (ours, the online tournament): a match against a computer Digimon of the cup on this PC alone (SpawnOpponent, RunMatch),
+        // set up and put back the same way
+        // watch != null (ours, the online tournament): this PC only watches another match as its copy: this PC's partner is swapped for the
+        // watched side's Digimon (watch) for the match and put back afterwards. final: the champion's scene and podium after a won final
+        IEnumerator OnlineMatch(bool host, int cpuType = -1, int cpuSlot = 0, int cup = 0, FriendProfile watch = null, bool final = false)
         {
             bool orders = _onlineOrders; _friendIntroDone = false;
             _onlineMatch = true; _onlineHost = host; _endSent = false; _netBattleSeen = false; _stateAcc = 0f; _onlineResult = null;
             _netHave[0] = _netHave[1] = false;
+            _sdSeenAt = -1f; _netSudden = false;
             _tourOn = true;
             _line = null; _choiceOpts = null;
             // a friendly match changes nothing in the game: the partner's numbers, techniques, Bits, condition and mood are put back afterwards
             var statsBack = (ushort[])_state.Stats.Clone(); var techsBack = (bool[])_state.Techs.Clone();
             int moneyBack = _state.Money, happyBack = _state.Happiness, discBack = _state.Discipline;
             int condBack = _state.Para.Condition, tiredBack = _state.Para.Tiredness;
+            int typeBack = PartnerType; string nameBack = _state.PartnerName;
             bool flag2 = _state.GetFlag(2);
             _state.SetFlag(2, !orders);             // orders off: IS_TAMERLESS_BATTLE (no orders, no items, no finishing-move button) on both PCs
             // both start with full HP and MP (the friend's numbers come as its maximums)
@@ -70,42 +78,57 @@ namespace DW1Remake.Game
             foreach (var n in _npcs) if (n.T != null && n.T.gameObject.activeSelf) { n.T.gameObject.SetActive(false); _tourHidden.Add(n); }
             bool boyShown = _player.gameObject.activeSelf;
             _player.gameObject.SetActive(false);
+            if (watch != null)
+            {
+                // watching: the watched side's Digimon and numbers stand in for this PC's partner until the match ends
+                SwapPartner(watch.Type);
+                _state.PartnerName = watch.Name;
+                _state.Stats[4] = (ushort)watch.Hp; _state.Stats[5] = (ushort)watch.Mp; _state.Stats[0] = (ushort)watch.Off;
+                _state.Stats[1] = (ushort)watch.Def; _state.Stats[2] = (ushort)watch.Spd; _state.Stats[3] = (ushort)watch.Brain;
+                _state.Stats[6] = _state.Stats[4]; _state.Stats[7] = _state.Stats[5];
+            }
             Vector3 home = _partner.position; Quaternion homeRot = _partner.rotation;
-            ArenaOn(arena, 0);
+            ArenaOn(arena, cpuType >= 0 ? cup : 0);
             _p1 = Fighter(_partner, _partnerAnim, PartnerType, true);
             _arenaScr.InitBracket();
             _camState = 10; _camTimer = 0;
-            Npc foe = SpawnFriend(_friend);
+            Npc foe = cpuType >= 0 ? SpawnOpponent(cpuType, cpuSlot, cup) : SpawnFriend(_friend);
             int result = 0; bool linkLost = false;
             if (foe != null)
             {
                 _battle.Puppet = !host;
-                _battle.EnemyCommanded = host && orders;
+                _battle.EnemyCommanded = host && orders && cpuType < 0;
+                _battle.SuddenDeath = _onlineSudden;
                 if (!host && orders) _battle.NetOrder = o => { if (_net != null) _net.SendSure(OrderMessage(o)); };
                 if (host)
                 {
-                    _battle.NetSwing = (f, tech, to) => { if (_net != null) _net.SendSure(new[] { MsgSwing, (byte)SideOf(f), (byte)tech }); };
-                    _battle.NetKnockOut = f => { if (_net != null) _net.SendSure(new[] { MsgKo, (byte)SideOf(f) }); };
-                    _battle.NetAura = f => { if (_net != null) _net.SendSure(new[] { MsgAura, (byte)SideOf(f) }); };
-                    _battle.NetVersus = () => { if (_net != null) _net.SendSure(new[] { MsgVersus }); };
-                    _battle.NetStopFx = f => { if (_net != null) _net.SendSure(new[] { MsgStopFx, (byte)SideOf(f) }); };
+                    _battle.NetSwing = (f, tech, to) => MatchSend(new[] { MsgSwing, (byte)SideOf(f), (byte)tech }, true);
+                    _battle.NetKnockOut = f => MatchSend(new[] { MsgKo, (byte)SideOf(f) }, true);
+                    _battle.NetAura = f => MatchSend(new[] { MsgAura, (byte)SideOf(f) }, true);
+                    _battle.NetVersus = () => MatchSend(new[] { MsgVersus }, true);
+                    _battle.NetStopFx = f => MatchSend(new[] { MsgStopFx, (byte)SideOf(f) }, true);
                 }
                 yield return TourFade(0f, 5);
-                yield return OnlineRunMatch(foe, arena, music, r => result = r);
+                if (cpuType >= 0) yield return RunMatch(foe, arena, music, r => result = r);
+                else yield return OnlineRunMatch(foe, arena, music, r => result = r);
                 if (_battle.WinnerSide == 2) result = 0;      // a draw (Result counts it as lost, as the tournament does)
-                linkLost = _net == null || _net.Now != NetLink.State.Linked;
+                linkLost = cpuType < 0 && (_net == null || _net.Now != NetLink.State.Linked);
                 _arena.ShowScene(0);
                 if (foe.T != null) Destroy(foe.T.gameObject);
+                // ours (online tournament): the champion's scene and podium, as STD_tournamentMain after a won final
+                if (final && result == 1 && watch == null) yield return OtChampionScene();
             }
             else Debug.LogWarning("[online] the friend's Digimon could not be made (type " + (_friend != null ? _friend.Type : -1) + ")");
             _tourFoe = null; _p2 = null;
-            _battle.TimerStart = 99; _battle.NoTimeLimit = false; _surrenderAsk = false; Battle.InputLocked = false;
+            _battle.TimerStart = 99; _battle.NoTimeLimit = false; _battle.SuddenDeath = false; _surrenderAsk = false; Battle.InputLocked = false;
+            _onlineLastResult = result; _onlineLinkLost = linkLost;
             _battle.Puppet = false; _battle.NetSwing = null; _battle.NetKnockOut = null; _battle.NetAura = null; _battle.NetVersus = null; _battle.NetStopFx = null; _battle.NetOrder = null; _battle.EnemyCommanded = false;
             // as STD_deinitializeTournament: back to the room
             if (_audio != null) { _audio.StopMusic(); _audio.StopSound(); }
             yield return TourFade(1f, 1);
             yield return ArenaFrames(0xB);
             ArenaOff();
+            if (watch != null) { SwapPartner(typeBack); _state.PartnerName = nameBack; }
             _cam.transform.SetPositionAndRotation(camPos, camRot);
             _cam.usePhysicalProperties = camPhys; _cam.gateFit = camGate; _cam.sensorSize = camSensor; _cam.focalLength = camFocal; _cam.lensShift = camShift;
             if (!camPhys) _cam.fieldOfView = camFov;
@@ -134,9 +157,9 @@ namespace DW1Remake.Game
             _p2 = Fighter(foe.T, foe.Anim, foe.Data.Type, false);
             if (_partner != null) _partner.gameObject.SetActive(true);
             yield return RunIntro(which, music);
-            if (_net != null) _net.SendSure(new[] { MsgIntroDone });
+            if (!_otWatching) MatchSend(new[] { MsgIntroDone }, true);
             float waited = 0f;
-            while (!_friendIntroDone && _net != null && _net.Now == NetLink.State.Linked && waited < 120f)
+            while (!_otWatching && !_friendIntroDone && _net != null && _net.Now == NetLink.State.Linked && waited < 120f)
             {
                 if (waited > 0.5f) Say(DW1Remake.Formats.Tr.Text("Waiting for your friend to finish the introductions...", "ours"));
                 waited += Time.deltaTime;
@@ -205,22 +228,24 @@ namespace DW1Remake.Game
                 if (_battle.Active && _netBattleSeen)
                 {
                     _stateAcc += Time.deltaTime;
-                    if (_stateAcc >= 0.05f) { _stateAcc = 0f; _net.SendFast(StateMessage()); }
+                    if (_stateAcc >= 0.05f) { _stateAcc = 0f; MatchSend(StateMessage(), false); }
                     var cols = new List<Color>(); var icons = new List<int>();
                     var pops = _battle.TakeNewPops(cols, icons);
-                    for (int i = 0; i < pops.Count; i++) _net.SendSure(PopMessage(pops[i].Key, pops[i].Value, cols[i], icons[i]));
+                    for (int i = 0; i < pops.Count; i++) MatchSend(PopMessage(pops[i].Key, pops[i].Value, cols[i], icons[i]), true);
                 }
                 else if (_netBattleSeen && !_endSent)
                 {
                     _endSent = true;
-                    _net.SendSure(new[] { MsgEnd, (byte)(sbyte)_battle.Result, (byte)Mathf.Max(0, _battle.WinnerSide) });
+                    MatchSend(new[] { MsgEnd, (byte)(sbyte)_battle.Result, (byte)Mathf.Max(0, _battle.WinnerSide) }, true);
                 }
                 return;
             }
             // the friend's PC: glide to the host's places (sent 20 times a second) so the movement looks smooth
             if (_battle.Active && _battle.Puppet)
             {
-                if (_net.Now != NetLink.State.Linked) { _battle.PuppetEnd(0, 2); return; }      // the link was lost: the copy cannot go on
+                // the link was lost: the copy cannot go on (watching: nothing came for 15 s)
+                bool lost = _otWatching ? Time.realtimeSinceStartup - _otFeedAt > 15f : _net == null || _net.Now != NetLink.State.Linked;
+                if (lost) { _battle.PuppetEnd(0, 2); return; }
                 float k = 1f - Mathf.Exp(-15f * Time.deltaTime);
                 for (int s = 0; s < 2; s++)
                 {
@@ -272,9 +297,17 @@ namespace DW1Remake.Game
 
         // ---------------------------------------------------------------- surrender (ours): L2 + R2, then Yes / No
 
+        // a match message to the other PC, and (ours, online tournament) a copy for the players watching it
+        System.Action<byte[]> _matchMirror;
+        void MatchSend(byte[] m, bool sure)
+        {
+            if (_net != null) { if (sure) _net.SendSure(m); else _net.SendFast(m); }
+            if (_matchMirror != null) _matchMirror(m);
+        }
+
         void SurrenderTick()
         {
-            bool fighting = _battle.Active && _battle.TournamentStartDone;
+            bool fighting = _battle.Active && _battle.TournamentStartDone && !_otWatching;
             if (!fighting) { if (_surrenderAsk) { _surrenderAsk = false; Battle.InputLocked = false; } return; }
             if (!_surrenderAsk)
             {
@@ -296,8 +329,40 @@ namespace DW1Remake.Game
             else if (_net != null) _net.SendSure(new[] { MsgSurrender });
         }
 
+        // ---------------------------------------------------------------- sudden death (ours, the online tournament): the word, then a small label
+
+        float _sdSeenAt = -1f; bool _netSudden;
+
+        void DrawSuddenDeath()
+        {
+            if (!_onlineMatch || _battle == null || !_battle.Active) return;
+            bool on = _onlineHost ? _battle.SuddenDeathOn : _netSudden;
+            if (!on) return;
+            if (_sdSeenAt < 0f) { _sdSeenAt = Time.time; Snd(0x11); }
+            float t = Time.time - _sdSeenAt;
+            string word = DW1Remake.Formats.Tr.Text("SUDDEN DEATH", "ours");
+            UiKit.Begin();
+            var pic = new Rect(0f, 0f, 1415f, 1060f);      // the canvas inside UiKit.Begin
+            if (t < 2.5f)
+            {
+                // the word drops in from twice its size, holds, then fades
+                float k = Mathf.Clamp01(t / 0.25f), size = Mathf.Lerp(220f, 110f, k), a = t < 2f ? 1f : 1f - (t - 2f) / 0.5f;
+                var r = new Rect(pic.x, pic.y + pic.height * 0.32f, pic.width, pic.height * 0.3f);
+                UiKit.Text(new Rect(r.x + 8, r.y + 8, r.width, r.height), word, (int)size, new Color(0f, 0f, 0f, a), TextAnchor.MiddleCenter);
+                UiKit.Text(r, word, (int)size, new Color(1f, 0.25f + 0.2f * Mathf.PingPong(t * 4f, 1f), 0.15f, a), TextAnchor.MiddleCenter);
+            }
+            else
+            {
+                var r = new Rect(pic.x, pic.y + pic.height * 0.195f, pic.width, 50f);      // just under the counter's plate
+                UiKit.Text(new Rect(r.x + 3, r.y + 3, r.width, r.height), word, 40, Color.black, TextAnchor.MiddleCenter);
+                UiKit.Text(r, word, 40, new Color(1f, 0.35f, 0.15f), TextAnchor.MiddleCenter);
+            }
+            UiKit.End();
+        }
+
         void DrawSurrender()
         {
+            DrawSuddenDeath();
             if (!_surrenderAsk || !_onlineMatch) return;
             UiKit.Begin();
             var r = new Rect(457, 420, 500, 190);
@@ -328,7 +393,7 @@ namespace DW1Remake.Game
             var ms = new MemoryStream(); var w = new BinaryWriter(ms);
             w.Write(MsgState);
             w.Write((ushort)Mathf.Clamp(_battle.Timer, 0, 65535));
-            w.Write((byte)((_battle.TimeUpWord ? 1 : 0) | (_battle.TimeUpBox ? 2 : 0)));
+            w.Write((byte)((_battle.TimeUpWord ? 1 : 0) | (_battle.TimeUpBox ? 2 : 0) | (_battle.SuddenDeathOn ? 4 : 0)));
             w.Write((ushort)Mathf.Clamp(_battle.TourDamage[0], 0, 65535)); w.Write((ushort)Mathf.Clamp(_battle.TourDamage[1], 0, 65535));
             for (int s = 0; s < 2; s++)
             {
@@ -338,6 +403,9 @@ namespace DW1Remake.Game
                 w.Write(f.T.rotation.eulerAngles.y);
                 w.Write((byte)(f.A != null ? f.A.Slot : 0)); w.Write((byte)(f.A != null && f.A.PlaysOnce ? 1 : 0));
                 w.Write((ushort)Mathf.Clamp(f.Hp, 0, 65535)); w.Write((ushort)Mathf.Clamp(f.Mp, 0, 65535)); w.Write((ushort)Mathf.Clamp(f.Finish, 0, 65535));
+                // the conditions (poison, confusion, stun, flat), their effect and the flat timer / picture
+                w.Write((byte)((f.Poisoned ? 1 : 0) | (f.Confused ? 2 : 0) | (f.Stunned ? 4 : 0) | (f.Flattened ? 8 : 0))); w.Write((byte)f.FxKind);
+                w.Write((ushort)Mathf.Clamp(f.StunFrames, 0, 65535)); w.Write((short)Mathf.Clamp(f.FlatTimer, -1, 32767)); w.Write((sbyte)Mathf.Clamp(f.FlatSprite, -1, 127));
             }
             return ms.ToArray();
         }
@@ -351,7 +419,7 @@ namespace DW1Remake.Game
                 r.ReadByte();
                 _battle.Timer = r.ReadUInt16();
                 int flags = r.ReadByte();
-                _battle.TimeUpWord = (flags & 1) != 0; _battle.TimeUpBox = (flags & 2) != 0;
+                _battle.TimeUpWord = (flags & 1) != 0; _battle.TimeUpBox = (flags & 2) != 0; _netSudden = (flags & 4) != 0;
                 int d0 = r.ReadUInt16(), d1 = r.ReadUInt16();
                 _battle.TourDamage[0] = d1; _battle.TourDamage[1] = d0;          // [0] = what this PC's partner lost
                 for (int s = 0; s < 2; s++)
@@ -360,6 +428,7 @@ namespace DW1Remake.Game
                     float yaw = r.ReadSingle();
                     int slot = r.ReadByte(); bool once = r.ReadByte() != 0;
                     int hp = r.ReadUInt16(), mp = r.ReadUInt16(), fin = r.ReadUInt16();
+                    int cflags = r.ReadByte(), cfx = r.ReadByte(), stun = r.ReadUInt16(), flatT = r.ReadInt16(), flatS = r.ReadSByte();
                     var f = NetSide(s);
                     if (f == null) continue;
                     _netPos[s] = NetIn(g);
@@ -368,6 +437,7 @@ namespace DW1Remake.Game
                     _netHave[s] = true;
                     if (f.A != null && f.A.Slot != slot && f.A.HasSlot(slot)) f.A.SetSlot(slot, once);
                     _battle.PuppetNumbers(f, hp, mp, fin);
+                    _battle.PuppetConditions(f, cflags, cfx, stun, flatT, flatS);
                 }
             }
             catch (EndOfStreamException) { }

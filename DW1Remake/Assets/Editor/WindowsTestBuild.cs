@@ -18,7 +18,7 @@ namespace DW1Remake.EditorTools
     public static class WindowsTestBuild
     {
         const string KeepFolder = "Assets/Resources/BuildKeep";
-        const string Company = "DW1RemakeFan", Product = "DW1 Remake Test";
+        const string Company = "DW1UnityBattle", Product = "DW1UnityBattle";
 
         [MenuItem("Build/Windows test build")]
         public static void Build()
@@ -28,7 +28,7 @@ namespace DW1Remake.EditorTools
 
             string[] scenes = EditorBuildSettings.scenes.Where(s => s.enabled).Select(s => s.path).ToArray();
             if (scenes.Length == 0) { EditorUtility.DisplayDialog("Windows test build", "No scene is ticked in Build Settings.", "OK"); return; }
-            string outDir = Path.GetFullPath(Path.Combine(Application.dataPath, "../../Builds/DW1Remake-Windows"));
+            string outDir = Path.GetFullPath(Path.Combine(Application.dataPath, "../../Builds/DW1UnityBattle-Windows"));
             if (Directory.Exists(outDir)) Directory.Delete(outDir, true);
             Directory.CreateDirectory(outDir);
 
@@ -48,7 +48,7 @@ namespace DW1Remake.EditorTools
                 report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
                 {
                     scenes = scenes,
-                    locationPathName = Path.Combine(outDir, "DW1Remake.exe"),
+                    locationPathName = Path.Combine(outDir, "DW1UnityBattle.exe"),
                     target = BuildTarget.StandaloneWindows64,
                     options = BuildOptions.None,            // not a development build: test keys, debug menu and help line are left out
                 });
@@ -66,7 +66,7 @@ namespace DW1Remake.EditorTools
             if (s.result == BuildResult.Succeeded)
             {
                 Debug.Log("[build] Windows test build done: " + outDir + " (" + (s.totalSize / (1024 * 1024)) + " MB, " + s.totalTime.TotalMinutes.ToString("0.0") + " min)");
-                EditorUtility.RevealInFinder(Path.Combine(outDir, "DW1Remake.exe"));
+                EditorUtility.RevealInFinder(Path.Combine(outDir, "DW1UnityBattle.exe"));
             }
             else Debug.LogError("[build] Windows test build failed: " + s.result + ", " + s.totalErrors + " errors (see the Console above)");
         }

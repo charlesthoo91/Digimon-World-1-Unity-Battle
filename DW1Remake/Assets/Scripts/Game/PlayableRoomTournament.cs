@@ -523,6 +523,11 @@ namespace DW1Remake.Game
         {
             var v = TourView();
             _battle.Tournament = true;
+            if (_battle.Effects != null) { _battle.Effects.ArenaBack = true; _battle.Effects.OnArenaDim = d => { if (_arena != null) _arena.Dim(d); }; }
+            // STD_disableMapLayer only sets MAP_LAYER_ENABLED, which the arena never reads: the room's map layer is not touched here (ours turned
+            // the room's pieces back on in the middle of the arena after DG Dimension)
+            System.Action<bool> mapLayer = _battle.Effects != null ? _battle.Effects.OnMapLayer : null;
+            if (_battle.Effects != null) _battle.Effects.OnMapLayer = null;
             _battle.TournamentWeak = (_state.Para.Condition & 0x60) != 0;
             _battle.TournamentMusic = track => { if (_audio != null) { _audio.StopMusic(); _audio.PlayMusic(music, track); } };
             _battle.OnTechStart = OnTechCamera;
@@ -583,6 +588,8 @@ namespace DW1Remake.Game
             if (v != null) { v.ShowTimer = false; v.ShowTimeUpWord = false; v.CloseNow(v.TimeUp); v.Versus = false; v.NoLimit = false; }
             _arenaScr.HudOn = false; _arenaScr.MarkersOn = false;
             _battle.Tournament = false; _battle.TournamentMusic = null;
+            if (_battle.Effects != null) { _battle.Effects.ArenaBack = false; _battle.Effects.OnArenaDim = null; _battle.Effects.OnMapLayer = mapLayer; }
+            if (_arena != null) _arena.Dim(0);
             _battle.OnTechStart = null; _battle.OnTechHit = null; _battle.OnKnockOut = null; _battle.OnVersus = null; _battle.VersusBusy = null;
             done(_battle.Result);
         }

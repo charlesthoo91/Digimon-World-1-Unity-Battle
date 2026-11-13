@@ -65,3 +65,6 @@ __pycache__/
 # Translation working files (they pair the disc's English with the Chinese: never in git)
 translation/*.work.tsv
 translation/batches/
+
+# pictures taken from the disc for the user to look at (disc data: never commit)
+extracted/
