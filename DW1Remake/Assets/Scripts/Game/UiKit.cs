@@ -61,6 +61,10 @@ namespace DW1Remake.Game
             }
         }
 
+        /// <summary>Half the width of the 3D view in PS1 pixels: 160 in 4:3; more with the mod 16:9 (the view is as tall as the picture and wider).
+        /// Screen-wide pieces (mist, fades, flashes) reach from -PsHalfWidth to +PsHalfWidth so they cover the whole wider view.</summary>
+        public static float PsHalfWidth { get { Rect p = Picture, v = View; return p.width > 0f ? 160f * v.width / p.width : 160f; } }
+
         /// <summary>Mod 16:9 (ours): how far, in canvas units (the 1415-wide canvas of Begin), a corner HUD piece moves out to the side of the
         /// wider view: side -1 = to the left edge, +1 = to the right edge; 0 in 4:3. The clock and the orders go left, the HP / MP, the
         /// finishing gauge and the mood bars right, so they sit in the corners instead of the 4:3 middle.</summary>

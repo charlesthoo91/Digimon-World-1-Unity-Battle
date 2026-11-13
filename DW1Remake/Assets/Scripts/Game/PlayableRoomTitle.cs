@@ -608,6 +608,10 @@ namespace DW1Remake.Game
             }
         }
 
+        // ours (the user's request 2026-11-14): the build's version, bottom right of the landing screen
+        public const string GameVersion = "1.0.0";
+        static string VersionText { get { return L("CT Version: " + GameVersion, "CT 版本：" + GameVersion); } }
+
         // ours: "UNITY BATTLE" in the manner of the picture's DIGIMON WORLD (heavy slanted capitals, a dark rim and drop shadow, a light upper
         // half over a darker lower half), in red. Drawn with the font; no picture of ours is shipped
         static void DrawUnityBattle(Rect r, int size)
@@ -655,6 +659,8 @@ namespace DW1Remake.Game
                     var st = new GUIStyle(GUI.skin.label) { fontSize = 19, alignment = TextAnchor.UpperCenter, wordWrap = true, clipping = TextClipping.Overflow };
                     st.normal.textColor = new Color(0.82f, 0.82f, 0.82f);
                     GUI.Label(new Rect(SysX(12), SysY(184), 296 * 4.42f, 24 * 4.42f), Disclaimer, st);
+                    st.alignment = TextAnchor.LowerRight; st.wordWrap = false;
+                    GUI.Label(new Rect(SysX(160), SysY(222), 152 * 4.42f, 14 * 4.42f), VersionText, st);
                 }
                 else DrawUnityBattle(new Rect(SysX(170), SysY(229), 128 * 4.42f, 11 * 4.42f), 44);
             }

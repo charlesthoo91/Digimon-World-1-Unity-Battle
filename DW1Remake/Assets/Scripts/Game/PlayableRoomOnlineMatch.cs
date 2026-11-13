@@ -52,7 +52,7 @@ namespace DW1Remake.Game
             bool orders = _onlineOrders; _friendIntroDone = false;
             _onlineMatch = true; _onlineHost = host; _endSent = false; _netBattleSeen = false; _stateAcc = 0f; _onlineResult = null;
             _netHave[0] = _netHave[1] = false;
-            _sdSeenAt = -1f; _netSudden = false;
+            _sdSeenAt = -1f; _netSudden = false; _netAuraOn = false;
             _tourOn = true;
             _line = null; _choiceOpts = null;
             // a friendly match changes nothing in the game: the partner's numbers, techniques, Bits, condition and mood are put back afterwards
@@ -280,7 +280,7 @@ namespace DW1Remake.Game
                         _battle.PuppetSwing(NetSide(m[1]), m[2], NetSide(m[1] == 0 ? 1 : 0));
                     break;
                 case MsgPop: if (!_onlineHost && _onlineMatch && _battle != null && _battle.Active) ReadPop(m); break;
-                case MsgAura: if (!_onlineHost && _onlineMatch && m.Length >= 2 && _battle != null && _battle.Active) _battle.PuppetAura(NetSide(m[1])); break;
+                case MsgAura: if (!_onlineHost && _onlineMatch && m.Length >= 2 && _battle != null && _battle.Active) { _battle.PuppetAura(NetSide(m[1])); _netAuraOn = true; } break;
                 case MsgStopFx: if (!_onlineHost && _onlineMatch && m.Length >= 2 && _battle != null && _battle.Active) _battle.PuppetStopFx(NetSide(m[1])); break;
                 case MsgVersus: if (!_onlineHost && _onlineMatch && _battle != null && _battle.Active) _battle.PuppetVersus(); break;
                 case MsgKo: if (!_onlineHost && _onlineMatch && m.Length >= 2 && _battle != null) _battle.PuppetKnockOut(NetSide(m[1])); break;
@@ -331,7 +331,7 @@ namespace DW1Remake.Game
 
         // ---------------------------------------------------------------- sudden death (ours, the online tournament): the word, then a small label
 
-        float _sdSeenAt = -1f; bool _netSudden;
+        float _sdSeenAt = -1f; bool _netSudden, _netAuraOn;
 
         void DrawSuddenDeath()
         {
@@ -394,6 +394,9 @@ namespace DW1Remake.Game
             w.Write(MsgState);
             w.Write((ushort)Mathf.Clamp(_battle.Timer, 0, 65535));
             w.Write((byte)((_battle.TimeUpWord ? 1 : 0) | (_battle.TimeUpBox ? 2 : 0) | (_battle.SuddenDeathOn ? 4 : 0)));
+            // the finishing move's aura, if one shows (side, 255 = none): the copy starts its own when it has not (MsgAura can come too late)
+            var aura = _battle.AuraFighter;
+            w.Write((byte)(aura == null ? 255 : SideOf(aura)));
             w.Write((ushort)Mathf.Clamp(_battle.TourDamage[0], 0, 65535)); w.Write((ushort)Mathf.Clamp(_battle.TourDamage[1], 0, 65535));
             for (int s = 0; s < 2; s++)
             {
@@ -403,6 +406,7 @@ namespace DW1Remake.Game
                 w.Write(f.T.rotation.eulerAngles.y);
                 w.Write((byte)(f.A != null ? f.A.Slot : 0)); w.Write((byte)(f.A != null && f.A.PlaysOnce ? 1 : 0));
                 w.Write((ushort)Mathf.Clamp(f.Hp, 0, 65535)); w.Write((ushort)Mathf.Clamp(f.Mp, 0, 65535)); w.Write((ushort)Mathf.Clamp(f.Finish, 0, 65535));
+                w.Write((ushort)Mathf.Clamp(f.FinishMax, 0, 65535));
                 // the conditions (poison, confusion, stun, flat), their effect and the flat timer / picture
                 w.Write((byte)((f.Poisoned ? 1 : 0) | (f.Confused ? 2 : 0) | (f.Stunned ? 4 : 0) | (f.Flattened ? 8 : 0))); w.Write((byte)f.FxKind);
                 w.Write((ushort)Mathf.Clamp(f.StunFrames, 0, 65535)); w.Write((short)Mathf.Clamp(f.FlatTimer, -1, 32767)); w.Write((sbyte)Mathf.Clamp(f.FlatSprite, -1, 127));
@@ -420,6 +424,9 @@ namespace DW1Remake.Game
                 _battle.Timer = r.ReadUInt16();
                 int flags = r.ReadByte();
                 _battle.TimeUpWord = (flags & 1) != 0; _battle.TimeUpBox = (flags & 2) != 0; _netSudden = (flags & 4) != 0;
+                int auraSide = r.ReadByte();
+                if (auraSide < 2 && !_netAuraOn) _battle.PuppetAura(NetSide(auraSide));
+                _netAuraOn = auraSide < 2;
                 int d0 = r.ReadUInt16(), d1 = r.ReadUInt16();
                 _battle.TourDamage[0] = d1; _battle.TourDamage[1] = d0;          // [0] = what this PC's partner lost
                 for (int s = 0; s < 2; s++)
@@ -427,7 +434,7 @@ namespace DW1Remake.Game
                     var g = new Vector3(r.ReadSingle(), r.ReadSingle(), r.ReadSingle());
                     float yaw = r.ReadSingle();
                     int slot = r.ReadByte(); bool once = r.ReadByte() != 0;
-                    int hp = r.ReadUInt16(), mp = r.ReadUInt16(), fin = r.ReadUInt16();
+                    int hp = r.ReadUInt16(), mp = r.ReadUInt16(), fin = r.ReadUInt16(), finMax = r.ReadUInt16();
                     int cflags = r.ReadByte(), cfx = r.ReadByte(), stun = r.ReadUInt16(), flatT = r.ReadInt16(), flatS = r.ReadSByte();
                     var f = NetSide(s);
                     if (f == null) continue;
@@ -436,6 +443,7 @@ namespace DW1Remake.Game
                     if (!_netHave[s] && f.T != null) { f.T.position = _netPos[s]; f.T.rotation = _netRot[s]; }
                     _netHave[s] = true;
                     if (f.A != null && f.A.Slot != slot && f.A.HasSlot(slot)) f.A.SetSlot(slot, once);
+                    _battle.PuppetFinishMax(f, finMax);
                     _battle.PuppetNumbers(f, hp, mp, fin);
                     _battle.PuppetConditions(f, cflags, cfx, stun, flatT, flatS);
                 }

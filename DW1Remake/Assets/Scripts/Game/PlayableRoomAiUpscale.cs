@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Generic;
 using System.IO;
 using DW1Remake.Formats;
 using UnityEngine;
@@ -481,6 +482,193 @@ namespace DW1Remake.Game
                 yield return null;
             }
             _aiTimRunning = false;
+        }
+
+        // ------------------------------------------------------------------ prepare everything at once (OPTIONS > PREPARE AI UPSCALE)
+        // Ours (the user's request 2026-11-14): every map's picture in each of its colour sets and every Digimon's texture sheet are upscaled
+        // in one go before playing, into the same cache files the game reads (<MAP>_P<n>_<model>.png, CHR<type>_<model>.png), so no map or
+        // Digimon has to be made while playing. Files already there are skipped, so a stopped pass goes on where it stopped. Left to be made
+        // while playing: a map's small pieces (they exist only once the map is built) and the TIM pictures (made, and sometimes recoloured,
+        // as the game runs); both are small.
+
+        sealed class AiPrepItem { public string Name, File, MapPath; public int Palette = -1, Type = -1, Pixels; public DigimonEntry Entry; public MmdModel Model; }
+
+        // the cache takes about this many bytes per disc pixel (PNG of the 4x picture; measured on ROOM02 and CHR005)
+        const float AiBytesPerPixel = 24f;
+
+        List<AiPrepItem> AiPrepList()
+        {
+            var list = new List<AiPrepItem>();
+            string model = _ai.Name, folder = AiCacheFolder;
+            var seen = new HashSet<string>();
+            for (int id = 0; id < _mapNames.Count; id++)
+            {
+                if (string.IsNullOrEmpty(_mapNames[id])) continue;
+                string path = MapCatalog.PathFor(_mapNames, id), tfs = path.Substring(0, path.Length - 4) + ".TFS";
+                if (!seen.Add(path) || !_disc.Exists(path) || !_disc.Exists(tfs)) continue;
+                MapBackground m;
+                try { m = MapBackground.Parse(_disc.ReadFile(path), _disc.ReadFile(tfs)); }
+                catch (System.Exception) { continue; }      // not a standard map file
+                string name = Path.GetFileNameWithoutExtension(path).ToUpperInvariant();
+                for (int p = 0; p < Mathf.Max(1, m.PaletteCount); p++)
+                    list.Add(new AiPrepItem { Name = name, MapPath = path, Palette = p, Pixels = m.PixelWidth * m.PixelHeight,
+                                              File = Path.Combine(folder, name + "_P" + p + "_" + model + ".png") });
+            }
+            if (_entries == null) _entries = new List<DigimonEntry>(DigimonCatalog.Load(_disc));
+            foreach (var e in _entries)
+            {
+                if (!_disc.Exists(e.MmdPath)) continue;
+                MmdModel mm;
+                try { mm = MmdModel.Parse(_disc.ReadFile(e.MmdPath)); }
+                catch (System.Exception) { continue; }
+                int px = mm.SheetPixels;
+                if (px <= 0) continue;
+                list.Add(new AiPrepItem { Name = e.Name, Type = e.Type, Entry = e, Model = mm, Pixels = px,
+                                          File = Path.Combine(folder, "CHR" + e.Type.ToString("000") + "_" + model + ".png") });
+            }
+            return list;
+        }
+
+        int _prepFrame = -1; bool _prepStop;
+        // Triangle (or Square / Escape) stops the pass; read once a frame, as the network may ask several times in one
+        bool AiPrepStopped()
+        {
+            if (_prepFrame != Time.frameCount) { _prepFrame = Time.frameCount; if (GameMenus.CancelKey()) _prepStop = true; }
+            return _prepStop;
+        }
+
+        IEnumerator PrepareAiUpscale()
+        {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            yield return Notice(L("AI upscaling works only on the PC version.", "AI 高畫質僅限電腦版使用。"));
+#else
+            if (!ModSettings.AiUpscale) { yield return Notice(L("Turn AI UPSCALE on first.", "請先開啟 AI 高畫質。")); yield break; }
+            if (!AiReady()) { yield return Notice(L("AI upscaling cannot run: ", "無法使用 AI 高畫質：") + _aiError + "."); yield break; }
+            if (_aiBusy) { yield return Notice(L("AI upscaling is busy. Try again in a moment.", "AI 高畫質正在處理中，請稍後再試。")); yield break; }
+
+            var wait = new SysScreen();
+            wait.Text(L("Checking the maps and Digimon...", "正在檢查地圖與數碼寶貝..."), 0x22, 0x37);
+            wait.Box(0x18, 0x32, 0x110, 12 + 10);
+            _sys = wait;
+            yield return null;
+            var all = AiPrepList();
+            long total = 0, left = 0; int todo = 0;
+            foreach (var it in all) { total += it.Pixels; if (!File.Exists(it.File)) { left += it.Pixels; todo++; } }
+            _sys = null;
+            if (todo == 0) { yield return Notice(L("Every map and Digimon is already prepared.", "所有地圖與數碼寶貝都已準備完成。")); yield break; }
+
+            float gb = left * AiBytesPerPixel / 1e9f;
+            string space = "";
+            try
+            {
+                var drive = new DriveInfo(Path.GetPathRoot(Path.GetFullPath(Application.persistentDataPath)));
+                float free = drive.AvailableFreeSpace / 1e9f;
+                space = L(" Free space there now: " + free.ToString("0.0") + " GB.", "目前可用空間：" + free.ToString("0.0") + " GB。");
+                if (free < gb * 1.1f) space += L(" That may not be enough.", "空間可能不足。");
+            }
+            catch (System.Exception) { }
+            bool go = false;
+            yield return Confirm(L("PREPARE AI UPSCALE upscales every map and Digimon now, so they show sharp at once while you play. " + todo + " pictures are left to make, about " + gb.ToString("0.0") + " GB of cache files." + space + " It takes a while; the time left shows once it starts. Triangle stops it, and what is finished is kept. Start?",
+                                   "準備 AI 高畫質會立即放大所有地圖與數碼寶貝，遊玩時就能馬上顯示清晰畫面。還有 " + todo + " 張圖片要處理，約 " + gb.ToString("0.0") + " GB 的快取檔案。" + space + "需要一段時間，開始後會顯示剩餘時間。按三角鍵可停止，已完成的部分會保留。要開始嗎？"), r => go = r);
+            if (!go) yield break;
+
+            // the pass: one picture at a time, the network taking most of each frame (the screen is still; about 4 pictures a second)
+            var s = new SysScreen();
+            _sys = s;
+            _prepStop = false; _prepFrame = -1;
+            _aiBusy = true;
+            long done = total - left, madeNow = 0;
+            int made = 0, mapsLeft = 0, chrLeft = 0;
+            foreach (var it in all) if (!File.Exists(it.File)) { if (it.Type < 0) mapsLeft++; else chrLeft++; }
+            int mapsTotal = mapsLeft, chrTotal = chrLeft;
+            float t0 = Time.realtimeSinceStartup, part = 0f;
+            string current = "";
+            System.Threading.Tasks.Task saving = null;
+            string failed = null;
+            System.Action show = () =>
+            {
+                float frac = total > 0 ? (done + part) / total : 1f;
+                float spent = Time.realtimeSinceStartup - t0, rate = spent > 3f ? (madeNow + part) / spent : 0f;
+                float secs = rate > 0f ? (total - done - part) / rate : -1f;
+                string eta = secs < 0f ? L("working out the time left", "正在估算剩餘時間") : secs < 90f ? L("about " + Mathf.CeilToInt(secs) + " s left", "約剩 " + Mathf.CeilToInt(secs) + " 秒")
+                           : secs < 5400f ? L("about " + Mathf.CeilToInt(secs / 60f) + " min left", "約剩 " + Mathf.CeilToInt(secs / 60f) + " 分鐘")
+                           : L("about " + (secs / 3600f).ToString("0.0") + " h left", "約剩 " + (secs / 3600f).ToString("0.0") + " 小時");
+                s.Texts.Clear(); s.Boxes.Clear();
+                s.Text(L("PREPARE AI UPSCALE", "準備 AI 高畫質"), 0x22, 0x37);
+                // no '%' or '/' in the game's font: "percent" and "of" (as the fight's end text, Battle)
+                s.Text(L(Mathf.FloorToInt(frac * 100f) + " percent   " + eta, Mathf.FloorToInt(frac * 100f) + "％　" + eta), 0x22, 0x37 + 14);
+                s.Text(L("Maps " + (mapsTotal - mapsLeft) + " of " + mapsTotal + "   Digimon " + (chrTotal - chrLeft) + " of " + chrTotal,
+                         "地圖 " + (mapsTotal - mapsLeft) + "／" + mapsTotal + "　數碼寶貝 " + (chrTotal - chrLeft) + "／" + chrTotal), 0x22, 0x37 + 28);
+                s.Text(current, 0x22, 0x37 + 40);
+                var help = Wrap(L("Triangle stops it. Finished pictures are kept.", "三角鍵：停止。已完成的圖片會保留。"), 0x110 - 0x14);
+                for (int i = 0; i < help.Count; i++) s.Text(help[i], 0x22, 0x37 + 64 + 12 * i);
+                s.Box(0x18, 0x32, 0x110, 64 + 12 * help.Count + 10);
+                s.Bar = frac; s.BarBox = new RectInt(0x22, 0x37 + 52, 0x110 - 0x14, 6);
+            };
+            try
+            {
+                foreach (var it in all)
+                {
+                    if (AiPrepStopped() || failed != null) break;
+                    if (File.Exists(it.File)) continue;
+                    current = it.Type < 0 ? L("Map ", "地圖 ") + it.Name + (it.Palette > 0 ? L("  colour set " + (it.Palette + 1), "　色彩組 " + (it.Palette + 1)) : "") : it.Name;
+                    part = 0f; show();
+                    yield return null;
+                    // the disc's picture, rows from the top
+                    Texture2D pic;
+                    if (it.Type < 0)
+                    {
+                        MapBackground m = null;
+                        try { m = MapBackground.Parse(_disc.ReadFile(it.MapPath), _disc.ReadFile(it.MapPath.Substring(0, it.MapPath.Length - 4) + ".TFS")); } catch (System.Exception) { }
+                        pic = m != null ? m.BuildTexture(it.Palette) : null;
+                    }
+                    else
+                    {
+                        if (_allTim == null) _allTim = _disc.ReadFile("/CHDAT/ALLTIM.TIM");
+                        pic = it.Model.BuildSheet(it.Entry, _allTim);
+                        it.Model = null;
+                    }
+                    if (pic == null) { done += it.Pixels; if (it.Type < 0) mapsLeft--; else chrLeft--; continue; }
+                    var bottomUp = pic.GetPixels32(); int w = pic.width, h = pic.height;
+                    Destroy(pic);
+                    var src = new Color32[w * h];
+                    for (int y = 0; y < h; y++) System.Array.Copy(bottomUp, (h - 1 - y) * w, src, y * w, w);
+                    if (it.Type >= 0) FillSeeThrough(src, w, h);      // as AiChrJob
+                    Color32[] result = null;
+                    yield return _ai.Run(src, w, h, 250f, AiPrepStopped, p => { part = p * it.Pixels; show(); }, r => result = r);
+                    if (result == null) break;      // stopped half way: that picture is not kept
+                    int sc = _ai.Scale, ow = w * sc, oh = h * sc;
+                    var flipped = new Color32[ow * oh];
+                    for (int y = 0; y < oh; y++) System.Array.Copy(result, y * ow, flipped, (oh - 1 - y) * ow, ow);
+                    // written on another thread while the next picture is made (one at a time); a part file first, so a pass stopped while
+                    // writing never leaves a half file that would count as done
+                    while (saving != null && !saving.IsCompleted) yield return null;
+                    string file = it.File, dir = AiCacheFolder;
+                    saving = System.Threading.Tasks.Task.Run(() =>
+                    {
+                        try
+                        {
+                            var png = ImageConversion.EncodeArrayToPNG(flipped, UnityEngine.Experimental.Rendering.GraphicsFormat.R8G8B8A8_UNorm, (uint)ow, (uint)oh);
+                            Directory.CreateDirectory(dir);
+                            File.WriteAllBytes(file + ".part", png);
+                            if (File.Exists(file)) File.Delete(file);
+                            File.Move(file + ".part", file);
+                        }
+                        catch (System.Exception e) { failed = e.Message; }
+                    });
+                    done += it.Pixels; madeNow += it.Pixels; part = 0f; made++;
+                    if (it.Type < 0) mapsLeft--; else chrLeft--;
+                }
+                current = L("Saving the last picture...", "正在儲存最後一張圖片...");
+                show();
+                while (saving != null && !saving.IsCompleted) yield return null;
+            }
+            finally { _aiBusy = false; _sys = null; }
+            float took = (Time.realtimeSinceStartup - t0) / 60f;
+            if (failed != null) yield return Notice(L("A picture could not be saved, so the pass stopped: ", "有圖片無法儲存，因此已停止：") + failed);
+            else if (_prepStop) yield return Notice(L(made + " pictures were made before stopping. Choose PREPARE AI UPSCALE again to go on.", "停止前已完成 " + made + " 張圖片。再次選擇「準備 AI 高畫質」即可繼續。"));
+            else yield return Notice(L("Done: " + made + " pictures in " + took.ToString("0") + " min. Every map and Digimon now shows sharp at once.", "完成：" + took.ToString("0") + " 分鐘內處理了 " + made + " 張圖片。所有地圖與數碼寶貝現在都能馬上清晰顯示。"));
+#endif
         }
     }
 }

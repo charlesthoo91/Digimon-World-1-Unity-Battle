@@ -255,6 +255,28 @@ namespace DW1Remake.Formats
         /// <summary>Mod AI UPSCALE (ours): told about each model's texture sheet and material as it is built (type, sheet, material).</summary>
         public static Action<int, Texture2D, Material> AtlasMade;
 
+        // the colour-set rows of ALLTIM its faces use, in order: one 128-row block of the atlas each
+        List<int> SheetRows()
+        {
+            var rows = new List<int>();
+            foreach (var part in Parts) foreach (var f in part.Faces) if (!rows.Contains(f.Row)) rows.Add(f.Row);
+            rows.Sort();
+            return rows;
+        }
+
+        /// <summary>The atlas's size in pixels (256 x 128 per colour set), without making it.</summary>
+        public int SheetPixels { get { return 256 * 128 * SheetRows().Count; } }
+
+        /// <summary>Mod AI UPSCALE's PREPARE pass (ours): the texture sheet Build would make for this Digimon, alone (null if there is none).
+        /// AtlasMade is not told.</summary>
+        public Texture2D BuildSheet(DigimonEntry e, byte[] allTim)
+        {
+            TimImage tim;
+            if (TimImage.TryParse(allTim, e.Type * 0x4800, out tim) && tim.Width <= 256 && tim.Height <= 128 && tim.BitsPerPixel == 4)
+                return BuildAtlas(tim, SheetRows());
+            return null;
+        }
+
         /// <summary>Builds the Digimon as a bone hierarchy in its first pose.</summary>
         public GameObject Build(DigimonEntry e, byte[] allTim)
         {
@@ -265,9 +287,7 @@ namespace DW1Remake.Formats
             TryGetStartPose(bones, out rot, out loc);
 
             // textures: one atlas holding every palette this model uses
-            var rows = new List<int>();
-            foreach (var part in Parts) foreach (var f in part.Faces) if (!rows.Contains(f.Row)) rows.Add(f.Row);
-            rows.Sort();
+            var rows = SheetRows();
             Material mat = null;
             TimImage tim;
             if (TimImage.TryParse(allTim, e.Type * 0x4800, out tim) && tim.Width <= 256 && tim.Height <= 128 && tim.BitsPerPixel == 4)

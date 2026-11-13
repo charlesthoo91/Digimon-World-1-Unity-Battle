@@ -172,7 +172,8 @@ namespace DW1Remake.Game
         static void DrawPs1Quad(Texture2D tex, float u, float v, float uw, float vh, float x, float y, float w, float h, Material mat)
         {
             if (tex == null || w == 0f || h == 0f) return;
-            float x0 = Mathf.Max(Mathf.Min(x, x + w), -160f), x1 = Mathf.Min(Mathf.Max(x, x + w), 160f);
+            float hw = UiKit.PsHalfWidth;      // 160, or the wider view's half (mod 16:9): the picture is cut at the view's edges, not the 4:3 ones
+            float x0 = Mathf.Max(Mathf.Min(x, x + w), -hw), x1 = Mathf.Min(Mathf.Max(x, x + w), hw);
             float y0 = Mathf.Max(Mathf.Min(y, y + h), -120f), y1 = Mathf.Min(Mathf.Max(y, y + h), 120f);
             if (x1 <= x0 || y1 <= y0) return;
             System.Func<float, float> uAt = px => u + (px - x) / w * uw;
@@ -394,13 +395,16 @@ namespace DW1Remake.Game
         {
             if (!MistShown() || _mapVram == null) return;
             int tpage = 704 / 64;
+            // the mist's tiles repeat every 640 (two 320-wide tiles); with the mod 16:9 a copy each side fills the wider view (ours)
+            int reach = UiKit.PsHalfWidth > 160f ? 1 : 0;
+            for (int k = -reach; k <= reach; k++)
             for (int i = 0; i < 8; i++)
             {
                 if (i < 4)
                 {
                     int clut = 486 << 6;
                     var solid = EvPage(tpage, clut, 1, 0x96); var stp = EvPage(tpage, clut, 2, 0x96);
-                    float x = _mistX[i % 2], y = _mistY[i / 2];
+                    float x = _mistX[i % 2] + 640 * k, y = _mistY[i / 2];
                     DrawPs1Quad(solid, 0, 0, 255, 200, x, y, 320, 240, null);
                     DrawPs1Quad(stp, 0, 0, 255, 200, x, y, 320, 240, EvBlend(stp, 3));
                 }
@@ -409,7 +413,7 @@ namespace DW1Remake.Game
                     int set = (_mapId == 0xA3 || _mapId == 0xDC) ? 0 : _mapId == 0x77 ? _mistClut[0] : _mistClut[1];
                     int clut = (486 << 6) | ((set / 16) & 63);
                     var solid = EvPage(tpage, clut, 1, 0x50); var stp = EvPage(tpage, clut, 2, 0x50);
-                    float x = _mistX2[i % 2], y = _mistY[(i - 4) / 2];
+                    float x = _mistX2[i % 2] + 640 * k, y = _mistY[(i - 4) / 2];
                     // x0 = x, x1 = x - 320: the picture is mirrored, from x - 320 to x
                     DrawPs1Quad(solid, 0, 0, 255, 200, x, y, -320, 240, null);
                     DrawPs1Quad(stp, 0, 0, 255, 200, x, y, -320, 240, EvBlend(stp, 1));

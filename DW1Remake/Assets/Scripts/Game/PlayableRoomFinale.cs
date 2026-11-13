@@ -124,7 +124,7 @@ namespace DW1Remake.Game
             _eabFlashTex.Apply();
             if (_eabFlashMat == null) { var sh = Shader.Find("DW1Remake/GuiBlend"); if (sh == null) return; _eabFlashMat = new Material(sh); MmdModel.SetPsxBlend(_eabFlashMat, 2); }
             _eabFlashMat.mainTexture = _eabFlashTex;
-            Graphics.DrawTexture(UiKit.Picture, _eabFlashTex, new Rect(0, 0, 1, 1), 0, 0, 0, 0, _eabFlashMat);
+            Graphics.DrawTexture(UiKit.View, _eabFlashTex, new Rect(0, 0, 1, 1), 0, 0, 0, 0, _eabFlashMat);      // the whole view (mod 16:9 too)
         }
 
         // ------------------------------------------------------------------ particles (EAB_addParticle / EAB_renderParticle: 100 slots)

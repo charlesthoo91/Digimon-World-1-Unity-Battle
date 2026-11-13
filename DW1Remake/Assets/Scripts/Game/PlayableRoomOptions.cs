@@ -50,6 +50,8 @@ namespace DW1Remake.Game
                 HelpEn = "After winning a wild battle, the camera glides back to the boy.", HelpZh = "贏得野外戰鬥後，鏡頭會移回主角身上。" });
             r.Add(new OptionRow { En = "AI UPSCALE", Zh = "AI 高畫質", Value = () => OnOff(ModSettings.AiUpscale), Act = ToggleAiUpscale,
                 HelpEn = "AI sharpens maps, Digimon and pictures on your graphics card. PC only. Needs Upscayl installed in C:\\Program Files\\Upscayl\\", HelpZh = "以顯示卡上的 AI 讓地圖、數碼寶貝與圖片更清晰。僅限電腦版。必須將 Upscayl 安裝在 C:\\Program Files\\Upscayl\\" });
+            r.Add(new OptionRow { En = "PREPARE AI UPSCALE", Zh = "準備 AI 高畫質", Act = PrepareAiUpscale,
+                HelpEn = "Upscales every map and Digimon now, once, so they show sharp at once while you play. Shows the time left; Triangle stops it.", HelpZh = "立即一次放大所有地圖與數碼寶貝，遊玩時就能馬上清晰顯示。會顯示剩餘時間；按三角鍵停止。" });
             r.Add(new OptionRow { En = "ASPECT RATIO", Zh = "畫面比例", Value = () => ModSettings.Widescreen ? "16:9" : "4:3", Act = just(() => ModSettings.Widescreen = !ModSettings.Widescreen),
                 HelpEn = "4:3 as the original, or 16:9 to see more of the map at the sides.", HelpZh = "4:3 為原版比例；16:9 可看到地圖兩側更多範圍。" });
             r.Add(new OptionRow { En = "SCREEN MODE", Zh = "顯示模式", Value = () => ScreenModeName(ModSettings.ScreenMode),
@@ -173,7 +175,12 @@ namespace DW1Remake.Game
                                    "AI 高畫質會用顯示卡上的 AI 讓遊戲畫面更清晰。每張地圖、每隻數碼寶貝或每張圖片第一次出現時，會在遊玩中進行放大，遊戲可能會卡頓幾秒。結果會以快取檔案存在這台電腦上，之後再看到就會立即顯示。必須將 Upscayl 安裝在 C:\\Program Files\\Upscayl\\ 才能使用。要開啟嗎？"), r => go = r);
             if (!go) yield break;
             ModSettings.AiUpscale = true;
-            if (!AiReady()) { ModSettings.AiUpscale = false; yield return Notice(L("AI upscaling cannot run: ", "無法使用 AI 高畫質：") + _aiError + "."); }
+            if (!AiReady()) { ModSettings.AiUpscale = false; yield return Notice(L("AI upscaling cannot run: ", "無法使用 AI 高畫質：") + _aiError + "."); yield break; }
+            // ours (2026-11-14): offer to make everything now instead of while playing
+            bool all = false;
+            yield return ConfirmNoFirst(L("Prepare every map and Digimon now, so the game never stutters for them? You can also do it later with PREPARE AI UPSCALE.",
+                                          "要立即準備所有地圖與數碼寶貝，讓遊戲不再因它們卡頓嗎？之後也可以從「準備 AI 高畫質」進行。"), r => all = r);
+            if (all) yield return PrepareAiUpscale();
 #endif
         }
 

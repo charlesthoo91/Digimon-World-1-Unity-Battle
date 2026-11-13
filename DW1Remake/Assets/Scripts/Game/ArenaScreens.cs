@@ -502,7 +502,8 @@ namespace DW1Remake.Game
         void DrawBracketPicture()
         {
             Sprite(5, 0, 0x340, 0, 0x20, 0x1E0, 0, 0x78, 0xFF, 0x87, -0x80, -0x61, 0xFF, 0x87, 0x80 - Fade, Fade != 0, 1);
-            BoxF(5, -0xA0, -0x78, 0x140, 0xF0, new Color32(0x20, 0x20, 0x20, 255), 0);
+            int hw = Mathf.CeilToInt(UiKit.PsHalfWidth);      // the whole view (wider with the mod 16:9)
+            BoxF(5, -hw, -0x78, 2 * hw, 0xF0, new Color32(0x20, 0x20, 0x20, 255), 0);
         }
 
         // STD_renderBracketProjectile: an 8 x 8 icon (STD_BRACKET_PROJECTILE_ICONS by type) on page 0x3C0 v 0xC0; a double one has a second 8 lower
@@ -532,7 +533,8 @@ namespace DW1Remake.Game
         {
             for (int i = 0; i < 8; i++) DrawBracketDigimon(i);
             DrawBracketPicture();
-            Sprite(3, 0, 0x380, 0x100, 0x100, 0x1F6, 0xFA, 0xFD, 2, 2, -0xA0, -0x78, 0x140, 0xF0, _introDark, true, 2);
+            int hw = Mathf.CeilToInt(UiKit.PsHalfWidth);      // the whole view (wider with the mod 16:9)
+            Sprite(3, 0, 0x380, 0x100, 0x100, 0x1F6, 0xFA, 0xFD, 2, 2, -hw, -0x78, 2 * hw, 0xF0, _introDark, true, 2);
             int h = TitleShort ? 0x7D : 0x80;
             Sprite(2, 1, 0x180, 0, 0, 0x1E6, 0, 0, 0xFF, h, -0x80, -0x40, 0xFF, h, _introTitle, Fade != 0x80, 1);
         }

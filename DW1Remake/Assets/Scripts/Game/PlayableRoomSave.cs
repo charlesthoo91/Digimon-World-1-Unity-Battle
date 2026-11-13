@@ -22,6 +22,7 @@ namespace DW1Remake.Game
             public bool HasCursor;
             public bool Sides;      // ours (OPTIONS): left / right end Ask with 3 / 4
             public System.Action<SysScreen> Refresh;      // redraws the texts when the list scrolls (drawRegisteredDigimonSlots)
+            public float Bar = -1f; public RectInt BarBox;     // ours (PREPARE AI UPSCALE): a progress bar, 0..1 filled (-1 = none)
             public void Text(string s, int x, int y) { Texts.Add(new KeyValuePair<Vector2, string>(new Vector2(x, y), s)); }
             public readonly Dictionary<int, int> Width = new Dictionary<int, int>();   // renderText shows only this many pixels of the text page
             public void Text(string s, int x, int y, int w) { Width[Texts.Count] = w; Text(s, x, y); }
@@ -282,6 +283,14 @@ namespace DW1Remake.Game
                 var r = new Rect(SysX(b.x), SysY(b.y), b.width * 4.42f, b.height * 4.42f);
                 UiKit.Box(r, new Color(0, 0, 0, 0));
                 GUI.DrawTexture(new Rect(r.x + 3 * 4.42f, r.y + 3 * 4.42f, r.width - 6 * 4.42f, r.height - 6 * 4.42f), _sysFill, ScaleMode.StretchToFill);
+            }
+            if (_sys.Bar >= 0f)
+            {
+                // ours: a dark track and a filled part in the menu cursor's yellow
+                var b = _sys.BarBox;
+                var r = new Rect(SysX(b.x), SysY(b.y), b.width * 4.42f, b.height * 4.42f);
+                UiKit.Fill(r, new Color(0f, 0f, 0f, 0.6f));
+                UiKit.Fill(new Rect(r.x, r.y, r.width * Mathf.Clamp01(_sys.Bar), r.height), new Color(0xA0 / 255f, 0xA0 / 255f, 0f, 1f));
             }
             var font = Battle.StatFont;
             for (int i = 0; i < _sys.Texts.Count; i++)

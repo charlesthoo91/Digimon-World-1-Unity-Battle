@@ -630,6 +630,7 @@ namespace DW1Remake.Game
             if (_shoutFrame >= 0) { _shoutAcc += dt; while (_shoutAcc >= Frame && _shoutFrame >= 0) { _shoutAcc -= Frame; if (++_shoutFrame > 20) _shoutFrame = -1; } }
             if (Effects != null) Effects.Tick(dt, Camera.main);
             TickAura(dt);
+            TickConditions(dt);         // the conditions' effects over the Digimon (the host's conditions come with its state: PuppetConditions)
             for (int i = _pops.Count - 1; i >= 0; i--) { if (_pops[i].Wait > 0f) { _pops[i].Wait -= dt; continue; } _pops[i].T += dt; if (_pops[i].T >= 31f / 20f) _pops.RemoveAt(i); }
             foreach (var f in new[] { Partner, Enemy }) if (f != null && f.A != null) f.A.TakeBodyMove();
             if (_tVersus && (VersusBusy == null || !VersusBusy())) _tVersus = false;
@@ -645,8 +646,12 @@ namespace DW1Remake.Game
         {
             if (f == null) return;
             f.Hp = hp; f.Mp = mp; f.Finish = Mathf.Min(finish, f.FinishMax);
+            // (the gauge's top comes from the host too: PuppetFinishMax, else the copy's own could stop it short of FINISH!!)
             if (f.ShownHp < f.Hp) f.ShownHp = f.Hp;      // healing shows at once; damage drains as on the host
         }
+
+        /// <summary>The host's top of a fighter's finishing gauge.</summary>
+        public void PuppetFinishMax(Fighter f, int max) { if (f != null && max > 0) f.FinishMax = max; }
 
         /// <summary>A technique the host's fight started: only its picture (the hits come as numbers and animations).</summary>
         public void PuppetSwing(Fighter from, int tech, Fighter to)
@@ -687,6 +692,9 @@ namespace DW1Remake.Game
 
         /// <summary>The host's fighter started a finishing move: its aura (80 frames).</summary>
         public void PuppetAura(Fighter f) { if (f == null) return; _chargeBy = f; ShowRing(true); }
+
+        /// <summary>The fighter whose finishing-move aura shows now, or null (the online host sends it with its state).</summary>
+        public Fighter AuraFighter { get { return _auraFrame >= 0 ? (_chargeBy ?? Partner) : null; } }
 
         /// <summary>The host's fight ended in a draw: the draw letters, as on the host.</summary>
         public void PuppetVersus() { if (OnVersus != null && !_tVersus) { OnVersus(); _tVersus = true; } }

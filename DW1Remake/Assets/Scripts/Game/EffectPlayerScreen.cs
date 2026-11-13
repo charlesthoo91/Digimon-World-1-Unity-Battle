@@ -533,7 +533,8 @@ namespace DW1Remake.Game
         void ScreenOverlay()
         {
             int mode = Pop(), col = Pop(), layer = Pop();
-            var p = ScreenRect(-160, -120, 320, 240, layer);
+            float hw = UiKit.PsHalfWidth;      // the whole view (wider with the mod 16:9)
+            var p = ScreenRect(-hw, -120, 2f * hw, 240, layer);
             p.Col = ColourAt(col, false); p.Attr = (mode & 4) != 0 ? 4 | (mode & 3) : 0;
         }
 
@@ -541,7 +542,8 @@ namespace DW1Remake.Game
         void ScreenFade()
         {
             int c = Pop();
-            var p = ScreenRect(-160, -120, 320, 240, 0xFFE);
+            float hw = UiKit.PsHalfWidth;
+            var p = ScreenRect(-hw, -120, 2f * hw, 240, 0xFFE);
             p.Attr = 6; p.Col = Tex128(c, c, c);
             if (_spot != null) { p.Tex = _spot; p.TexW = TimImage.W(_spot); p.TexH = TimImage.H(_spot); p.Uv = new[] { new Vector2(0, 0), new Vector2(3, 0), new Vector2(0, 3), new Vector2(3, 3) }; }
         }
