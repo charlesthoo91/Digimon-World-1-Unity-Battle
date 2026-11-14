@@ -420,8 +420,22 @@ CONTENTS
     first. The host leaving ends the tournament for everyone.
 
   To try it on your own, you can run two copies on one PC (section 3).
-  A tournament whose host has been away for 3 minutes is closed by the
-  service.
+
+  LIMITS OF THE FREE SERVER
+  The tournament service runs on Cloudflare's free plan, so it has a few
+  limits:
+  - At most 30 tournaments can be open at once (waiting for players or
+    being played). With 8 places each, that is room for 240 players.
+    When all 30 are taken, hosting says "Too many tournaments are open
+    right now. Try again later." You can still join an open one.
+  - At most 3 open tournaments per internet address at the same time.
+    (Everyone on the same home Wi-Fi shares one address.)
+  - At most 20 tournaments hosted per internet address per hour. A
+    tournament only counts once it starts with at least one other
+    player.
+  - Abandoned tournaments are cleaned up automatically: if the host's
+    game disappears (closed, crashed or disconnected) for 3 minutes, the
+    tournament is closed and removed from the list.
 
 
 --------------------------------------------------------------------------
