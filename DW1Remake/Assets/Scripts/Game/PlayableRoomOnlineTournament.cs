@@ -50,7 +50,18 @@ namespace DW1Remake.Game
             public bool AnswerSent, Gone;
         }
 
-        enum OtPhase { Choose, HostCup, Opening, Lobby, Browse, Joining, Waiting, Running, Done, EnterPass }
+        enum OtPhase { Choose, HostCup, Opening, Lobby, Browse, Joining, Waiting, Running, Done, EnterPass, FindCode }
+
+        // ours: the screen's choices box shows at most OtRows rows; a longer list (the open tournaments: up to MaxOpen = 30 at the service)
+        // scrolls, its last choices (Refresh, Find by code, Back, Close) staying in place under it. _otScroll = the first list row shown
+        const int OtRows = 9;
+        int _otScroll;
+
+        // ours: Find by code: the tournament's 6 letters, picked one place at a time (the service's CodeLetters, online/tournament-worker
+        // src/shared.ts: no I, L, O, 0 or 1), or pasted
+        const string OtCodeLetters = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+        readonly int[] _otFind = new int[6];
+        bool _otFinding;
 
         // ours: an optional 4-digit password (for friends only); "" = none. The host's game checks it when someone joins
         string _otPass = "", _otJoinPass = "";
@@ -107,7 +118,10 @@ namespace DW1Remake.Game
             while (_otOn)
             {
                 OtNetTick();
-                if (!_tourOn && !_otAsking) OtScreenTick();
+                // a bracket or match starting puts the leave question away (the answer No): it stayed on screen over them and took no keys
+                if (_otAsking && (_tourOn || _otMatchBusy)) OtLeaveEnd(false);
+                if (!_tourOn && _otAsking) OtLeaveTick();
+                else if (!_tourOn) OtScreenTick();
                 else if (_sys != null && _sys == _otSys) { _sys = null; _otSys = null; }
                 yield return null;
             }
@@ -178,6 +192,8 @@ namespace DW1Remake.Game
             }
             if (_onlineMatch && _otFeedStartPending && _otAssign != null && (_otAssign.oppCpu < 0 || _tourFoe != null)) OtSendFeedStart();
             if (_onlineMatch && (_net != null || _matchMirror != null || _otWatching)) OnlineFrame();
+            // a match against a computer Digimon has no link: its surrender question (L2 + R2) runs here alone
+            else if (_onlineMatch) SurrenderTick();
         }
 
         // a link's messages: the tournament's to 'tour', the match's to the match (or kept until it starts)
@@ -717,13 +733,14 @@ namespace DW1Remake.Game
             }
             _arenaScr.MatchResult = 0;
             _arenaScr.StopAt = stop;
+            _arenaScr.Fast = true;
             _arenaScr.AddBracket();
             if (_audio != null) { _audio.StopMusic(); _audio.StopSound(); _audio.PlayMusic(0x1D, 1); _audio.SetMapSounds(0x10); }
             float t0 = Time.realtimeSinceStartup;
             while (!_arenaScr.Finished && Time.realtimeSinceStartup - t0 < 90f) yield return ArenaFrames(1);
             yield return ArenaFrames(20);
             _arenaScr.RemoveBracket();
-            _arenaScr.StopAt = 0;
+            _arenaScr.StopAt = 0; _arenaScr.Fast = false;
             if (_audio != null) { _audio.StopMusic(); _audio.StopSound(); }
             yield return TourFade(1f, 5);
             ArenaOff();
@@ -858,7 +875,7 @@ namespace DW1Remake.Game
             System.Action close = () =>
             {
                 bool inIt = _otPhase == OtPhase.Lobby || _otPhase == OtPhase.Joining || _otPhase == OtPhase.Waiting || _otPhase == OtPhase.Running;
-                if (inIt) StartCoroutine(OtAskLeave()); else _otOn = false;
+                if (inIt) OtAskLeave(); else _otOn = false;
             };
             switch (_otPhase)
             {
@@ -891,28 +908,50 @@ namespace DW1Remake.Game
                     for (int i = 0; i < _otBoard.Count; i++) lines.Add((i + 1) + "  " + _otBoard[i]);
                     if (_otPending.Count > 0) lines.Add(Tr.Format("{0} joining...", _otPending.Count));
                     if (_otFullAt >= 0f) lines.Add(Tr.Format("Full. Starting in {0} s", Mathf.Max(0, 30 - (int)(Time.realtimeSinceStartup - _otFullAt))));
-                    opts.Add(T("Start")); acts.Add(OtHostStart);
+                    opts.Add(T("Start")); acts.Add(OtAskStart);
+                    // ours: the tournament's code to the PC's clipboard, to send to friends (they use Join > Find by code)
+                    opts.Add(T("Copy my code")); acts.Add(() => { CopyText(_otCode); OtSay("Your code is copied."); });
                     break;
                 case OtPhase.Browse:
-                    lines.Add(T("Open tournaments"));
+                {
+                    // ours: more tournaments than fit scroll (OtRows less the 4 fixed rows under them); the line says which are shown
+                    int shown = OtRows - 4, n = _otList.Count;
+                    if (n > shown)
+                    {
+                        int first = OtScrollFor(n, shown);
+                        lines.Add(T("Open tournaments") + "   " + Tr.Format("{0}-{1} of {2}", first + 1, first + shown, n));
+                    }
+                    else lines.Add(T("Open tournaments"));
                     if (_otBusy) lines.Add(T("Looking..."));
                     else if (_otListErr.Length > 0) lines.AddRange(Wrap(T(_otListErr), wrap));
                     else if (_otList.Count == 0) lines.AddRange(Wrap(T("No open tournaments. Anyone can host one."), wrap));
+                    else if (n > shown) lines.AddRange(Wrap(T("Up and down scroll the list. Left and right turn a page."), wrap));
                     foreach (var t in _otList)
                     {
                         var info = t;
-                        // (every tournament is free for all: the cup's name is left out so the line fits)
-                        opts.Add(info.code + "  " + info.host + "  " + Tr.Format("{0} of 8", info.players.Length) + (info.locked ? "  " + T("Password") : ""));
-                        acts.Add(() =>
-                        {
-                            if (!info.locked) { _otJoinPass = ""; OtJoin(info); return; }
-                            _otPassFor = info; for (int d = 0; d < 4; d++) _otDigits[d] = 0;
-                            _otPhase = OtPhase.EnterPass; _otPos = 0;
-                        });
+                        // (every tournament is free for all: the cup's name is left out so the line fits; a long name is cut short)
+                        opts.Add(OtListRow(info, wrap));
+                        acts.Add(() => OtPick(info));
                     }
                     opts.Add(T("Refresh")); acts.Add(() => StartCoroutine(OtRefresh()));
+                    opts.Add(T("Find by code")); acts.Add(() => { _otPhase = OtPhase.FindCode; _otPos = 0; });
                     opts.Add(T("Back")); acts.Add(() => { _otPhase = OtPhase.Choose; _otPos = 0; });
                     break;
+                }
+                case OtPhase.FindCode:
+                {
+                    // ours: the 6 letters, one row each (up / down picks a place, left / right or Cross changes it), as the password's digits
+                    string code = OtFindCode();
+                    lines.Add(T("Find a tournament by its code"));
+                    lines.Add(Tr.Format("Code   {0}", code));
+                    if (_otFinding) lines.Add(T("Looking..."));
+                    else if (_otNote == null || Time.time >= _otNoteUntil) lines.AddRange(Wrap(T("Ask the host for the code. Paste works too."), wrap));
+                    for (int d = 0; d < 6; d++) { int dd = d; opts.Add(Tr.Format("Letter {0}   {1}", d + 1, code[d])); acts.Add(() => { _otFind[dd] = (_otFind[dd] + 1) % OtCodeLetters.Length; }); }
+                    opts.Add(T("Paste code")); acts.Add(() => PasteText(OtPasteCode));
+                    opts.Add(T("Find")); acts.Add(() => { if (!_otFinding) StartCoroutine(OtFind()); });
+                    opts.Add(T("Back")); acts.Add(() => { _otPhase = OtPhase.Browse; _otPos = 0; });
+                    break;
+                }
                 case OtPhase.EnterPass:
                     // the 4 digits: up / down picks a digit, left / right (or Cross) changes it
                     lines.Add(Tr.Format("{0}'s {1}", _otPassFor != null ? _otPassFor.host : "", _otPassFor != null ? _otPassFor.cup : ""));
@@ -963,52 +1002,120 @@ namespace DW1Remake.Game
                 }
             }
             if (_otNote != null && Time.time < _otNoteUntil) lines.AddRange(Wrap(_otNote, wrap));
-            bool canClose = !_otMatchBusy;
+            // (Find by code has 9 rows of its own and its own Back: no Close there; Triangle goes back to the list)
+            bool canClose = !_otMatchBusy && _otPhase != OtPhase.FindCode;
             if (canClose) { opts.Add(_otHost && (_otPhase == OtPhase.Lobby || _otPhase == OtPhase.Running) ? T("Close the tournament") : T("Close")); acts.Add(close); }
+
+            // ours: a list longer than the box scrolls: rows [0, n - tail) scroll in a window, the last `tail` rows stay under it
+            if (_otPos >= opts.Count) _otPos = Mathf.Max(0, opts.Count - 1);
+            int tail = _otPhase == OtPhase.Browse ? 3 + (canClose ? 1 : 0) : (canClose ? 1 : 0);
+            int listN = opts.Count - tail, win = OtRows - tail;
+            var shownRows = new List<int>();
+            if (opts.Count > OtRows && listN > win)
+            {
+                int first = OtScrollFor(listN, win);
+                for (int i = first; i < first + win; i++) shownRows.Add(i);
+                for (int i = listN; i < opts.Count; i++) shownRows.Add(i);
+            }
+            else for (int i = 0; i < Mathf.Min(opts.Count, OtRows); i++) shownRows.Add(i);
+            int cursorRow = Mathf.Max(0, shownRows.IndexOf(_otPos));
+
             // too many lines for the screen: the oldest results go first (the cup's line stays), then the end is cut
-            int maxLines = Mathf.Max(4, 13 - Mathf.Min(opts.Count, 8));
+            int maxLines = Mathf.Max(4, 13 - shownRows.Count);
             while (lines.Count > maxLines && (_otPhase == OtPhase.Running || _otPhase == OtPhase.Done) && lines.Count > 2) lines.RemoveAt(1);
             if (lines.Count > maxLines) lines.RemoveRange(maxLines, lines.Count - maxLines);
-            if (opts.Count > 8) { opts.RemoveRange(7, opts.Count - 8); acts.RemoveRange(7, acts.Count - 8); }
 
+            // every text is held inside its box: letters past the box's inside width are not drawn
             var s = new SysScreen();
-            s.Text(T("ONLINE TOURNAMENT"), TbTx, 0x15); s.Box(TbX, 0x10, TbW, 0x16);
+            s.Text(T("ONLINE TOURNAMENT"), TbTx, 0x15, wrap); s.Box(TbX, 0x10, TbW, 0x16);
             int y = 0x31;
-            foreach (var l in lines) { s.Text(l, TbTx, y); y += 12; }
+            foreach (var l in lines) { s.Text(l, TbTx, y, wrap); y += 12; }
             s.Box(TbX, 0x2C, TbW, 12 * lines.Count + 10);
             int oy = 0x2C + 12 * lines.Count + 10 + 6 + 5;
-            for (int i = 0; i < opts.Count; i++) s.Text(opts[i], TbTx, oy + 12 * i);
-            if (opts.Count > 0)
+            for (int r = 0; r < shownRows.Count; r++) s.Text(opts[shownRows[r]], TbTx, oy + 12 * r, wrap);
+            if (shownRows.Count > 0)
             {
-                s.Box(TbX, oy - 5, TbW, 12 * opts.Count + 10);
-                if (_otPos >= opts.Count) _otPos = opts.Count - 1;
-                s.Cursor(TbTx - 3, oy, TbW - 0x10, 0xC, 12, opts.Count);
-                s.Pos = _otPos;
+                s.Box(TbX, oy - 5, TbW, 12 * shownRows.Count + 10);
+                s.Cursor(TbTx - 3, oy, TbW - 0x10, 0xC, 12, shownRows.Count);
+                s.Pos = cursorRow;
             }
             _sys = _otSys = s;
             if (opts.Count == 0) return;
             int ms = MenuStep();
-            int side = _otPhase == OtPhase.EnterPass && _otPos < 4 ? GameMenus.SideStep() : 0;
-            if (side != 0) { _otDigits[_otPos] = (_otDigits[_otPos] + side + 10) % 10; Snd(2); }
+            int side = (_otPhase == OtPhase.EnterPass && _otPos < 4) || (_otPhase == OtPhase.FindCode && _otPos < 6) || (_otPhase == OtPhase.Browse && _otPos < listN && listN > win)
+                ? GameMenus.SideStep() : 0;
+            if (side != 0 && _otPhase == OtPhase.EnterPass) { _otDigits[_otPos] = (_otDigits[_otPos] + side + 10) % 10; Snd(2); }
+            else if (side != 0 && _otPhase == OtPhase.FindCode) { _otFind[_otPos] = (_otFind[_otPos] + side + OtCodeLetters.Length) % OtCodeLetters.Length; Snd(2); }
+            // the list: left / right turns a page (held at its first / last row)
+            else if (side != 0) { _otPos = Mathf.Clamp(_otPos + side * win, 0, listN - 1); _otScroll = Mathf.Clamp(_otScroll + side * win, 0, listN - win); Snd(2); }
             else if (ms != 0) { _otPos = (_otPos + ms + opts.Count) % opts.Count; Snd(2); }
             else if (ActionPressed()) { Snd(3); acts[_otPos](); }
+            else if (GameMenus.CancelKey() && _otPhase == OtPhase.FindCode) { Snd(4); _otPhase = OtPhase.Browse; _otPos = 0; }
             else if (GameMenus.CancelKey() && canClose) { Snd(4); close(); }
             if (!_otOn && _sys == _otSys) { _sys = null; _otSys = null; }
         }
 
         bool _otAsking;
 
-        // "You are leaving the tournament." No (chosen first) / Yes; the host's leaving ends it for everyone
-        IEnumerator OtAskLeave()
+        // a No / Yes question over the tournament screen (No chosen first): "You are leaving the tournament" (Close), and the host's
+        // "Start now?" when places are still empty. Drawn and answered by the tournament's own loop (as ConfirmNoFirst's box), not a
+        // coroutine of its own: a bracket or match starting, or the tournament moving on (the full lobby's own start), puts it away as No
+        int _otLeaveSel; bool _otLeaveFresh; SysScreen _otLeaveSys;
+        string _otAskText = ""; System.Action _otAskYes; OtPhase _otAskPhase;
+
+        void OtAsk(string text, System.Action yes)
         {
-            _otAsking = true;
+            _otAsking = true; _otLeaveSel = 0; _otLeaveFresh = true;
+            _otAskText = text; _otAskYes = yes; _otAskPhase = _otPhase;
             if (_sys != null && _sys == _otSys) { _sys = null; _otSys = null; }
-            bool yes = false;
+        }
+
+        void OtAskLeave()
+        {
             string q = _otHost && (_otPhase == OtPhase.Lobby || _otPhase == OtPhase.Running)
                 ? "You are leaving the tournament. It ends for everyone. Leave?" : "You are leaving the tournament. Leave?";
-            yield return ConfirmNoFirst(q, r => yes = r);
+            OtAsk(T(q), () => _otOn = false);
+        }
+
+        // ours (the user's request 2026-11-14): Start with places still empty asks first; a full lobby starts at once
+        void OtAskStart()
+        {
+            int empty = 8 - _otE.Count;
+            if (empty <= 0) { OtHostStart(); return; }
+            OtAsk(empty == 1 ? T("Start now? The empty place gets a computer Digimon.")
+                             : Tr.Format("Start now? The {0} empty places get computer Digimon.", empty), OtHostStart);
+        }
+
+        void OtLeaveTick()
+        {
+            if (_otPhase != _otAskPhase) { OtLeaveEnd(false); return; }
+            var s = new SysScreen();
+            var lines = Wrap(_otAskText, 0x110 - 0x14);
+            for (int i = 0; i < lines.Count; i++) s.Text(lines[i], 0x22, 0x37 + 12 * i);
+            s.Box(0x18, 0x32, 0x110, 12 * lines.Count + 10);
+            int y = 0x37 + 12 * lines.Count + 0x12;
+            s.Text(Exe(0x801346B0), 0x22, y); s.Text(Exe(0x801346AC), 0x22, y + 12);     // No / Yes
+            s.Box(0x18, y - 5, 0x38, 0x22);
+            s.Cursor(0x22 - 3, y, 33, 12, 12, 2);
+            s.Pos = _otLeaveSel;
+            _sys = _otLeaveSys = s;
+            // the frame it opens: the Cross that chose Close / Start is not read again
+            if (_otLeaveFresh) { _otLeaveFresh = false; return; }
+            int step = MenuStep();
+            if (step < 0 && _otLeaveSel > 0) { _otLeaveSel = 0; Snd(2); }
+            else if (step > 0 && _otLeaveSel < 1) { _otLeaveSel = 1; Snd(2); }
+            else if (GameMenus.CancelKey()) { Snd(4); OtLeaveEnd(false); }
+            else if (ActionPressed()) { Snd(3); OtLeaveEnd(_otLeaveSel == 1); }
+        }
+
+        void OtLeaveEnd(bool yes)
+        {
             _otAsking = false;
-            if (yes) _otOn = false;
+            if (_sys != null && _sys == _otLeaveSys) _sys = null;
+            _otLeaveSys = null;
+            var act = _otAskYes; _otAskYes = null;
+            if (yes && act != null) act();
+            if (!_otOn && _sys != null && _sys == _otSys) { _sys = null; _otSys = null; }
         }
 
         bool OtKnownPair(int m, out int a, out int b)
@@ -1049,6 +1156,77 @@ namespace DW1Remake.Game
             _otStatus = "Linking with the host...";
             _otWs = new TournamentClient.Socket(TournamentClient.PlayerUrl(info.code));
             _otPhase = OtPhase.Joining; _otPos = 0; _otJoinStarted = Time.realtimeSinceStartup;
+        }
+
+        // ---------------------------------------------------------------- ours: the long list and Find by code
+
+        /// <summary>The first list row shown when n rows scroll in a window of win: the cursor's row is kept in sight (on the fixed rows
+        /// under the list the window stays where it was).</summary>
+        int OtScrollFor(int n, int win)
+        {
+            if (_otPos < n)
+            {
+                if (_otPos < _otScroll) _otScroll = _otPos;
+                if (_otPos >= _otScroll + win) _otScroll = _otPos - win + 1;
+            }
+            _otScroll = Mathf.Clamp(_otScroll, 0, Mathf.Max(0, n - win));
+            return _otScroll;
+        }
+
+        /// <summary>One open tournament's row: code, host, players, password mark. A host name too long for the box is cut short ("..").</summary>
+        static string OtListRow(TournamentClient.Info info, int width)
+        {
+            string after = "  " + Tr.Format("{0} of 8", info.players.Length) + (info.locked ? "  " + T("Password") : "");
+            string host = info.host ?? "", row = info.code + "  " + host + after;
+            var font = Battle.StatFont;
+            if (font == null || font.Measure(row) <= width) return row;
+            while (host.Length > 0 && font.Measure(info.code + "  " + host + ".." + after) > width) host = host.Substring(0, host.Length - 1);
+            return info.code + "  " + host + ".." + after;
+        }
+
+        /// <summary>Joins a tournament of the list (or one found by its code): its password first if it has one.</summary>
+        void OtPick(TournamentClient.Info info)
+        {
+            if (!info.locked) { _otJoinPass = ""; OtJoin(info); return; }
+            _otPassFor = info; for (int d = 0; d < 4; d++) _otDigits[d] = 0;
+            _otPhase = OtPhase.EnterPass; _otPos = 0;
+        }
+
+        string OtFindCode()
+        {
+            var c = new char[6];
+            for (int d = 0; d < 6; d++) c[d] = OtCodeLetters[_otFind[d]];
+            return new string(c);
+        }
+
+        /// <summary>A pasted code: its letters in capitals, spaces and other marks left out; it needs all 6 of the service's letters.</summary>
+        void OtPasteCode(string text)
+        {
+            var got = new List<int>();
+            foreach (char ch in (text ?? "").ToUpperInvariant())
+            {
+                int i = OtCodeLetters.IndexOf(ch);
+                if (i >= 0) got.Add(i);
+                else if (char.IsLetterOrDigit(ch)) { got.Clear(); break; }     // a letter the codes never have: not a code
+            }
+            if (got.Count != 6) { OtSay("That is not a tournament code. A code has 6 letters."); return; }
+            for (int d = 0; d < 6; d++) _otFind[d] = got[d];
+        }
+
+        /// <summary>Looks the code up in a fresh list of the open tournaments (the service lists every one of them), then joins it.</summary>
+        IEnumerator OtFind()
+        {
+            _otFinding = true;
+            string code = OtFindCode(), err = "";
+            List<TournamentClient.Info> list = null;
+            yield return TournamentClient.List((l, e) => { list = l; err = e; });
+            _otFinding = false;
+            if (_otPhase != OtPhase.FindCode || !_otOn) yield break;
+            if (!string.IsNullOrEmpty(err)) { OtSay(err); yield break; }
+            if (list != null) _otList = list;
+            var found = list != null ? list.Find(t => t.code == code) : null;
+            if (found == null) { OtSay("No open tournament has that code."); yield break; }
+            OtPick(found);
         }
     }
 }

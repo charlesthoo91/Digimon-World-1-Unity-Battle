@@ -56,6 +56,8 @@ namespace DW1Remake.Game
         void Snd(int bank, int n) { if (Sound != null && !Silent) Sound(bank, n); }
         /// <summary>Ours (online tournament): the bracket is moved on without sounds (the rounds already shown, run through at once).</summary>
         public bool Silent;
+        /// <summary>Ours (online tournament, the user's request 2026-11-14): the bracket moves at twice its speed (two of its frames to one).</summary>
+        public bool Fast;
         /// <summary>Ours (online tournament): the bracket stops (Finished) when STD_BRACKET_MATCH reaches this (5 = after the first round,
         /// 7 = after the second); 0 = the original's stop at the player's own match. With PlayerSlot -1 every match is played out as the others.</summary>
         public int StopAt;

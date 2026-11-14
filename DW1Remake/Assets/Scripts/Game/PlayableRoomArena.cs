@@ -95,7 +95,7 @@ namespace DW1Remake.Game
             var s = _arenaScr;
             foreach (var o in _pileObjs) if (o != null && o.gameObject.activeSelf) o.gameObject.SetActive(false);
             if (s.IntroOn) s.TickIntro();
-            if (s.BracketOn) s.TickBracket();
+            if (s.BracketOn) { s.TickBracket(); if (s.Fast && s.BracketOn && !s.Finished) s.TickBracket(); }
             if (s.StatsOn) { s.TickStats(); if (s.Counting) Snd(0x16); }
             if (s.TextStage != 0) s.TickText();
             if (_introNameOn) TickIntroName();

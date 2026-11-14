@@ -68,3 +68,10 @@ translation/batches/
 
 # pictures taken from the disc for the user to look at (disc data: never commit)
 extracted/
+
+# ours: screenshots (pictures of the disc's game), Unity's crash backup scene, web build data, Cloudflare's local cache
+Screenshot/
+DW1Remake/Assets/_Recovery/
+DW1Remake/Assets/_Recovery.meta
+DW1Remake/Data/
+.wrangler/

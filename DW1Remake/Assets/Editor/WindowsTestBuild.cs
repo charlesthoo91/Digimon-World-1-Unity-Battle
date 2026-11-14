@@ -8,7 +8,7 @@ using UnityEngine;
 namespace DW1Remake.EditorTools
 {
     /// <summary>
-    /// Menu Build > Windows test build: a Windows 64-bit player for a friend to try (release plan, docs/RELEASE-PLAN.md).
+    /// Menu Build > Windows full build: the Windows 64-bit player to hand out, with the players' guides (release plan, docs/RELEASE-PLAN.md).
     /// The build holds only our code, shaders and art; the player picks their own USA disc on first start.
     /// Our code finds its shaders by name (Shader.Find), and Unity leaves out of a build every shader no scene or Resources asset uses,
     /// so the build first writes one small "keep" material per shader (and per set of switches our code turns on) into
@@ -20,14 +20,14 @@ namespace DW1Remake.EditorTools
         const string KeepFolder = "Assets/Resources/BuildKeep";
         const string Company = "DW1UnityBattle", Product = "DW1UnityBattle";
 
-        [MenuItem("Build/Windows test build")]
+        [MenuItem("Build/Windows full build")]
         public static void Build()
         {
-            if (EditorApplication.isPlaying) { EditorUtility.DisplayDialog("Windows test build", "Stop Play first.", "OK"); return; }
+            if (EditorApplication.isPlaying) { EditorUtility.DisplayDialog("Windows full build", "Stop Play first.", "OK"); return; }
             if (!WriteKeepMaterials()) return;
 
             string[] scenes = EditorBuildSettings.scenes.Where(s => s.enabled).Select(s => s.path).ToArray();
-            if (scenes.Length == 0) { EditorUtility.DisplayDialog("Windows test build", "No scene is ticked in Build Settings.", "OK"); return; }
+            if (scenes.Length == 0) { EditorUtility.DisplayDialog("Windows full build", "No scene is ticked in Build Settings.", "OK"); return; }
             string outDir = Path.GetFullPath(Path.Combine(Application.dataPath, "../../Builds/DW1UnityBattle-Windows"));
             if (Directory.Exists(outDir)) Directory.Delete(outDir, true);
             Directory.CreateDirectory(outDir);
@@ -65,10 +65,17 @@ namespace DW1Remake.EditorTools
             var s = report.summary;
             if (s.result == BuildResult.Succeeded)
             {
-                Debug.Log("[build] Windows test build done: " + outDir + " (" + (s.totalSize / (1024 * 1024)) + " MB, " + s.totalTime.TotalMinutes.ToString("0.0") + " min)");
+                // the players' guides always go next to the .exe: docs/readme.txt and the Chinese docs/使用說明.txt ("instructions")
+                foreach (string name in new[] { "readme.txt", "使用說明.txt" })
+                {
+                    string guide = Path.GetFullPath(Path.Combine(Application.dataPath, "../../docs/" + name));
+                    if (File.Exists(guide)) File.Copy(guide, Path.Combine(outDir, name), true);
+                    else Debug.LogError("[build] The players' guide is missing: " + guide + " (the build has no " + name + ")");
+                }
+                Debug.Log("[build] Windows full build done: " + outDir + " (" + (s.totalSize / (1024 * 1024)) + " MB, " + s.totalTime.TotalMinutes.ToString("0.0") + " min)");
                 EditorUtility.RevealInFinder(Path.Combine(outDir, "DW1UnityBattle.exe"));
             }
-            else Debug.LogError("[build] Windows test build failed: " + s.result + ", " + s.totalErrors + " errors (see the Console above)");
+            else Debug.LogError("[build] Windows full build failed: " + s.result + ", " + s.totalErrors + " errors (see the Console above)");
         }
 
         // one material per shader our code asks for by name, with the switches (keywords) our code turns on, so their variants are built
@@ -92,7 +99,7 @@ namespace DW1Remake.EditorTools
         static bool Keep(string shaderName, string file, params string[] keywords)
         {
             var sh = Shader.Find(shaderName);
-            if (sh == null) { EditorUtility.DisplayDialog("Windows test build", "Shader not found: " + shaderName, "OK"); return false; }
+            if (sh == null) { EditorUtility.DisplayDialog("Windows full build", "Shader not found: " + shaderName, "OK"); return false; }
             string path = KeepFolder + "/" + file.Replace('/', '_') + ".mat";
             var m = AssetDatabase.LoadAssetAtPath<Material>(path);
             if (m == null) { m = new Material(sh); AssetDatabase.CreateAsset(m, path); }

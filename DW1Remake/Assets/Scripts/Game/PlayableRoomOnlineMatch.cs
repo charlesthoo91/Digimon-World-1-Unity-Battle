@@ -69,7 +69,7 @@ namespace DW1Remake.Game
             float camFov = _cam.fieldOfView, camFocal = _cam.focalLength; Vector2 camSensor = _cam.sensorSize, camShift = _cam.lensShift;
             bool camPhys = _cam.usePhysicalProperties; var camGate = _cam.gateFit;
             _battle.TimerStart = _onlineTime == 1 ? 300 : 99; _battle.NoTimeLimit = _onlineTime == 2;
-            _surrenderAsk = false; Battle.InputLocked = false;
+            SurrenderClose();
             yield return TourFade(1f, 5);
             if (_audio != null) { _audio.SetMapSounds(0x10); _audio.BattleSounds(); }
             int arena = _mapId == 0x6A ? 1 : 0;
@@ -120,7 +120,7 @@ namespace DW1Remake.Game
             }
             else Debug.LogWarning("[online] the friend's Digimon could not be made (type " + (_friend != null ? _friend.Type : -1) + ")");
             _tourFoe = null; _p2 = null;
-            _battle.TimerStart = 99; _battle.NoTimeLimit = false; _battle.SuddenDeath = false; _surrenderAsk = false; Battle.InputLocked = false;
+            _battle.TimerStart = 99; _battle.NoTimeLimit = false; _battle.SuddenDeath = false; SurrenderClose();
             _onlineLastResult = result; _onlineLinkLost = linkLost;
             _battle.Puppet = false; _battle.NetSwing = null; _battle.NetKnockOut = null; _battle.NetAura = null; _battle.NetVersus = null; _battle.NetStopFx = null; _battle.NetOrder = null; _battle.EnemyCommanded = false;
             // as STD_deinitializeTournament: back to the room
@@ -308,25 +308,55 @@ namespace DW1Remake.Game
         void SurrenderTick()
         {
             bool fighting = _battle.Active && _battle.TournamentStartDone && !_otWatching;
-            if (!fighting) { if (_surrenderAsk) { _surrenderAsk = false; Battle.InputLocked = false; } return; }
+            if (!fighting) { if (_surrenderAsk) SurrenderClose(); return; }
             if (!_surrenderAsk)
             {
                 if (Pad.Held(PadButton.L2) && Pad.Held(PadButton.R2) && (Pad.Pressed(PadButton.L2) || Pad.Pressed(PadButton.R2)))
                 {
                     _surrenderAsk = true; _surrenderSel = 1; Battle.InputLocked = true; Snd(3);      // No first: a slip of the fingers gives nothing away
+                    SurrenderBox();
                 }
                 return;
             }
             int side = GameMenus.SideStep(), step = MenuStep();
             if (side != 0 || step != 0) { _surrenderSel = 1 - _surrenderSel; Snd(2); }
-            if (GameMenus.TriangleKey() || GameMenus.CancelKey()) { _surrenderAsk = false; Battle.InputLocked = false; Snd(4); return; }
-            if (!ActionPressed()) return;
-            Snd(3);
+            else if (GameMenus.TriangleKey() || GameMenus.CancelKey()) { SurrenderClose(); Snd(4); return; }
+            else if (ActionPressed())
+            {
+                Snd(3);
+                bool yes = _surrenderSel == 0;
+                SurrenderClose();
+                if (!yes) return;
+                // Yes: one's own Digimon goes to 0 HP and the match ends as a knock-out (the host runs the fight). The save's HP too:
+                // Battle.ReadBack copies it into the partner every frame, and had put the HP straight back (the match puts it back afterwards)
+                if (_onlineHost) { if (_battle.Partner != null) { _battle.Partner.Hp = 0; _state.Stats[6] = 0; } }
+                else if (_net != null) _net.SendSure(new[] { MsgSurrender });
+                return;
+            }
+            SurrenderBox();
+        }
+
+        // the question in the game's own boxes and font (as ConfirmNoFirst: the question's box, then No / Yes under it, No first)
+        SysScreen _surSys;
+        void SurrenderBox()
+        {
+            var s = new SysScreen();
+            var lines = Wrap(DW1Remake.Formats.Tr.Text("Surrender?", "ours"), 0x110 - 0x14);
+            for (int i = 0; i < lines.Count; i++) s.Text(lines[i], 0x22, 0x37 + 12 * i);
+            s.Box(0x18, 0x32, 0x110, 12 * lines.Count + 10);
+            int y = 0x37 + 12 * lines.Count + 0x12;
+            s.Text(Exe(0x801346B0), 0x22, y); s.Text(Exe(0x801346AC), 0x22, y + 12);     // No / Yes
+            s.Box(0x18, y - 5, 0x38, 0x22);
+            s.Cursor(0x22 - 3, y, 33, 12, 12, 2);
+            s.Pos = _surrenderSel == 0 ? 1 : 0;
+            _sys = _surSys = s;
+        }
+
+        void SurrenderClose()
+        {
             _surrenderAsk = false; Battle.InputLocked = false;
-            if (_surrenderSel != 0) return;
-            // Yes: one's own Digimon goes to 0 HP and the match ends as a knock-out (the host runs the fight)
-            if (_onlineHost) { if (_battle.Partner != null) _battle.Partner.Hp = 0; }
-            else if (_net != null) _net.SendSure(new[] { MsgSurrender });
+            if (_sys != null && _sys == _surSys) _sys = null;
+            _surSys = null;
         }
 
         // ---------------------------------------------------------------- sudden death (ours, the online tournament): the word, then a small label
@@ -363,15 +393,7 @@ namespace DW1Remake.Game
         void DrawSurrender()
         {
             DrawSuddenDeath();
-            if (!_surrenderAsk || !_onlineMatch) return;
-            UiKit.Begin();
-            var r = new Rect(457, 420, 500, 190);
-            UiKit.Box(r, UiKit.DialogFill);
-            UiKit.Text(new Rect(r.x, r.y + 22, r.width, 60), DW1Remake.Formats.Tr.Text("Surrender?", "ours"), 48, Color.white, TextAnchor.MiddleCenter);
-            string yes = DW1Remake.Formats.Tr.Text("Yes", "ours"), no = DW1Remake.Formats.Tr.Text("No", "ours");
-            UiKit.Text(new Rect(r.x, r.y + 105, r.width / 2f, 60), (_surrenderSel == 0 ? "> " : "") + yes, 46, _surrenderSel == 0 ? UiKit.Yellow : Color.white, TextAnchor.MiddleCenter);
-            UiKit.Text(new Rect(r.x + r.width / 2f, r.y + 105, r.width / 2f, 60), (_surrenderSel == 1 ? "> " : "") + no, 46, _surrenderSel == 1 ? UiKit.Yellow : Color.white, TextAnchor.MiddleCenter);
-            UiKit.End();
+            // (the surrender question is a SysScreen now: SurrenderBox)
         }
 
         // side 0 = the host's partner, 1 = the friend's partner
