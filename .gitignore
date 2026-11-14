@@ -80,3 +80,8 @@ DW1Remake/Data/
 CLAUDE.md
 PROGRESS.md
 playthrough.md
+
+# docs: only the players' guides are uploaded; the plans and the archive stay on this PC
+docs/*
+!docs/readme.txt
+!docs/使用說明.txt
